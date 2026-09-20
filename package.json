@@ -1,0 +1,13 @@
+{
+  "name": "semana-de-provas",
+  "version": "0.1.0",
+  "description": "Roguelite/survivor academico em Vanilla JS + Canvas 2D",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "node test/check.mjs",
+    "smoke": "node test/smoke.mjs",
+    "serve": "node test/serve.mjs"
+  },
+  "license": "MIT"
+}

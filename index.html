@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Semana de Provas</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="cena">
+    <canvas id="palco" width="960" height="540"></canvas>
+
+    <!-- HUD: sempre montado, escondido fora da avaliação. -->
+    <div id="hud" class="camada hud oculto">
+      <div class="hud-topo">
+        <div class="hud-identificacao">
+          <span id="periodo-nome" class="periodo">1º Período</span>
+          <span id="avaliacao-nome" class="avaliacao">Avaliação 1</span>
+        </div>
+        <div id="timer" class="timer">1:00</div>
+        <div class="hud-nivel">
+          <span class="rotulo">Nível</span>
+          <span id="nivel" class="valor">1</span>
+        </div>
+      </div>
+
+      <div class="hud-barras">
+        <div class="barra barra-xp">
+          <div id="xp-barra" class="preenchimento"></div>
+        </div>
+        <div class="barra barra-hp">
+          <div id="hp-barra" class="preenchimento"></div>
+          <span id="hp-texto" class="barra-texto">100/100</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Menu -->
+    <div id="menu" class="camada menu">
+      <h1 class="titulo">Semana de Provas</h1>
+      <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
+      <button id="botao-jogar" class="botao botao-destaque" type="button">Jogar</button>
+      <p class="dica">WASD ou setas para mover · ESC pausa · o resto é sorte</p>
+    </div>
+
+    <!-- Pausa -->
+    <div id="pausa" class="camada pausa oculto">
+      <h2 class="titulo-pausa">Pausado</h2>
+      <button id="botao-continuar" class="botao" type="button">Continuar</button>
+      <button id="botao-menu" class="botao botao-discreto" type="button">Sair para o menu</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import { iniciar } from './src/main.js';
+    iniciar();
+  </script>
+</body>
+</html>

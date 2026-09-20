@@ -1,0 +1,261 @@
+/* Semana de Provas — telas, HUD e cartas.
+   Tipografia so com fontes do sistema: nenhuma webfont baixada. */
+
+:root {
+  --fundo: #06070f;
+  --painel: rgba(13, 15, 26, 0.88);
+  --tinta: #e8ecff;
+  --tinta-fraca: #8b93c0;
+  --neon: #7aa2ff;
+  --neon-quente: #ffb860;
+  --hp: #ff5d7a;
+  --xp: #56d8a6;
+  --borda: rgba(122, 162, 255, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 30%, #131735 0%, var(--fundo) 70%);
+  color: var(--tinta);
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A cena mantem 16:9 e todo o resto e dimensionado em em a partir dela,
+   entao a UI escala junto com o canvas em qualquer tela. */
+.cena {
+  position: relative;
+  width: min(100vw, calc(100vh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  font-size: min(1.85vw, 3.28vh);
+  box-shadow: 0 0 4em rgba(0, 0, 0, 0.8);
+  overflow: hidden;
+}
+
+#palco {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: auto;
+}
+
+.camada {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9em;
+}
+
+.oculto {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- menu */
+
+.menu {
+  background: linear-gradient(180deg, rgba(6, 7, 15, 0.92), rgba(6, 7, 15, 0.98));
+  text-align: center;
+}
+
+.titulo {
+  margin: 0;
+  font-size: 3.4em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tinta);
+  text-shadow: 0 0 0.35em rgba(122, 162, 255, 0.75), 0 0 1.2em rgba(122, 162, 255, 0.35);
+}
+
+.subtitulo {
+  margin: 0;
+  font-size: 1.05em;
+  color: var(--tinta-fraca);
+}
+
+.dica {
+  margin: 0.6em 0 0;
+  font-size: 0.8em;
+  color: var(--tinta-fraca);
+  opacity: 0.8;
+}
+
+/* --------------------------------------------------------------- botoes */
+
+.botao {
+  font: inherit;
+  font-size: 1.1em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.55em 2.2em;
+  color: var(--tinta);
+  background: rgba(122, 162, 255, 0.08);
+  border: 1px solid var(--borda);
+  border-radius: 0.3em;
+  cursor: pointer;
+  transition: transform 90ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.botao:hover,
+.botao:focus-visible {
+  background: rgba(122, 162, 255, 0.2);
+  box-shadow: 0 0 1.2em rgba(122, 162, 255, 0.35);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.botao:active {
+  transform: translateY(1px);
+}
+
+.botao-destaque {
+  border-color: var(--neon-quente);
+  color: var(--neon-quente);
+  background: rgba(255, 184, 96, 0.08);
+}
+
+.botao-destaque:hover,
+.botao-destaque:focus-visible {
+  background: rgba(255, 184, 96, 0.2);
+  box-shadow: 0 0 1.2em rgba(255, 184, 96, 0.35);
+}
+
+.botao-discreto {
+  font-size: 0.85em;
+  color: var(--tinta-fraca);
+}
+
+/* ----------------------------------------------------------------- hud */
+
+.hud {
+  justify-content: flex-start;
+  padding: 0.8em 1.2em;
+  gap: 0.5em;
+  pointer-events: none;
+}
+
+.hud-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.hud-identificacao {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.periodo {
+  font-size: 0.75em;
+  color: var(--tinta-fraca);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.avaliacao {
+  font-size: 1em;
+  color: var(--tinta);
+}
+
+.timer {
+  font-size: 2.2em;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 0.4em rgba(122, 162, 255, 0.6);
+}
+
+.hud-nivel {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+}
+
+.hud-nivel .rotulo {
+  font-size: 0.75em;
+  color: var(--tinta-fraca);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.hud-nivel .valor {
+  font-size: 1.6em;
+  color: var(--xp);
+}
+
+.hud-barras {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  width: 100%;
+}
+
+.barra {
+  position: relative;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--borda);
+  border-radius: 0.2em;
+  overflow: hidden;
+}
+
+.barra-xp {
+  height: 0.45em;
+}
+
+.barra-hp {
+  height: 1.1em;
+}
+
+.preenchimento {
+  height: 100%;
+  width: 100%;
+  transition: width 120ms linear;
+}
+
+.barra-xp .preenchimento {
+  background: linear-gradient(90deg, rgba(86, 216, 166, 0.5), var(--xp));
+  width: 0;
+}
+
+.barra-hp .preenchimento {
+  background: linear-gradient(90deg, rgba(255, 93, 122, 0.6), var(--hp));
+}
+
+.barra-texto {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.7em;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.9);
+}
+
+/* --------------------------------------------------------------- pausa */
+
+.pausa {
+  background: rgba(6, 7, 15, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.titulo-pausa {
+  margin: 0 0 0.4em;
+  font-size: 2.2em;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--neon);
+}
