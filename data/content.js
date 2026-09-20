@@ -37,7 +37,7 @@ export const CONTEUDO = {
   },
 
   // Aparencia do canvas. O CSS cuida das telas em DOM; aqui so o que o
-  // render.js desenha. Fase 12 (juice) acrescenta shake, rastro e flashes.
+  // render.js desenha. Fase 12 (juice) acrescenta shake e flashes.
   visual: {
     corFundo: '#0d0f1a',
     corGrade: 'rgba(120, 140, 255, 0.07)',
@@ -46,14 +46,23 @@ export const CONTEUDO = {
     fonteEmoji: '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif',
     tamanhoEmojiJogador: 30,
     corSombraPausa: 'rgba(5, 6, 14, 0.6)',
+    corRastro: '#8fd6ff', // rastro simples do jogador (fase 01)
+    rastroAlphaMax: 0.35,
+    rastroRaioFator: 0.55, // multiplica jogador.raio para o raio do ponto do rastro
+    piscaIntervalo: 0.08, // segundos entre estados do pisca-pisca de i-frames
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
   jogador: {
     emoji: '🎓',
     hpMax: 100,
-    raio: 14,
-    velocidade: 190,
+    raio: 14, // raio de colisao
+    raioColeta: 42, // alcance para atrair xp/itens; fase 04 usa, coringa Wi-Fi da Federal multiplica
+    velocidade: 190, // px/s, velocidade maxima
+    aceleracao: 1400, // px/s^2 ate atingir a velocidade maxima
+    atrito: 2000, // px/s^2 de desaceleracao quando o input solta
+    iframesDuracao: 1, // segundos de invulnerabilidade apos tomar dano
+    rastroTamanho: 14, // pontos guardados para o rastro visual
     xpBase: 5, // XP do nivel 1 -> 2; fase 04 define a curva
   },
 
@@ -216,7 +225,12 @@ export function validarConteudo(conteudo = CONTEUDO) {
   if (exigeObjeto(conteudo.jogador, 'jogador')) {
     exigeNumero(conteudo.jogador.hpMax, 'jogador.hpMax', { min: 1 });
     exigeNumero(conteudo.jogador.raio, 'jogador.raio', { min: 1 });
+    exigeNumero(conteudo.jogador.raioColeta, 'jogador.raioColeta', { min: 1 });
     exigeNumero(conteudo.jogador.velocidade, 'jogador.velocidade', { min: 1 });
+    exigeNumero(conteudo.jogador.aceleracao, 'jogador.aceleracao', { min: 1 });
+    exigeNumero(conteudo.jogador.atrito, 'jogador.atrito', { min: 1 });
+    exigeNumero(conteudo.jogador.iframesDuracao, 'jogador.iframesDuracao', { min: 0 });
+    exigeNumero(conteudo.jogador.rastroTamanho, 'jogador.rastroTamanho', { min: 1, max: 200 });
     exigeNumero(conteudo.jogador.xpBase, 'jogador.xpBase', { min: 1 });
     if (typeof conteudo.jogador.emoji !== 'string' || conteudo.jogador.emoji === '') {
       erros.push('jogador.emoji: ausente ou vazio');

@@ -2,6 +2,7 @@ import { CONTEUDO } from '../data/content.js';
 import { novoEstado, iniciarAvaliacao, irParaTela, emitir, TELAS } from './state.js';
 import { desenhar } from './render.js';
 import { criarUi } from './ui.js';
+import { atualizarPlayer } from './player.js';
 
 // Nada de document/window no topo deste modulo: e o que permite ao node
 // importar `atualizar` e rodar a partida inteira sem navegador.
@@ -25,6 +26,7 @@ export function atualizar(estado, dt) {
 
 function atualizarAvaliacao(estado, dt) {
   const av = estado.run.avaliacao;
+  atualizarPlayer(estado, dt);
   if (av.concluida) return;
 
   av.decorrido += dt;

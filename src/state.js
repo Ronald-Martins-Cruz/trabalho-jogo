@@ -1,5 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { criarRng } from './rng.js';
+import { criarRastro } from './player.js';
 
 // O estado do jogo inteiro em um objeto so, sem classes e sem singleton
 // escondido. Quem precisa do estado o recebe como argumento. Todos os campos
@@ -57,6 +58,9 @@ export function novoPlayer() {
     invulneravel: 0, // segundos restantes de i-frames
     vivo: true,
     armas: [],
+    // Buffer circular de tamanho fixo para o rastro visual — alocado aqui,
+    // uma vez por avaliacao, nunca dentro do update (restricao 5).
+    rastro: criarRastro(),
   };
 }
 
