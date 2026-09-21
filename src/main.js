@@ -2,9 +2,10 @@ import { CONTEUDO } from '../data/content.js';
 import { novoEstado, iniciarAvaliacao, irParaTela, emitir, TELAS } from './state.js';
 import { desenhar } from './render.js';
 import { criarUi } from './ui.js';
-import { atualizarPlayer } from './player.js';
+import { atualizarPlayer, atualizarOrbes } from './player.js';
 import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
+import { apontarCarta, atualizarCartas, escolherCarta, moverSelecaoCarta } from './cards.js';
 
 // Nada de document/window no topo deste modulo: e o que permite ao node
 // importar `atualizar` e rodar a partida inteira sem navegador.
@@ -17,6 +18,11 @@ export function atualizar(estado, dt) {
   switch (estado.tela) {
     case TELAS.AVALIACAO:
       atualizarAvaliacao(estado, dt);
+      break;
+    case TELAS.CARTA:
+      // A simulacao inteira congela: so a escolha da carta anda. O cronometro
+      // da avaliacao para junto, de proposito — a pausa e a recompensa.
+      atualizarCartas(estado);
       break;
     case TELAS.MENU:
     case TELAS.PAUSA:
@@ -39,6 +45,13 @@ function atualizarAvaliacao(estado, dt) {
   // ja integradas deste quadro, nao com as do quadro anterior.
   atualizarArmas(estado, dt);
 
+  // Orbes por ultimo: os que nasceram das mortes deste quadro ja sao atraidos.
+  // O evento sai daqui, e nao de dentro de player.js, porque player.js nao
+  // pode importar state.js (state.js ja importa criarRastro de la).
+  const xpAntes = estado.player.xp;
+  atualizarOrbes(estado, dt);
+  if (estado.player.xp > xpAntes) emitir(estado, 'xp-coletado', estado.player.xp - xpAntes);
+
   // Unico observador da morte do jogador: qualquer fonte de dano (inimigo
   // agora, modificador e chefe depois) so precisa zerar o hp via receberDano().
   // Provisorio, igual ao fim por tempo: a fase 10 poe a tela de fim no lugar
@@ -54,7 +67,13 @@ function atualizarAvaliacao(estado, dt) {
     emitir(estado, 'avaliacao-fim', av.id);
     // Provisorio: a fase 06 poe a tela de resultado no lugar do menu.
     irParaTela(estado, TELAS.MENU);
+    return;
   }
+
+  // Por ultimo, e so com a avaliacao ainda de pe: morte e fim do cronometro
+  // ganham do nivel que subiu no mesmo quadro. Uma carta aberta por cima de
+  // uma avaliacao ja encerrada travaria a tela.
+  atualizarCartas(estado);
 }
 
 // ------------------------------------------------------------------ browser
@@ -74,6 +93,13 @@ export function iniciar() {
     continuar: () => irParaTela(estado, TELAS.AVALIACAO),
     menu: () => irParaTela(estado, TELAS.MENU),
   });
+  // Mouse na carta: a UI nao mexe no estado nem na classe CSS, so avisa qual
+  // indice foi apontado ou escolhido. Mesmo caminho do teclado, e por isso
+  // apontar com o mouse e confirmar com Enter leva a carta certa.
+  ui.ligarCartas(
+    (indice) => escolherCarta(estado, indice),
+    (indice) => apontarCarta(estado, indice)
+  );
 
   const { passo, maxPassosPorFrame } = CONTEUDO.loop;
   let anterior = performance.now();
@@ -128,6 +154,13 @@ function ligarTeclado(estado) {
   };
 
   window.addEventListener('keydown', (ev) => {
+    // A carta come a tecla antes do movimento: as setas navegam entre as
+    // opcoes em vez de empurrar um jogador que esta congelado de qualquer
+    // jeito. O keyup segue chamando aplicar(), entao nenhuma tecla fica presa.
+    if (estado.tela === TELAS.CARTA && !ev.repeat && teclaDaCarta(estado, ev.code)) {
+      ev.preventDefault();
+      return;
+    }
     if (aplicar(ev.code, true)) ev.preventDefault();
     // ev.repeat: segurar ESC repete o keydown ~30x/s e a pausa piscaria.
     if (ev.code === 'Escape' && !ev.repeat) alternarPausa(estado);
@@ -143,6 +176,21 @@ function ligarTeclado(estado) {
     estado.input.eixoX = 0;
     estado.input.eixoY = 0;
   });
+}
+
+// Mouse pode falhar na apresentacao; teclado nao. 1/2/3 escolhe direto,
+// setas movem o cursor e Enter confirma. O indice sai do proprio nome da tecla
+// para acompanhar CONTEUDO.cartas.quantidade sem tabela para manter.
+function teclaDaCarta(estado, code) {
+  if (/^(Digit|Numpad)[1-9]$/.test(code)) {
+    return escolherCarta(estado, Number(code.slice(-1)) - 1);
+  }
+  if (code === 'ArrowLeft' || code === 'KeyA') return moverSelecaoCarta(estado, -1);
+  if (code === 'ArrowRight' || code === 'KeyD') return moverSelecaoCarta(estado, 1);
+  if (code === 'Enter' || code === 'Space' || code === 'NumpadEnter') {
+    return escolherCarta(estado, estado.cartas.selecionada);
+  }
+  return false;
 }
 
 export function alternarPausa(estado) {

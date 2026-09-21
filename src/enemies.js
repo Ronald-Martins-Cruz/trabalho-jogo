@@ -1,6 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { emitir } from './state.js';
-import { receberDano } from './player.js';
+import { receberDano, soltarOrbeXp } from './player.js';
 import { obterPool, obterScratch } from './pool.js';
 
 // Spawn, IA e morte dos inimigos. Nenhum objeto nasce aqui dentro do update:
@@ -348,7 +348,13 @@ export function aplicarDano(estado, inimigo, dano) {
 
   inimigo.hp = 0;
   estado.run.avaliacao.kills += 1;
-  // A fase 04 le x/y/xp daqui para soltar o orbe de XP no lugar da morte.
+  // O orbe nasce no lugar da morte, antes de o objeto voltar para a pool (o
+  // proximo spawn pode reaproveita-lo no mesmo quadro e a posicao mudaria).
+  // Chamada direta, e nao um consumidor da fila de eventos: a fila e esvaziada
+  // uma vez por QUADRO, nao por tick, e com dt fixo um quadro pode ter ate
+  // maxPassosPorFrame ticks — um consumidor dentro do update veria o mesmo
+  // 'inimigo-morto' varias vezes e cada morte viraria varios orbes.
+  soltarOrbeXp(estado, inimigo.x, inimigo.y, inimigo.xp);
   emitir(estado, 'inimigo-morto', {
     tipo: inimigo.tipo,
     x: inimigo.x,

@@ -43,6 +43,15 @@
       <p class="dica">WASD ou setas para mover · ESC pausa · o resto é sorte</p>
     </div>
 
+    <!-- Carta de nível: as opções são montadas uma vez por ui.js e só trocam
+         de conteúdo, nunca de quantidade (CONTEUDO.cartas.quantidade). -->
+    <div id="carta" class="camada carta oculto">
+      <h2 class="titulo-carta">Subiu de nível</h2>
+      <p class="subtitulo-carta">Escolha uma carta</p>
+      <div id="carta-opcoes" class="carta-opcoes"></div>
+      <p class="dica">1 · 2 · 3 para escolher · ← → e Enter também servem</p>
+    </div>
+
     <!-- Pausa -->
     <div id="pausa" class="camada pausa oculto">
       <h2 class="titulo-pausa">Pausado</h2>

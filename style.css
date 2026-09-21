@@ -259,3 +259,117 @@ body {
   text-transform: uppercase;
   color: var(--neon);
 }
+
+/* --------------------------------------------------------------- cartas */
+
+/* A tela de carta e a primeira camada de DOM por cima do canvas que o jogador
+   opera. As opcoes sao <button> de verdade: foco, Enter e clique vem de graca
+   do navegador, e o teclado continua funcionando se o mouse falhar. */
+.carta {
+  background: radial-gradient(circle at 50% 40%, rgba(19, 23, 53, 0.82), rgba(6, 7, 15, 0.94));
+  backdrop-filter: blur(2px);
+  gap: 0.5em;
+}
+
+.titulo-carta {
+  margin: 0;
+  font-size: 1.9em;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--xp);
+  text-shadow: 0 0 0.5em rgba(86, 216, 166, 0.55);
+}
+
+.subtitulo-carta {
+  margin: 0 0 0.4em;
+  font-size: 0.9em;
+  color: var(--tinta-fraca);
+}
+
+.carta-opcoes {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1.1em;
+}
+
+.carta-opcao {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25em;
+  width: 9.5em;
+  padding: 1.1em 0.9em 1.3em;
+  font: inherit;
+  text-align: center;
+  color: var(--tinta);
+  background: linear-gradient(180deg, rgba(23, 28, 60, 0.95), rgba(11, 13, 28, 0.95));
+  border: 1px solid var(--borda);
+  border-radius: 0.5em;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+/* O destaque sai SO de `cartas.selecionada`: passar o mouse e focar com Tab
+   escrevem nesse campo (ui.js -> apontarCarta), e o sincronizar de cada frame
+   pinta a classe a partir dele. Um `:hover` independente aqui poria duas
+   cartas levantadas ao mesmo tempo — a do mouse e a do cursor — e foi
+   exatamente esse o bug que a revisao da fase 04 pegou. */
+.carta-opcao.selecionada {
+  transform: translateY(-0.5em);
+  border-color: var(--neon);
+  box-shadow: 0 0.6em 1.6em rgba(0, 0, 0, 0.55), 0 0 1.6em rgba(122, 162, 255, 0.45);
+  outline: none;
+}
+
+.carta-opcao:active {
+  transform: translateY(-0.2em);
+}
+
+.carta-opcao.carta-nova {
+  border-color: var(--neon-quente);
+}
+
+.carta-opcao.carta-nova.selecionada {
+  box-shadow: 0 0.6em 1.6em rgba(0, 0, 0, 0.55), 0 0 1.6em rgba(255, 184, 96, 0.45);
+}
+
+.carta-atalho {
+  position: absolute;
+  top: 0.4em;
+  left: 0.5em;
+  font-size: 0.7em;
+  color: var(--tinta-fraca);
+  border: 1px solid var(--borda);
+  border-radius: 0.25em;
+  padding: 0 0.35em;
+}
+
+.carta-emoji {
+  font-size: 2.6em;
+  line-height: 1.1;
+}
+
+.carta-nome {
+  font-size: 1em;
+  letter-spacing: 0.04em;
+}
+
+.carta-nivel {
+  font-size: 0.75em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--xp);
+}
+
+.carta-nova .carta-nivel {
+  color: var(--neon-quente);
+}
+
+.carta-descricao {
+  margin-top: 0.3em;
+  font-size: 0.7em;
+  line-height: 1.35;
+  color: var(--tinta-fraca);
+}

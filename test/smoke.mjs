@@ -21,6 +21,8 @@ import {
   subirNivelArma,
   verificarArmasDoConteudo,
 } from '../src/weapons.js';
+import { apontarCarta, escolherCarta, moverSelecaoCarta, verificarCartasDoConteudo } from '../src/cards.js';
+import { atualizarOrbes, poolOrbes, soltarOrbeXp, xpParaSubir } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
 
 const SEMENTE = 20261110;
@@ -33,6 +35,15 @@ const MINIMO_INIMIGOS = 20; // pico abaixo disso significa spawn quebrado
 const TICKS_ARMA = 1800; // 30s da corrida do bot parado (checarArmaSozinha)
 const MINIMO_MORTOS_ARMA = 20; // abaixo disso a arma nao esta matando de verdade
 
+// Progressao. O alvo do design §3 e nivel 5-6 em 60s; a faixa aceita e mais
+// larga que o alvo de proposito — ela existe para pegar o sistema QUEBRADO
+// (orbe que ninguem coleta trava no nivel 1; curva zerada dispara para 20),
+// nao para congelar o balanceamento, que e da fase 13.
+const TICKS_PROGRESSAO = 3600; // 60s: a janela de que o design fala
+const NIVEL_MINIMO_60S = 4;
+const NIVEL_MAXIMO_60S = 9;
+const TICKS_CONGELADO = 30; // ticks com a carta aberta sem ninguem escolher
+
 // Teste de carga: `npm run smoke -- --carga` enche a arena ate o teto da pool
 // e mantem o jogador de pe, para medir o custo de IA + separacao + colisao no
 // pior caso. Fora desse modo a corrida e a de sempre.
@@ -44,7 +55,7 @@ const POOLS = Object.keys(CONTEUDO.arena.limites).filter((p) => p !== 'eventos')
 
 const picos = {};
 for (const pool of POOLS) picos[pool] = 0;
-const contadores = { avaliacoesConcluidas: 0, eventos: 0, porTipo: {} };
+const contadores = { avaliacoesConcluidas: 0, eventos: 0, cartas: 0, porTipo: {} };
 
 // Pools: alocacao so na abertura. `criados` e o numero de vezes que a fabrica
 // rodou — se crescer depois do aquecimento, alguem esta alocando dentro do
@@ -376,6 +387,9 @@ function checarArmaSozinha() {
     } catch (e) {
       falhar(tick, `excecao com o bot parado: ${e && e.stack ? e.stack : e}`);
     }
+    // Parado no centro ele coleta muito XP e sobe de nivel rapido: sem
+    // escolher a carta, esta corrida congelaria e mediria a arma por 3s.
+    escolherCarta(estado, 0);
 
     if (estado.projectiles.length > pico) pico = estado.projectiles.length;
     for (const evento of estado.eventos) {
@@ -588,6 +602,565 @@ function checarMemoriaDePerfuracao() {
   }
 }
 
+// O ima dos orbes, que e a tarefa 1 do contrato e a metade do laco de
+// dopamina. Sem esta checagem ele passa despercebido: com o ima desligado o
+// jogador ainda coleta o que pisa em cima, e a corrida de 60s continua
+// chegando num nivel plausivel — foi exatamente o que aconteceu quando a
+// mutacao "ima desligado" deixou o smoke inteiro verde.
+//
+// Roda atualizarOrbes() direto, sem atualizar(), para que nenhum inimigo
+// nasca, morra ou solte orbe no meio da medida.
+function checarImaDeOrbes() {
+  const estado = novoEstado(SEMENTE + 9);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+  const raioIma = CONTEUDO.jogador.raioColeta;
+  const pool = poolOrbes(estado);
+
+  // 1. A rampa: dois orbes parados, um na beirada do ima e outro colado no
+  // jogador. Um tick. O de perto tem que ganhar MAIS velocidade — e isso que
+  // "aceleracao crescente conforme se aproximam" quer dizer. Aceleracao
+  // constante deixaria os dois iguais.
+  const parado = (distancia) => {
+    const orbe = soltarOrbeXp(estado, player.x + distancia, player.y, 1);
+    orbe.vx = 0;
+    orbe.vy = 0;
+    return orbe;
+  };
+  const longe = parado(raioIma * 0.95);
+  const perto = parado(raioIma * 0.15);
+  atualizarOrbes(estado, PASSO);
+  const velLonge = Math.hypot(longe.vx, longe.vy);
+  const velPerto = Math.hypot(perto.vx, perto.vy);
+  if (!(velLonge > 0)) {
+    falhar(0, `orbe dentro do ima (${(raioIma * 0.95).toFixed(0)}px) nao ganhou velocidade nenhuma: o ima nao puxa`);
+  }
+  if (!(velPerto > velLonge)) {
+    falhar(
+      0,
+      `o orbe perto do jogador acelerou ${velPerto.toFixed(1)} px/s e o da beirada ${velLonge.toFixed(1)}: ` +
+        'a aceleracao nao cresce com a proximidade, o orbe e rebocado em vez de aspirado'
+    );
+  }
+  pool.liberarTodos();
+
+  // 2. O raio significa alguma coisa: fora dele o orbe parado fica parado.
+  // A conta e de deslocamento em qualquer direcao, nao so de aproximacao —
+  // tirar o teste de distancia da uma `proximidade` negativa, que EMPURRA o
+  // orbe para longe, e uma assercao de "nao se aproximou" passaria feliz.
+  const fora = soltarOrbeXp(estado, player.x + raioIma * 1.35, player.y, 1);
+  fora.vx = 0;
+  fora.vy = 0;
+  const foraX = fora.x;
+  const foraY = fora.y;
+  for (let i = 0; i < 60; i += 1) atualizarOrbes(estado, PASSO);
+  const andou = Math.hypot(fora.x - foraX, fora.y - foraY);
+  if (andou > 1) {
+    falhar(
+      0,
+      `orbe parado a ${(raioIma * 1.35).toFixed(0)}px (fora do ima de ${raioIma}px) andou ${andou.toFixed(1)}px ` +
+        'sozinho em 1s: o raio de coleta nao limita a atracao'
+    );
+  }
+  pool.liberarTodos();
+
+  // 3. Dentro do ima, com o jogador PARADO, o orbe chega. O teto de ticks sai
+  // da propria aceleracao minima de content.js (t = sqrt(2d/a)), entao ele
+  // acompanha o balanceamento em vez de virar constante no teste.
+  const folga = 60;
+  const teto = Math.ceil(Math.sqrt((2 * raioIma) / CONTEUDO.xpOrbe.aceleracaoMinima) / PASSO) + folga;
+  const alvo = soltarOrbeXp(estado, player.x + raioIma * 0.9, player.y, 3);
+  alvo.vx = 0;
+  alvo.vy = 0;
+  const xpAntes = player.xp;
+  let ticks = 0;
+  while (alvo.ativo && ticks < teto) {
+    atualizarOrbes(estado, PASSO);
+    ticks += 1;
+  }
+  if (alvo.ativo) {
+    falhar(
+      0,
+      `o orbe a ${(raioIma * 0.9).toFixed(0)}px nao foi coletado em ${teto} ticks com o jogador parado: ` +
+        'o ima atrai mas o orbe nao encosta, ou a coleta nao dispara'
+    );
+  }
+  if (player.xp !== xpAntes + 3) {
+    falhar(0, `o orbe valia 3 de XP e o jogador ganhou ${player.xp - xpAntes}`);
+  }
+  const problema = pool.verificar();
+  if (problema) falhar(0, `pool de orbes inconsistente depois da coleta: ${problema}`);
+}
+
+// Carta e dado tambem: o `tipo` da carta de consolo em content.js precisa
+// existir no registro de efeitos de cards.js. content.js nao pode importar
+// cards.js (ciclo), entao a ligacao dado <-> codigo e verificada aqui, como ja
+// acontece com o `comportamento` das armas.
+function checarCartasDoConteudo() {
+  const problema = verificarCartasDoConteudo();
+  if (problema) falhar(0, problema);
+}
+
+// Tarefa 3 do contrato: dois niveis de uma vez viram DUAS cartas, uma depois
+// da outra. Perder um nivel porque dois cairam no mesmo quadro e um bug que
+// nao aparece na tela — a carta some e ninguem percebe que era para ter vindo
+// outra. Tambem e aqui que se prova que a carta congela a simulacao.
+function checarFilaDeCartas() {
+  const estado = novoEstado(SEMENTE + 6);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+
+  // Inimigos vivos, parados e DENTRO do alcance da arma, montados a mao. Com a
+  // arena vazia o teste de congelamento fica verde mesmo com atualizarInimigos
+  // ou atualizarArmas rodando na tela de carta — nao ha o que se mexer. Estes
+  // tres sao a unica coisa que separa "a simulacao congelou" de "nao havia
+  // simulacao nenhuma para congelar".
+  const alvos = [];
+  for (let i = 0; i < 3; i += 1) {
+    const inimigo = spawnInimigo(estado);
+    if (!inimigo) falhar(0, 'spawnInimigo devolveu null montando o cenario de congelamento');
+    inimigo.x = player.x + 90 + i * 25;
+    inimigo.y = player.y + (i - 1) * 30;
+    inimigo.vx = 0;
+    inimigo.vy = 0;
+    alvos.push(inimigo);
+  }
+
+  // XP de dois niveis de uma vez, exatamente como uma horda que morre junto.
+  player.xp = xpParaSubir(1) + xpParaSubir(2);
+  atualizar(estado, PASSO);
+
+  if (estado.tela !== TELAS.CARTA) {
+    falhar(0, `o jogador subiu de nivel e a tela continuou "${estado.tela}": a carta nao abriu`);
+  }
+  if (player.nivel !== 3) {
+    falhar(
+      0,
+      `o jogador foi para o nivel ${player.nivel} com XP de dois niveis (esperava 3): ` +
+        'o laco de subir de nivel e `if` em vez de `while`?'
+    );
+  }
+  if (estado.cartas.fila !== 2) {
+    falhar(0, `fila de cartas em ${estado.cartas.fila} depois de dois niveis (esperava 2)`);
+  }
+  if (estado.cartas.opcoes.length !== CONTEUDO.cartas.quantidade) {
+    falhar(
+      0,
+      `a carta abriu com ${estado.cartas.opcoes.length} opcoes, content.js pede ${CONTEUDO.cartas.quantidade}`
+    );
+  }
+
+  // Congelamento: com a carta aberta e o jogador empurrando para a direita, o
+  // mundo nao pode andar um milimetro. Cada sistema tem seu proprio sinal —
+  // jogador, cronometro, inimigos, arma e projeteis — porque a fase 07 vai
+  // congelar de novo para a loja e a 12 vai mexer no update por causa do
+  // juice: se uma linha sobrar rodando, e preciso saber QUAL.
+  const armaViva = player.armas[0];
+  if (!armaViva) falhar(0, 'o jogador chegou na carta sem arma nenhuma: o cenario de congelamento nao vale');
+  // Um orbe parado DENTRO do raio do ima, criado depois de a carta abrir: se
+  // atualizarOrbes() continuar rodando, ele sai do lugar e e coletado. Sem
+  // ele, a tela de carta podia aspirar XP a noite inteira sem teste reclamar.
+  const orbeParado = soltarOrbeXp(estado, player.x + CONTEUDO.jogador.raioColeta * 0.5, player.y, 1);
+  if (!orbeParado) falhar(0, 'soltarOrbeXp devolveu null montando o cenario de congelamento');
+  orbeParado.vx = 0;
+  orbeParado.vy = 0;
+  const antes = {
+    x: player.x,
+    y: player.y,
+    hp: player.hp,
+    xp: player.xp,
+    decorrido: estado.run.avaliacao.decorrido,
+    inimigos: estado.enemies.length,
+    cooldown: armaViva.cooldown,
+    projeteis: estado.projectiles.length,
+    projetilX: estado.projectiles.length > 0 ? estado.projectiles[0].x : 0,
+    orbes: estado.xpOrbs.length,
+    orbeX: orbeParado.x,
+    alvos: alvos.map((e) => ({ ativo: e.ativo, x: e.x, y: e.y, hp: e.hp })),
+  };
+  estado.input.eixoX = 1;
+  for (let i = 0; i < TICKS_CONGELADO; i += 1) atualizar(estado, PASSO);
+  estado.input.eixoX = 0;
+
+  if (player.x !== antes.x || player.y !== antes.y) {
+    falhar(0, `o jogador andou ${(player.x - antes.x).toFixed(2)}px com a carta aberta: a simulacao nao congelou`);
+  }
+  if (estado.run.avaliacao.decorrido !== antes.decorrido) {
+    falhar(0, 'o cronometro da avaliacao andou com a carta aberta');
+  }
+  // So o orbe PARADO acusa atualizarOrbes, e ele vem antes do teste de hp/xp
+  // porque coletar um orbe tambem mexe no xp. A CONTAGEM de orbes fica para o
+  // fim, com texto neutro: ela sobe quando a arma mata um inimigo atras da
+  // carta, e acusar atualizarOrbes por isso manda o proximo agente ler o
+  // arquivo errado.
+  if (orbeParado.x !== antes.orbeX || !orbeParado.ativo) {
+    falhar(
+      0,
+      `o orbe parado saiu ${(orbeParado.x - antes.orbeX).toFixed(2)}px${orbeParado.ativo ? '' : ' e foi coletado'} ` +
+        'com a carta aberta: atualizarOrbes() roda na tela de carta?'
+    );
+  }
+  if (player.hp !== antes.hp || player.xp !== antes.xp) {
+    falhar(
+      0,
+      `o jogador perdeu hp (${antes.hp} -> ${player.hp}) ou ganhou xp (${antes.xp} -> ${player.xp}) ` +
+        'com a carta aberta'
+    );
+  }
+  if (armaViva.cooldown !== antes.cooldown) {
+    falhar(
+      0,
+      `o cooldown da arma foi de ${antes.cooldown.toFixed(3)} para ${armaViva.cooldown.toFixed(3)} com a carta ` +
+        'aberta: atualizarArmas() roda na tela de carta?'
+    );
+  }
+  if (
+    estado.projectiles.length !== antes.projeteis ||
+    (estado.projectiles.length > 0 && estado.projectiles[0].x !== antes.projetilX)
+  ) {
+    falhar(
+      0,
+      `os projeteis andaram (${antes.projeteis} -> ${estado.projectiles.length} vivos) com a carta aberta: ` +
+        'atualizarArmas() roda na tela de carta?'
+    );
+  }
+  if (estado.enemies.length !== antes.inimigos) {
+    falhar(
+      0,
+      `a arena tinha ${antes.inimigos} inimigos e ficou com ${estado.enemies.length} durante a carta: ` +
+        'o spawn (ou a morte) continua rodando na tela de carta'
+    );
+  }
+  alvos.forEach((e, i) => {
+    const antigo = antes.alvos[i];
+    if (e.ativo !== antigo.ativo || e.x !== antigo.x || e.y !== antigo.y || e.hp !== antigo.hp) {
+      falhar(
+        0,
+        `o inimigo ${i} andou ${Math.hypot(e.x - antigo.x, e.y - antigo.y).toFixed(2)}px e foi de ` +
+          `${antigo.hp} para ${e.hp} de hp com a carta aberta: atualizarInimigos() roda na tela de carta?`
+      );
+    }
+  });
+  // Rede final, de texto neutro: orbe a mais so aparece se alguem morreu atras
+  // da carta, e as verificacoes acima ja apontaram o culpado quando ele existe.
+  if (estado.xpOrbs.length !== antes.orbes) {
+    falhar(
+      0,
+      `a arena tinha ${antes.orbes} orbes e ficou com ${estado.xpOrbs.length} durante a carta: ` +
+        'alguem matou inimigo atras da carta'
+    );
+  }
+
+  const versaoPrimeira = estado.cartas.versao;
+  if (!escolherCarta(estado, 0)) falhar(0, 'escolherCarta(0) recusou a primeira carta');
+  atualizar(estado, PASSO);
+
+  if (estado.tela !== TELAS.CARTA) {
+    falhar(
+      0,
+      `depois da primeira escolha a tela virou "${estado.tela}": a segunda carta da fila foi comida, ` +
+        'dois niveis juntos deram uma carta so'
+    );
+  }
+  if (estado.cartas.versao === versaoPrimeira) {
+    falhar(0, 'a segunda carta manteve a versao da primeira: a UI nao redesenharia as opcoes');
+  }
+  if (!escolherCarta(estado, 0)) falhar(0, 'escolherCarta(0) recusou a segunda carta');
+
+  // apontarCarta e o que o mouse (mouseenter) e o foco do DOM chamam — sem
+  // trilho, ela podia ser esvaziada e o realce voltaria a nao seguir o mouse,
+  // que foi o bloqueio da revisao. Aponta-se a ULTIMA opcao com a escolha ja
+  // registrada: prova de uma vez que ela move o cursor, que apontar NAO mexe
+  // na escolha pendente (a carta levada continua sendo a 0, e a arma chega ao
+  // nivel 3 logo abaixo) e deixa o cursor fora do zero para a carta seguinte,
+  // que e o que da dente a assercao de reset.
+  const ultimaOpcao = estado.cartas.opcoes.length - 1;
+  if (!apontarCarta(estado, ultimaOpcao)) falhar(0, `apontarCarta(${ultimaOpcao}) recusou uma opcao valida`);
+  if (estado.cartas.selecionada !== ultimaOpcao) {
+    falhar(
+      0,
+      `apontarCarta(${ultimaOpcao}) devolveu true mas o cursor ficou em ${estado.cartas.selecionada}: ` +
+        'apontar nao escreve em cartas.selecionada, e o mouse nao realca o que aponta'
+    );
+  }
+  if (apontarCarta(estado, estado.cartas.opcoes.length)) {
+    falhar(0, 'apontarCarta aceitou um indice fora da faixa: um clique atrasado escolheria carta inexistente');
+  }
+  if (estado.cartas.selecionada !== ultimaOpcao) {
+    falhar(0, 'apontarCarta recusou o indice invalido mas mexeu no cursor assim mesmo');
+  }
+
+  atualizar(estado, PASSO);
+
+  if (estado.tela !== TELAS.AVALIACAO) {
+    falhar(0, `a fila esvaziou e a tela ficou em "${estado.tela}": a carta nao devolveu o jogo`);
+  }
+  if (estado.cartas.fila !== 0 || estado.cartas.escolhidas !== 2) {
+    falhar(0, `fila=${estado.cartas.fila} escolhidas=${estado.cartas.escolhidas} depois das duas cartas`);
+  }
+  // O bot pegou a primeira opcao duas vezes; com uma arma so em content.js ela
+  // e sempre "+1 nivel no Café". Se o efeito nao tivesse sido aplicado, a arma
+  // estaria parada no nivel 1 e nada mais neste teste acusaria.
+  const arma = estado.player.armas[0];
+  if (!arma || arma.nivel !== 3) {
+    falhar(0, `a arma ficou no nivel ${arma ? arma.nivel : '(nenhuma)'} depois de duas cartas de +1 nivel`);
+  }
+
+  // Navegacao por teclado, que e o plano B da apresentacao se o mouse falhar.
+  // O cursor chegou aqui na ultima opcao, posto por apontarCarta la em cima:
+  // sem isso a assercao de reset passaria de graca, porque a escolha anterior
+  // teria deixado `selecionada` em 0 sozinha.
+  if (estado.cartas.selecionada !== ultimaOpcao) {
+    falhar(0, `o cursor apontado antes da escolha nao sobreviveu a ela (ficou em ${estado.cartas.selecionada})`);
+  }
+  player.xp = xpParaSubir(player.nivel);
+  atualizar(estado, PASSO);
+  if (estado.tela !== TELAS.CARTA) falhar(0, 'terceiro nivel nao abriu carta');
+  if (estado.cartas.selecionada !== 0) {
+    falhar(
+      0,
+      `a carta abriu com o cursor na opcao ${estado.cartas.selecionada}: abrirCarta() nao reseta a selecao ` +
+        'e o Enter levaria a carta que o jogador apontou na carta ANTERIOR'
+    );
+  }
+  moverSelecaoCarta(estado, -1);
+  if (estado.cartas.selecionada !== estado.cartas.opcoes.length - 1) {
+    falhar(0, `seta para tras deixou o cursor em ${estado.cartas.selecionada}: a navegacao nao da a volta`);
+  }
+  moverSelecaoCarta(estado, 1);
+  if (estado.cartas.selecionada !== 0) falhar(0, 'seta para frente nao voltou o cursor ao inicio');
+}
+
+// Criterio de aceite: com todas as armas no nivel maximo a carta AINDA abre e
+// AINDA e escolhivel. Sem a carta de consolo o jogo travaria numa tela de
+// escolha sem escolha — e isso acontece no fim da avaliacao, que e o pior
+// momento possivel.
+function checarCartasNoMaximo() {
+  const estado = novoEstado(SEMENTE + 7);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  for (const dados of CONTEUDO.armas) {
+    equiparArma(estado, dados.id);
+    let subidas = 0;
+    while (subirNivelArma(estado, dados.id)) {
+      subidas += 1;
+      if (subidas > 50) falhar(0, 'subirNivelArma nunca devolve false montando o cenario de nivel maximo');
+    }
+  }
+
+  const player = estado.player;
+  player.hp = Math.max(1, player.hpMax - CONTEUDO.cartas.consolo.valor);
+  player.xp = xpParaSubir(player.nivel);
+  limparInimigos(estado);
+  atualizar(estado, PASSO);
+
+  if (estado.tela !== TELAS.CARTA) {
+    falhar(0, 'com tudo no nivel maximo o nivel novo nao abriu carta nenhuma');
+  }
+  estado.cartas.opcoes.forEach((opcao, i) => {
+    if (!opcao.tipo || !opcao.nome || !opcao.emoji) {
+      falhar(0, `opcao ${i} veio vazia com tudo no maximo: falta a carta de consolo de content.js`);
+    }
+    if (opcao.tipo === 'arma-nivel') {
+      falhar(0, `opcao ${i} oferece +1 nivel numa arma ja no maximo (${opcao.id})`);
+    }
+  });
+
+  const hpAntes = player.hp;
+  const ultima = estado.cartas.opcoes.length - 1;
+  if (!escolherCarta(estado, ultima)) falhar(0, `escolherCarta(${ultima}) recusou a ultima opcao`);
+  limparInimigos(estado);
+  atualizar(estado, PASSO);
+
+  if (estado.tela !== TELAS.AVALIACAO) {
+    falhar(0, `a carta de consolo nao fechou a tela (ficou em "${estado.tela}")`);
+  }
+  if (player.hp <= hpAntes) {
+    falhar(0, `a carta de consolo nao curou (hp ${hpAntes} -> ${player.hp}): o efeito "cura" foi aplicado?`);
+  }
+}
+
+// O sorteio das cartas passa pelo rng com semente — se escapasse para
+// Math.random(), nada aqui seria reproduzivel. Com uma arma so em content.js o
+// sorteio e trivial, entao o cenario injeta armas de teste: e a unica cobertura
+// que a carta "arma nova" tem hoje, e ela e metade da regra da tarefa 4.
+const SEMENTES_SORTEIO = 12;
+
+function opcoesDoPrimeiroNivel(semente) {
+  const estado = novoEstado(semente);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+  estado.player.xp = xpParaSubir(1);
+  atualizar(estado, PASSO);
+  if (estado.tela !== TELAS.CARTA) falhar(0, 'o cenario de sorteio nao chegou na carta');
+  return estado;
+}
+
+function checarSorteioDeCartas() {
+  const originais = CONTEUDO.armas.slice();
+  const base = CONTEUDO.armas[0];
+  // Armas de teste: mesmos numeros do Café (o array de niveis e so leitura),
+  // id e nome proprios. Somem no finally — a fase 03 aprendeu na marra que
+  // restauracao de conteudo nao pode atravessar outra edicao.
+  for (const sufixo of ['a', 'b', 'c']) {
+    CONTEUDO.armas.push({ ...base, id: `teste-${sufixo}`, nome: `Teste ${sufixo}` });
+  }
+
+  try {
+    const assinatura = (estado) => estado.cartas.opcoes.map((o) => `${o.tipo}:${o.id}`).join(' | ');
+    const primeira = assinatura(opcoesDoPrimeiroNivel(SEMENTE + 8));
+    const repetida = assinatura(opcoesDoPrimeiroNivel(SEMENTE + 8));
+    if (primeira !== repetida) {
+      falhar(0, `a mesma semente sorteou cartas diferentes: [${primeira}] contra [${repetida}]`);
+    }
+
+    const vistas = new Set();
+    for (let i = 0; i < SEMENTES_SORTEIO; i += 1) {
+      const estado = opcoesDoPrimeiroNivel(SEMENTE + 100 + i);
+      vistas.add(assinatura(estado));
+
+      const ids = new Set();
+      for (const opcao of estado.cartas.opcoes) {
+        if (opcao.tipo !== 'arma-nova' && opcao.tipo !== 'arma-nivel') continue;
+        if (ids.has(opcao.id)) falhar(0, `a mesma arma (${opcao.id}) apareceu duas vezes na mesma carta`);
+        ids.add(opcao.id);
+        const dados = dadosDaArma(opcao.id);
+        if (opcao.nivelProximo > dados.niveis.length) {
+          falhar(0, `carta oferecendo nivel ${opcao.nivelProximo} de ${opcao.id}, o maximo e ${dados.niveis.length}`);
+        }
+      }
+    }
+    if (vistas.size < 2) {
+      falhar(
+        0,
+        `${SEMENTES_SORTEIO} sementes diferentes sortearam sempre as mesmas cartas (${[...vistas][0]}): ` +
+          'o sorteio nao esta passando pelo rng'
+      );
+    }
+
+    // Escolher uma carta de arma nova precisa EQUIPAR a arma. Com uma arma so
+    // em content.js este caminho nao roda em corrida nenhuma.
+    let equipou = false;
+    for (let i = 0; i < SEMENTES_SORTEIO && !equipou; i += 1) {
+      const estado = opcoesDoPrimeiroNivel(SEMENTE + 200 + i);
+      const indice = estado.cartas.opcoes.findIndex((o) => o.tipo === 'arma-nova');
+      if (indice < 0) continue;
+      const id = estado.cartas.opcoes[indice].id;
+      const antes = estado.player.armas.length;
+      escolherCarta(estado, indice);
+      limparInimigos(estado);
+      atualizar(estado, PASSO);
+      if (estado.player.armas.length !== antes + 1 || !estado.player.armas.some((a) => a.id === id)) {
+        falhar(
+          0,
+          `a carta de arma nova (${id}) nao equipou nada: player.armas ficou com ${estado.player.armas.length}`
+        );
+      }
+      equipou = true;
+    }
+    if (!equipou) {
+      falhar(0, 'nenhuma semente ofereceu arma nova com 3 armas de teste disponiveis: o sorteio ignora arma-nova?');
+    }
+  } finally {
+    CONTEUDO.armas.length = 0;
+    CONTEUDO.armas.push(...originais);
+  }
+}
+
+// O numero que o contrato pede: o nivel que o bot atinge em 60s. O HP e
+// segurado porque o que se mede aqui e a curva de XP, nao a sobrevivencia — o
+// bot circular morre por volta dos 57s desde a fase 03 e a avaliacao
+// reiniciaria no meio da medida.
+function checarProgressao() {
+  const estado = novoEstado(SEMENTE + 5);
+  iniciarAvaliacao(estado);
+
+  let cartas = 0;
+  let orbesPico = 0;
+  let xpColetado = 0;
+  let xpSoltado = 0;
+  let mortos = 0;
+
+  for (let tick = 1; tick <= TICKS_PROGRESSAO; tick += 1) {
+    botCircular(estado, tick);
+    estado.player.hp = estado.player.hpMax;
+    try {
+      atualizar(estado, PASSO);
+    } catch (e) {
+      falhar(tick, `excecao na corrida de progressao: ${e && e.stack ? e.stack : e}`);
+    }
+    if (estado.tela === TELAS.CARTA && escolherCarta(estado, 0)) cartas += 1;
+
+    if (estado.xpOrbs.length > orbesPico) orbesPico = estado.xpOrbs.length;
+    for (const evento of estado.eventos) {
+      if (evento.tipo === 'xp-coletado') xpColetado += evento.dados;
+      if (evento.tipo === 'inimigo-morto') {
+        mortos += 1;
+        xpSoltado += evento.dados.xp;
+      }
+    }
+    estado.eventos.length = 0;
+  }
+
+  const nivel = estado.player.nivel;
+  if (xpColetado <= 0) {
+    falhar(TICKS_PROGRESSAO, `${mortos} inimigos morreram e nenhum XP foi coletado: o orbe e atraido e recolhido?`);
+  }
+  if (cartas === 0) falhar(TICKS_PROGRESSAO, 'o jogador nao subiu de nivel nenhuma vez em 60s');
+  if (cartas !== estado.cartas.escolhidas) {
+    falhar(TICKS_PROGRESSAO, `o bot escolheu ${cartas} cartas mas o estado contou ${estado.cartas.escolhidas}`);
+  }
+  if (estado.player.armas[0].nivel === 1) {
+    falhar(TICKS_PROGRESSAO, `${cartas} cartas escolhidas e a arma continua no nivel 1: a escolha aplica o efeito?`);
+  }
+  if (nivel < NIVEL_MINIMO_60S || nivel > NIVEL_MAXIMO_60S) {
+    falhar(
+      TICKS_PROGRESSAO,
+      `o bot chegou ao nivel ${nivel} em 60s, fora da faixa [${NIVEL_MINIMO_60S}, ${NIVEL_MAXIMO_60S}] — ` +
+        'o design §3 pede nivel 5-6; ajuste CONTEUDO.xp.porNivel ou jogador.raioColeta'
+    );
+  }
+  const pool = poolOrbes(estado);
+  if (pool.criados !== pool.capacidade) {
+    falhar(TICKS_PROGRESSAO, `pool de orbes fabricou ${pool.criados} objetos para capacidade ${pool.capacidade}`);
+  }
+  const problema = pool.verificar();
+  if (problema) falhar(TICKS_PROGRESSAO, `pool de orbes inconsistente: ${problema}`);
+
+  // Conservacao de XP. O bot circular coleta menos da metade do que derruba
+  // (ele passa longe de quem morreu do outro lado da arena), e olhar so esse
+  // numero nao distingue "orbe esperando no chao" de "orbe que sumiu sem ser
+  // coletado nem liberado". Esta conta distingue: todo XP que saiu de um
+  // inimigo ou esta no jogador ou esta num orbe vivo.
+  let xpNoChao = 0;
+  for (const orbe of estado.xpOrbs) xpNoChao += orbe.valor;
+  if (pool.reciclados !== 0) {
+    falhar(
+      TICKS_PROGRESSAO,
+      `a pool de orbes reciclou ${pool.reciclados} orbes vivos (teto ${pool.capacidade}) — ` +
+        'XP sumindo por lotacao; suba arena.limites.xpOrbs ou faca o orbe expirar'
+    );
+  }
+  if (xpColetado + xpNoChao !== xpSoltado) {
+    falhar(
+      TICKS_PROGRESSAO,
+      `XP nao fecha: ${xpSoltado} soltos por ${mortos} mortes, ${xpColetado} coletados e ${xpNoChao} no chao ` +
+        `(faltam ${xpSoltado - xpColetado - xpNoChao}) — orbe nascendo fora da pool ou liberado sem ser coletado`
+    );
+  }
+
+  return { nivel, cartas, orbesPico, xpColetado, xpSoltado, xpNoChao, mortos };
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -598,7 +1171,13 @@ checarArmasDoConteudo();
 checarNiveisDaArma();
 checarGuardaDeGeracao();
 checarMemoriaDePerfuracao();
+checarCartasDoConteudo();
+checarImaDeOrbes();
+checarFilaDeCartas();
+checarCartasNoMaximo();
+checarSorteioDeCartas();
 const corridaArma = checarArmaSozinha();
+const progressao = checarProgressao();
 
 const estado = novoEstado(SEMENTE);
 iniciarAvaliacao(estado);
@@ -612,6 +1191,11 @@ function rodarTick(estado, tick, { reiniciarAvaliacao = true } = {}) {
   } catch (e) {
     falhar(tick, `excecao em atualizar(): ${e && e.stack ? e.stack : e}`);
   }
+
+  // O bot sempre pega a primeira carta. Sem isso a simulacao congela na tela
+  // de carta e a corrida inteira para no primeiro nivel — que e exatamente o
+  // que aconteceu quando esta fase ligou a pausa antes de ensinar o bot.
+  if (estado.tela === TELAS.CARTA && escolherCarta(estado, 0)) contadores.cartas += 1;
 
   registrarMovimento(estado);
   registrarDano(estado);
@@ -729,5 +1313,15 @@ console.log(
     ` reciclados=${poolProjetil.reciclados}` +
     ` · bot parado: mortos=${corridaArma.mortos} disparos=${corridaArma.disparos}` +
     ` pico=${corridaArma.pico}/${corridaArma.teto}` +
-    ` · picos: ${picosTexto}`
+    ` · picos: ${picosTexto}` +
+    // O numero de balanceamento que as fases seguintes herdam: nivel atingido
+    // em 60s de avaliacao, com o bot pegando sempre a primeira carta.
+    // Corrida propria, com semente propria (SEMENTE+5) e HP segurado: por isso
+    // esta linha nao muda entre `smoke` e `smoke:carga` — o modo de carga so
+    // mexe em spawn.maxSimultaneos, que a curva de spawn nem alcanca em 60s.
+    `\n  progressao em 60s (corrida dedicada, semente fixa): NIVEL ${progressao.nivel}` +
+    ` · cartas=${progressao.cartas} · xp ${progressao.xpColetado} coletado` +
+    ` + ${progressao.xpNoChao} no chao = ${progressao.xpSoltado} solto por ${progressao.mortos} mortes` +
+    ` · pico de orbes no chao=${progressao.orbesPico}` +
+    `\n  cartas na corrida principal=${contadores.cartas}`
 );

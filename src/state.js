@@ -1,6 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { criarRng } from './rng.js';
-import { criarRastro } from './player.js';
+import { criarRastro, xpParaSubir } from './player.js';
 import { liberarPoolsDoEstado } from './pool.js';
 
 // O estado do jogo inteiro em um objeto so, sem classes e sem singleton
@@ -12,6 +12,7 @@ export const TELAS = {
   MENU: 'menu',
   AVALIACAO: 'avaliacao',
   PAUSA: 'pausa',
+  CARTA: 'carta',
 };
 
 export function novoEstado(seed = 1) {
@@ -37,6 +38,8 @@ export function novoEstado(seed = 1) {
     // so empilha, nunca chama audio direto.
     eventos: [],
 
+    cartas: novasCartas(),
+
     run: novaRun(),
   };
   return estado;
@@ -55,13 +58,46 @@ export function novoPlayer() {
     velocidade: cfg.velocidade,
     nivel: 1,
     xp: 0,
-    xpProximo: cfg.xpBase,
+    xpProximo: xpParaSubir(1),
     invulneravel: 0, // segundos restantes de i-frames
     vivo: true,
     armas: [],
     // Buffer circular de tamanho fixo para o rastro visual — alocado aqui,
     // uma vez por avaliacao, nunca dentro do update (restricao 5).
     rastro: criarRastro(),
+  };
+}
+
+// A tela de carta e o unico ponto em que a simulacao para esperando o jogador.
+// `escolha` e a porta por onde a decisao entra, do mesmo jeito que `input`
+// traz o teclado: o DOM escreve, o update le. Nada aqui e funcao nem
+// referencia de no — o estado continua serializavel.
+export function novasCartas() {
+  const quantidade = CONTEUDO.cartas.quantidade;
+  const opcoes = [];
+  // Os slots sao fixos e sempre preenchidos (a carta de consolo completa o que
+  // faltar), entao `opcoes.length` nunca muda e nenhum objeto nasce no update.
+  for (let i = 0; i < quantidade; i += 1) opcoes.push(novaOpcao());
+  return {
+    fila: 0, // niveis ganhos e ainda nao gastos: dois de uma vez viram duas cartas
+    opcoes,
+    selecionada: 0, // cursor do teclado
+    escolha: null, // indice escolhido; a simulacao consome e zera
+    versao: 0, // muda a cada sorteio novo; e como a UI sabe que precisa redesenhar
+    escolhidas: 0, // quantas cartas o jogador pegou nesta avaliacao
+  };
+}
+
+function novaOpcao() {
+  return {
+    tipo: '',
+    id: '',
+    nome: '',
+    descricao: '',
+    emoji: '',
+    nivelAtual: 0,
+    nivelProximo: 0,
+    valor: 0,
   };
 }
 
@@ -125,6 +161,7 @@ export function iniciarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0) {
   estado.run.avaliacaoIndex = avaliacaoIndex;
   estado.run.avaliacao = novaAvaliacao(periodoIndex, avaliacaoIndex);
   estado.player = novoPlayer();
+  estado.cartas = novasCartas();
   // Nunca esvazie essas colecoes na mao: elas sao as listas de ativos das
   // pools, e `length = 0` tira os objetos de `ativos` sem devolve-los a
   // `reserva`. Reatribuir (`estado.enemies = []`) e pior ainda — a pool

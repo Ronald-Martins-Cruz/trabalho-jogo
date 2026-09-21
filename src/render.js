@@ -12,8 +12,15 @@ export function desenhar(estado, ctx) {
   ctx.fillRect(0, 0, largura, altura);
   desenharGrade(ctx, largura, altura, v);
 
-  if (estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.PAUSA) {
+  // A carta congela a partida, entao a arena continua desenhada por baixo
+  // dela — igual a pausa, so que mais escura.
+  if (
+    estado.tela === TELAS.AVALIACAO ||
+    estado.tela === TELAS.PAUSA ||
+    estado.tela === TELAS.CARTA
+  ) {
     desenharArena(ctx, largura, altura, v);
+    desenharOrbes(ctx, estado.xpOrbs, v);
     desenharInimigos(ctx, estado.enemies, v);
     desenharProjeteis(ctx, estado.projectiles, v);
     desenharJogador(ctx, estado.player, v);
@@ -21,6 +28,9 @@ export function desenhar(estado, ctx) {
 
   if (estado.tela === TELAS.PAUSA) {
     ctx.fillStyle = v.corSombraPausa;
+    ctx.fillRect(0, 0, largura, altura);
+  } else if (estado.tela === TELAS.CARTA) {
+    ctx.fillStyle = v.corSombraCarta;
     ctx.fillRect(0, 0, largura, altura);
   }
 }
@@ -62,6 +72,17 @@ function desenharProjeteis(ctx, projeteis, v) {
   for (let i = 0; i < projeteis.length; i += 1) {
     const p = projeteis[i];
     desenharEmoji(ctx, p.emoji, p.x, p.y, p.raio * v.emojiProjetilFator, v);
+  }
+}
+
+// Por baixo de todo mundo: orbe nenhum pode esconder um inimigo que vem
+// chegando.
+function desenharOrbes(ctx, orbes, v) {
+  // Todo orbe tem o mesmo raio (CONTEUDO.xpOrbe.raio), so o valor muda — o
+  // tamanho sai da conta uma vez, fora do laco.
+  const tamanho = CONTEUDO.xpOrbe.raio * v.emojiOrbeFator;
+  for (let i = 0; i < orbes.length; i += 1) {
+    desenharEmoji(ctx, CONTEUDO.xpOrbe.emoji, orbes[i].x, orbes[i].y, tamanho, v);
   }
 }
 

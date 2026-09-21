@@ -1,4 +1,5 @@
 import { CONTEUDO } from '../data/content.js';
+import { obterPool } from './pool.js';
 
 // Movimento, HP e coleta do jogador. Nunca le teclado nem DOM: a entrada ja
 // chega pronta em estado.input (eixoX/eixoY), escrita por main.js/ui.js. Isso
@@ -137,11 +138,122 @@ export function receberDano(estado, dano) {
   return true;
 }
 
-// Contrato para a fase 04 (xp/coleta): um orbe/item so e atraido/coletado
-// quando esta dentro deste raio.
+// Um orbe/item so e atraido quando esta dentro deste raio. A coleta em si
+// acontece ao encostar (raio do jogador + raio do orbe), nao aqui.
 export function dentroDoRaioDeColeta(player, x, y) {
   const raio = CONTEUDO.jogador.raioColeta;
   const dx = player.x - x;
   const dy = player.y - y;
   return dx * dx + dy * dy <= raio * raio;
+}
+
+// Cura: unica porta de subida de HP, como receberDano() e a unica de descida.
+// A carta de consolo (cards.js) chama isto; fase 07 vai querer o mesmo para
+// coringa e item de loja. Devolve quanto foi realmente curado.
+export function curar(estado, quantidade) {
+  const player = estado.player;
+  if (!player.vivo || !(quantidade > 0)) return 0;
+  const curado = Math.min(quantidade, player.hpMax - player.hp);
+  player.hp += curado;
+  return curado;
+}
+
+// Curva de XP. Tabela, nao formula (CONTEUDO.xp.porNivel): `nivel` e o nivel
+// ATUAL e o retorno e quanto falta para o proximo. Fora da tabela o ultimo
+// limiar repete, entao a funcao nunca devolve undefined nem 0 — um 0 aqui
+// deixaria o laco de subir de nivel girando para sempre.
+export function xpParaSubir(nivel) {
+  const tabela = CONTEUDO.xp.porNivel;
+  const i = Math.min(Math.max(Math.floor(nivel), 1), tabela.length) - 1;
+  return tabela[i];
+}
+
+// ------------------------------------------------------------ orbes de xp
+
+export function poolOrbes(estado) {
+  return obterPool(estado, 'xpOrbs', fabricarOrbe).sincronizar();
+}
+
+function fabricarOrbe() {
+  return { ativo: false, slot: -1, nasc: 0, x: 0, y: 0, vx: 0, vy: 0, valor: 0 };
+}
+
+// Chamado por enemies.js no instante da morte, com o `xp` do tipo de inimigo.
+// O orbe nasce com um empurraozinho em direcao sorteada (todo sorteio passa
+// pelo rng com semente) so para dois inimigos mortos juntos nao virarem um
+// orbe so na tela.
+export function soltarOrbeXp(estado, x, y, valor) {
+  if (!(valor > 0)) return null;
+  const cfg = CONTEUDO.xpOrbe;
+  const orbe = poolOrbes(estado).obter();
+  const angulo = estado.rng.float() * Math.PI * 2;
+  // Grampeado na arena: inimigo morto do lado de fora (eles nascem fora da
+  // borda) deixaria um orbe inalcancavel, e XP que nao da para pegar e pior
+  // do que XP que nao existe.
+  const margem = cfg.raio;
+  orbe.x = Math.min(Math.max(x, margem), CONTEUDO.arena.largura - margem);
+  orbe.y = Math.min(Math.max(y, margem), CONTEUDO.arena.altura - margem);
+  orbe.vx = Math.cos(angulo) * cfg.impulso;
+  orbe.vy = Math.sin(angulo) * cfg.impulso;
+  orbe.valor = valor;
+  return orbe;
+}
+
+// Orbes nao expiram: quem morreu longe fica esperando o jogador passar. O teto
+// da pool (arena.limites.xpOrbs) e a unica rede — cheia, ela recicla o mais
+// antigo, que e exatamente o orbe mais velho esquecido num canto.
+export function atualizarOrbes(estado, dt) {
+  const pool = poolOrbes(estado);
+  const orbes = pool.ativos;
+  if (orbes.length === 0) return;
+
+  const player = estado.player;
+  const cfg = CONTEUDO.xpOrbe;
+  const raioIma = CONTEUDO.jogador.raioColeta;
+  const alcanceColeta = player.raio + cfg.raio;
+  const freio = Math.max(0, 1 - cfg.atrito * dt);
+
+  // De tras para frente: liberar() e swap-remove.
+  for (let i = orbes.length - 1; i >= 0; i -= 1) {
+    const orbe = orbes[i];
+    const dx = player.x - orbe.x;
+    const dy = player.y - orbe.y;
+    const distancia = Math.hypot(dx, dy);
+
+    if (player.vivo && distancia <= raioIma) {
+      // A aceleracao cresce conforme o orbe se aproxima: longe ele apenas
+      // cede, perto ele gruda. E essa rampa, e nao a velocidade maxima, que
+      // da a sensacao de aspirador.
+      const proximidade = distancia > 0 ? 1 - distancia / raioIma : 1;
+      const aceleracao =
+        cfg.aceleracaoMinima + (cfg.aceleracaoMaxima - cfg.aceleracaoMinima) * proximidade;
+      const inverso = distancia > 0 ? 1 / distancia : 0;
+      orbe.vx += dx * inverso * aceleracao * dt;
+      orbe.vy += dy * inverso * aceleracao * dt;
+    } else {
+      orbe.vx *= freio;
+      orbe.vy *= freio;
+    }
+
+    const velocidade = Math.hypot(orbe.vx, orbe.vy);
+    if (velocidade > cfg.velocidadeMaxima) {
+      const fator = cfg.velocidadeMaxima / velocidade;
+      orbe.vx *= fator;
+      orbe.vy *= fator;
+    }
+
+    orbe.x += orbe.vx * dt;
+    orbe.y += orbe.vy * dt;
+
+    if (!player.vivo) continue;
+    const fdx = player.x - orbe.x;
+    const fdy = player.y - orbe.y;
+    if (fdx * fdx + fdy * fdy <= alcanceColeta * alcanceColeta) {
+      // So soma XP. Quem converte XP em nivel (e em carta) e cards.js, que
+      // pode emitir evento — player.js nao importa state.js porque state.js
+      // ja importa criarRastro daqui.
+      player.xp += orbe.valor;
+      pool.liberar(orbe);
+    }
+  }
 }

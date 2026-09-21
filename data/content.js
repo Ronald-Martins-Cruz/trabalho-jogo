@@ -52,6 +52,8 @@ export const CONTEUDO = {
     piscaIntervalo: 0.08, // segundos entre estados do pisca-pisca de i-frames
     emojiInimigoFator: 2.2, // tamanho do emoji = raio do inimigo x este fator
     emojiProjetilFator: 2.6, // tamanho do emoji = raio do projetil x este fator
+    emojiOrbeFator: 2.4, // tamanho do emoji = raio do orbe de xp x este fator
+    corSombraCarta: 'rgba(5, 6, 14, 0.72)', // escurece a arena atras da carta
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -59,13 +61,62 @@ export const CONTEUDO = {
     emoji: '🎓',
     hpMax: 100,
     raio: 14, // raio de colisao
-    raioColeta: 42, // alcance para atrair xp/itens; fase 04 usa, coringa Wi-Fi da Federal multiplica
+    // Raio do ima: dentro dele o orbe de XP e atraido. A coleta mesmo acontece
+    // ao encostar (raio do jogador + raio do orbe). Era 42 na fase 01 e ficou
+    // mesquinho: metade dos orbes do bot morria no chao longe da rota dele.
+    // O coringa Wi-Fi da Federal (fase 07) multiplica este numero.
+    raioColeta: 120,
     velocidade: 190, // px/s, velocidade maxima
     aceleracao: 1400, // px/s^2 ate atingir a velocidade maxima
     atrito: 2000, // px/s^2 de desaceleracao quando o input solta
     iframesDuracao: 1, // segundos de invulnerabilidade apos tomar dano
     rastroTamanho: 14, // pontos guardados para o rastro visual
-    xpBase: 5, // XP do nivel 1 -> 2; fase 04 define a curva
+  },
+
+  // Curva de XP. Tabela explicita de limiares, nao formula: e mais facil de
+  // tunar e de ler num diff. Cada entrada e quanto XP falta para o PROXIMO
+  // nivel — indice 0 = nivel 1 -> 2. Passado o fim da tabela, o ultimo valor
+  // repete (uma avaliacao nunca chega tao longe, mas o coringa errado pode).
+  //
+  // Alvo do design §3: nivel 5-6 em 60s. Acumulado ate o nivel 6 = 68 XP e ate
+  // o 7 = 103; o bot do smoke coleta ~92 XP por avaliacao de 60s, o que o
+  // deixa no nivel 6 em cinco sementes de cinco. Medido junto com
+  // jogador.raioColeta: os dois numeros so fazem sentido em par.
+  xp: {
+    porNivel: [5, 9, 14, 20, 27, 35, 44, 54, 65, 77],
+  },
+
+  // Orbe de XP: nasce onde o inimigo morreu, com o valor `xp` daquele tipo de
+  // inimigo, e e sugado pelo jogador quando entra em jogador.raioColeta. A
+  // aceleracao cresce conforme ele se aproxima — e isso, e nao a velocidade
+  // maxima, que da a sensacao de aspirador.
+  xpOrbe: {
+    emoji: '💡',
+    raio: 7, // px: raio de colisao com o jogador
+    impulso: 90, // px/s do "pop" na direcao sorteada ao nascer
+    atrito: 2.5, // 1/s: freia o impulso do nascimento enquanto ninguem atrai
+    aceleracaoMinima: 260, // px/s^2 na borda do raio de coleta
+    aceleracaoMaxima: 2600, // px/s^2 colado no jogador
+    velocidadeMaxima: 900, // px/s; 15px por quadro, bem abaixo do raio de coleta
+  },
+
+  // A carta que cada nivel abre. `quantidade` e quantas opcoes aparecem; os
+  // pesos decidem o sorteio entre arma nova e +1 nivel numa arma que o jogador
+  // ja tem. Quando nao sobram opcoes validas (tudo no nivel maximo), a carta
+  // de consolo completa — sem ela o jogo travaria numa tela sem escolha no fim
+  // da avaliacao.
+  cartas: {
+    quantidade: 3,
+    pesoArmaNova: 5, // arma nova pesa mais: variedade e o que faz a build
+    pesoArmaNivel: 3,
+    consolo: {
+      id: 'lanche',
+      nome: 'Lanche da Cantina',
+      descricao: 'Sem mais o que aprender agora. Recupera HP.',
+      emoji: '🥪',
+      tipo: 'cura', // nome de um efeito registrado em cards.js
+      valor: 25, // HP recuperado
+    },
   },
 
   // Regras gerais de arma — nao confundir com `armas` logo abaixo, que e a
@@ -138,7 +189,7 @@ export const CONTEUDO = {
       velocidade: 105, // px/s — ~55% do teto do jogador: alcanca quem para, nao quem corre
       dano: 7, // por encostada; os i-frames do jogador limitam a 1 encostada por segundo
       raio: 11,
-      xp: 1, // fase 04 usa
+      xp: 1, // valor do orbe que ele derruba ao morrer
       peso: 1,
     },
   ],
@@ -236,6 +287,15 @@ export const CONTEUDO = {
       menu: 'Menu',
       avaliacao: 'Avaliação',
       pausa: 'Pausa',
+      carta: 'Carta',
+    },
+    // Rotulos que a carta monta com numeros vindos do estado. O texto fixo da
+    // tela (titulo, dica de teclado) mora no index.html.
+    cartas: {
+      novidade: 'Nova arma',
+      nivel: 'Nv.',
+      seta: '→',
+      cura: 'de HP',
     },
   },
 };
@@ -327,9 +387,89 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(conteudo.jogador.atrito, 'jogador.atrito', { min: 1 });
     exigeNumero(conteudo.jogador.iframesDuracao, 'jogador.iframesDuracao', { min: 0 });
     exigeNumero(conteudo.jogador.rastroTamanho, 'jogador.rastroTamanho', { min: 1, max: 200 });
-    exigeNumero(conteudo.jogador.xpBase, 'jogador.xpBase', { min: 1 });
     if (typeof conteudo.jogador.emoji !== 'string' || conteudo.jogador.emoji === '') {
       erros.push('jogador.emoji: ausente ou vazio');
+    }
+  }
+
+  // Curva de XP. E tabela, nao formula: o unico jeito de errar e deixar um
+  // limiar zerado (o laco de subir de nivel nunca fecharia) ou fora de ordem
+  // (o nivel 4 custando menos que o 3 e sempre engano de digitacao, nunca
+  // design).
+  if (exigeObjeto(conteudo.xp, 'xp')) {
+    const tabela = conteudo.xp.porNivel;
+    if (!Array.isArray(tabela) || tabela.length === 0) {
+      erros.push('xp.porNivel: esperava um array nao vazio de limiares');
+    } else {
+      let anterior = 0;
+      tabela.forEach((valor, i) => {
+        if (exigeNumero(valor, `xp.porNivel[${i}]`, { min: 1 })) {
+          if (valor < anterior) {
+            erros.push(`xp.porNivel[${i}]: ${valor} e menor que o limiar anterior (${anterior}) — a curva precisa ser nao-decrescente`);
+          }
+          anterior = valor;
+        }
+      });
+    }
+  }
+
+  // Orbe de XP.
+  if (exigeObjeto(conteudo.xpOrbe, 'xpOrbe')) {
+    exigeNumero(conteudo.xpOrbe.raio, 'xpOrbe.raio', { min: 1 });
+    exigeNumero(conteudo.xpOrbe.impulso, 'xpOrbe.impulso', { min: 0 });
+    exigeNumero(conteudo.xpOrbe.atrito, 'xpOrbe.atrito', { min: 0 });
+    exigeNumero(conteudo.xpOrbe.aceleracaoMinima, 'xpOrbe.aceleracaoMinima', { min: 0 });
+    exigeNumero(conteudo.xpOrbe.velocidadeMaxima, 'xpOrbe.velocidadeMaxima', { min: 1 });
+    if (typeof conteudo.xpOrbe.emoji !== 'string' || conteudo.xpOrbe.emoji === '') {
+      erros.push('xpOrbe.emoji: ausente ou vazio');
+    }
+    // Aceleracao que nao cresce com a proximidade e um orbe rebocado, nao
+    // aspirado: a sensacao de coleta some e ninguem descobre olhando o codigo.
+    if (exigeNumero(conteudo.xpOrbe.aceleracaoMaxima, 'xpOrbe.aceleracaoMaxima', { min: 0 })) {
+      if (conteudo.xpOrbe.aceleracaoMaxima < conteudo.xpOrbe.aceleracaoMinima) {
+        erros.push(
+          `xpOrbe.aceleracaoMaxima: ${conteudo.xpOrbe.aceleracaoMaxima} e menor que aceleracaoMinima ` +
+            `(${conteudo.xpOrbe.aceleracaoMinima}) — o orbe desaceleraria ao chegar perto`
+        );
+      }
+    }
+    // O orbe anda velocidadeMaxima * passo por quadro. Se isso passar do raio
+    // de coleta, ele atravessa o jogador sem ser coletado em vez de grudar.
+    const passo = conteudo.loop && typeof conteudo.loop.passo === 'number' ? conteudo.loop.passo : 1 / 60;
+    const alcanceColeta =
+      (typeof conteudo.jogador.raio === 'number' ? conteudo.jogador.raio : 0) +
+      (typeof conteudo.xpOrbe.raio === 'number' ? conteudo.xpOrbe.raio : 0);
+    if (conteudo.xpOrbe.velocidadeMaxima * passo > alcanceColeta) {
+      erros.push(
+        `xpOrbe.velocidadeMaxima: ${conteudo.xpOrbe.velocidadeMaxima} px/s anda ` +
+          `${(conteudo.xpOrbe.velocidadeMaxima * passo).toFixed(1)}px por quadro e o alcance de coleta e ` +
+          `${alcanceColeta}px — o orbe atravessaria o jogador sem ser coletado`
+      );
+    }
+  }
+
+  // Cartas de nivel.
+  if (exigeObjeto(conteudo.cartas, 'cartas')) {
+    if (exigeNumero(conteudo.cartas.quantidade, 'cartas.quantidade', { min: 1, max: 6 })) {
+      if (!Number.isInteger(conteudo.cartas.quantidade)) {
+        erros.push(`cartas.quantidade: ${conteudo.cartas.quantidade} precisa ser inteiro`);
+      }
+    }
+    const pesoNova = exigeNumero(conteudo.cartas.pesoArmaNova, 'cartas.pesoArmaNova', { min: 0 });
+    const pesoNivel = exigeNumero(conteudo.cartas.pesoArmaNivel, 'cartas.pesoArmaNivel', { min: 0 });
+    if (pesoNova && pesoNivel && conteudo.cartas.pesoArmaNova + conteudo.cartas.pesoArmaNivel <= 0) {
+      erros.push('cartas: os dois pesos sao 0, o sorteio nao teria o que escolher');
+    }
+    // A carta de consolo e o que impede a tela de carta sem escolha nenhuma
+    // quando tudo ja esta no nivel maximo. Ela nao e opcional.
+    if (exigeObjeto(conteudo.cartas.consolo, 'cartas.consolo')) {
+      const consolo = conteudo.cartas.consolo;
+      for (const campo of ['id', 'nome', 'descricao', 'emoji', 'tipo']) {
+        if (typeof consolo[campo] !== 'string' || consolo[campo] === '') {
+          erros.push(`cartas.consolo.${campo}: ausente ou vazio`);
+        }
+      }
+      exigeNumero(consolo.valor, 'cartas.consolo.valor', { min: 0 });
     }
   }
 
