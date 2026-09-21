@@ -1,6 +1,7 @@
 import { CONTEUDO } from '../data/content.js';
 import { criarRng } from './rng.js';
 import { criarRastro } from './player.js';
+import { liberarPoolsDoEstado } from './pool.js';
 
 // O estado do jogo inteiro em um objeto so, sem classes e sem singleton
 // escondido. Quem precisa do estado o recebe como argumento. Todos os campos
@@ -124,10 +125,11 @@ export function iniciarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0) {
   estado.run.avaliacaoIndex = avaliacaoIndex;
   estado.run.avaliacao = novaAvaliacao(periodoIndex, avaliacaoIndex);
   estado.player = novoPlayer();
-  estado.enemies.length = 0;
-  estado.projectiles.length = 0;
-  estado.xpOrbs.length = 0;
-  estado.particles.length = 0;
+  // Nunca esvazie essas colecoes na mao: elas sao as listas de ativos das
+  // pools, e `length = 0` tira os objetos de `ativos` sem devolve-los a
+  // `reserva`. Reatribuir (`estado.enemies = []`) e pior ainda — a pool
+  // continuaria escrevendo no array antigo.
+  liberarPoolsDoEstado(estado);
   irParaTela(estado, TELAS.AVALIACAO);
   emitir(estado, 'avaliacao-inicio', estado.run.avaliacao.id);
 }

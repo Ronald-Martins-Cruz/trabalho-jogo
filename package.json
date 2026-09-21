@@ -7,6 +7,7 @@
   "scripts": {
     "check": "node test/check.mjs",
     "smoke": "node test/smoke.mjs",
+    "smoke:carga": "node test/smoke.mjs --carga",
     "serve": "node test/serve.mjs"
   },
   "license": "MIT"

@@ -107,16 +107,33 @@ export function criarRastro() {
   return { pontos, indice: 0 };
 }
 
-// Contrato para a fase 02 (inimigos) e fases futuras que causam dano: nenhuma
-// delas mexe em hp/invulneravel direto, todas chamam isto. Respeita i-frames
-// sozinho e devolve se o dano realmente foi aplicado.
+// Toda fonte de dano passa por aqui — inimigo encostando (fase 02), e depois
+// modificador e chefe. Ninguem mexe em hp/invulneravel direto. Respeita os
+// i-frames sozinho e devolve se o dano realmente foi aplicado.
+//
+// A morte NAO emite evento nem troca de tela daqui: quem observa `vivo` e o
+// atualizarAvaliacao() de main.js, no mesmo quadro. Assim qualquer fonte de
+// dano futura ganha o jubilamento de graca, sem player.js precisar importar
+// state.js (o que fecharia um ciclo com a importacao de criarRastro).
 export function receberDano(estado, dano) {
   const player = estado.player;
-  if (!player.vivo || player.invulneravel > 0) return false;
+  if (!player.vivo || player.invulneravel > 0 || !(dano > 0)) return false;
 
-  player.hp = Math.max(0, player.hp - dano);
-  player.invulneravel = CONTEUDO.jogador.iframesDuracao;
-  if (player.hp <= 0) player.vivo = false;
+  const aplicado = Math.min(player.hp, dano);
+  player.hp -= aplicado;
+  estado.run.avaliacao.danoTomado += aplicado;
+
+  if (player.hp <= 0) {
+    player.vivo = false;
+    // Morto nao tem i-frames: atualizarPlayer() retorna cedo quando `vivo` e
+    // falso, entao o contador ficaria congelado no valor cheio para sempre —
+    // e o render deixaria o jogador piscando eternamente.
+    player.invulneravel = 0;
+    player.vx = 0;
+    player.vy = 0;
+  } else {
+    player.invulneravel = CONTEUDO.jogador.iframesDuracao;
+  }
   return true;
 }
 

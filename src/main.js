@@ -3,6 +3,7 @@ import { novoEstado, iniciarAvaliacao, irParaTela, emitir, TELAS } from './state
 import { desenhar } from './render.js';
 import { criarUi } from './ui.js';
 import { atualizarPlayer } from './player.js';
+import { atualizarInimigos } from './enemies.js';
 
 // Nada de document/window no topo deste modulo: e o que permite ao node
 // importar `atualizar` e rodar a partida inteira sem navegador.
@@ -31,6 +32,18 @@ function atualizarAvaliacao(estado, dt) {
 
   av.decorrido += dt;
   av.restante = Math.max(0, av.duracao - av.decorrido);
+
+  atualizarInimigos(estado, dt);
+
+  // Unico observador da morte do jogador: qualquer fonte de dano (inimigo
+  // agora, modificador e chefe depois) so precisa zerar o hp via receberDano().
+  // Provisorio, igual ao fim por tempo: a fase 10 poe a tela de fim no lugar
+  // do menu.
+  if (!estado.player.vivo) {
+    emitir(estado, 'jubilado', av.id);
+    irParaTela(estado, TELAS.MENU);
+    return;
+  }
 
   if (av.restante <= 0) {
     av.concluida = true;

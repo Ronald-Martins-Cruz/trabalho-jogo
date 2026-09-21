@@ -50,6 +50,7 @@ export const CONTEUDO = {
     rastroAlphaMax: 0.35,
     rastroRaioFator: 0.55, // multiplica jogador.raio para o raio do ponto do rastro
     piscaIntervalo: 0.08, // segundos entre estados do pisca-pisca de i-frames
+    emojiInimigoFator: 2.2, // tamanho do emoji = raio do inimigo x este fator
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -75,9 +76,54 @@ export const CONTEUDO = {
   // Forma esperada: { id, nome, descricao, emoji, custo, raridade, hook, efeito }
   coringas: [],
 
-  // Inimigos. Fases 02 e 09.
-  // Forma esperada: { id, nome, emoji, hp, velocidade, dano, raio, xp, peso }
-  inimigos: [],
+  // Inimigos. Fase 02 entrega so o inimigo-base; a fase 09 acrescenta
+  // Notificacao, PDF de 300 Paginas e Trabalho em Grupo (design §8).
+  // `peso` e a chance relativa no sorteio de tipo da onda.
+  inimigos: [
+    {
+      id: 'prazo',
+      nome: 'Prazo de Entrega',
+      emoji: '📕',
+      hp: 12,
+      velocidade: 105, // px/s — ~55% do teto do jogador: alcanca quem para, nao quem corre
+      dano: 7, // por encostada; os i-frames do jogador limitam a 1 encostada por segundo
+      raio: 11,
+      xp: 1, // fase 04 usa
+      peso: 1,
+    },
+  ],
+
+  // Curva de spawn, parametrizada pelo segundo de avaliacao
+  // (run.avaliacao.decorrido, nunca estado.tempo). Entre dois pontos o valor e
+  // interpolado linearmente; depois do ultimo ponto, o ultimo vale.
+  // `intervalo` = segundos entre ondas. `porOnda` = inimigos por onda (a parte
+  // fracionaria vira chance de um a mais). O multiplicador global de
+  // dificuldade divide o intervalo e multiplica o tamanho da onda.
+  spawn: {
+    curvaPadrao: 'padrao',
+    curvas: {
+      padrao: [
+        { t: 0, intervalo: 1.6, porOnda: 1 },
+        { t: 15, intervalo: 1.15, porOnda: 2 },
+        { t: 30, intervalo: 0.85, porOnda: 3 },
+        { t: 45, intervalo: 0.65, porOnda: 4 },
+        { t: 60, intervalo: 0.5, porOnda: 5 },
+        { t: 90, intervalo: 0.38, porOnda: 6 },
+      ],
+    },
+    intervaloMinimo: 0.25, // piso duro: nem o modificador mais agressivo passa daqui
+    porOndaMaximo: 8,
+    maxSimultaneos: 180, // teto de jogabilidade, bem abaixo de arena.limites.enemies
+    margemDescarte: 320, // px alem da borda: inimigo que passa disso volta pra pool
+  },
+
+  // Empurrao suave entre inimigos sobrepostos. Sem isso o bando vira uma
+  // mancha unica em cima do jogador e some a leitura visual.
+  separacao: {
+    forca: 150, // px/s no maximo da sobreposicao
+    folga: 3, // px somados aos raios: comecam a se empurrar um pouco antes de encostar
+    gradePasso: 48, // lado da celula da grade espacial que evita o O(n^2)
+  },
 
   // Modificadores de avaliacao (a "regra" daquela prova). Fases 06 e 09.
   // Forma esperada: { id, nome, descricao, emoji, efeito }
@@ -234,6 +280,98 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(conteudo.jogador.xpBase, 'jogador.xpBase', { min: 1 });
     if (typeof conteudo.jogador.emoji !== 'string' || conteudo.jogador.emoji === '') {
       erros.push('jogador.emoji: ausente ou vazio');
+    }
+  }
+
+  // Inimigos: campos que enemies.js le de cada tipo.
+  if (Array.isArray(conteudo.inimigos)) {
+    conteudo.inimigos.forEach((inimigo, i) => {
+      const c = `inimigos[${i}]`;
+      if (typeof inimigo !== 'object' || inimigo === null) return;
+      exigeNumero(inimigo.hp, `${c}.hp`, { min: 1 });
+      exigeNumero(inimigo.velocidade, `${c}.velocidade`, { min: 1 });
+      exigeNumero(inimigo.dano, `${c}.dano`, { min: 0 });
+      exigeNumero(inimigo.raio, `${c}.raio`, { min: 1 });
+      exigeNumero(inimigo.xp, `${c}.xp`, { min: 0 });
+      exigeNumero(inimigo.peso, `${c}.peso`, { min: 0 });
+      if (typeof inimigo.emoji !== 'string' || inimigo.emoji === '') {
+        erros.push(`${c}.emoji: ausente ou vazio`);
+      }
+    });
+    const somaPesos = conteudo.inimigos.reduce(
+      (soma, inimigo) => soma + (typeof inimigo.peso === 'number' ? inimigo.peso : 0),
+      0
+    );
+    if (conteudo.inimigos.length > 0 && somaPesos <= 0) {
+      erros.push('inimigos: soma dos pesos e 0, o sorteio de tipo nao teria o que escolher');
+    }
+  }
+
+  // Curva de spawn.
+  if (exigeObjeto(conteudo.spawn, 'spawn')) {
+    exigeNumero(conteudo.spawn.intervaloMinimo, 'spawn.intervaloMinimo', { min: 1 / 60 });
+    exigeNumero(conteudo.spawn.porOndaMaximo, 'spawn.porOndaMaximo', { min: 1 });
+    exigeNumero(conteudo.spawn.margemDescarte, 'spawn.margemDescarte', { min: 1 });
+    const teto = conteudo.arena && conteudo.arena.limites ? conteudo.arena.limites.enemies : Infinity;
+    if (exigeNumero(conteudo.spawn.maxSimultaneos, 'spawn.maxSimultaneos', { min: 1 })) {
+      if (conteudo.spawn.maxSimultaneos > teto) {
+        erros.push(
+          `spawn.maxSimultaneos: ${conteudo.spawn.maxSimultaneos} passa de arena.limites.enemies (${teto})`
+        );
+      }
+    }
+    if (exigeObjeto(conteudo.spawn.curvas, 'spawn.curvas')) {
+      const padrao = conteudo.spawn.curvaPadrao;
+      if (!conteudo.spawn.curvas[padrao]) {
+        erros.push(`spawn.curvaPadrao: "${padrao}" nao existe em spawn.curvas`);
+      }
+      for (const [nome, pontos] of Object.entries(conteudo.spawn.curvas)) {
+        const c = `spawn.curvas.${nome}`;
+        if (!Array.isArray(pontos) || pontos.length === 0) {
+          erros.push(`${c}: esperava um array nao vazio de pontos`);
+          continue;
+        }
+        let anteriorT = -Infinity;
+        pontos.forEach((ponto, i) => {
+          const p = `${c}[${i}]`;
+          if (!exigeObjeto(ponto, p)) return;
+          if (exigeNumero(ponto.t, `${p}.t`, { min: 0 })) {
+            if (ponto.t <= anteriorT) erros.push(`${p}.t: pontos precisam estar em ordem crescente de t`);
+            anteriorT = ponto.t;
+          }
+          exigeNumero(ponto.intervalo, `${p}.intervalo`, { min: 1 / 60 });
+          exigeNumero(ponto.porOnda, `${p}.porOnda`, { min: 0 });
+        });
+      }
+    }
+  }
+
+  // Separacao entre inimigos.
+  if (exigeObjeto(conteudo.separacao, 'separacao')) {
+    exigeNumero(conteudo.separacao.forca, 'separacao.forca', { min: 0 });
+    const folgaOk = exigeNumero(conteudo.separacao.folga, 'separacao.folga', { min: 0 });
+    if (exigeNumero(conteudo.separacao.gradePasso, 'separacao.gradePasso', { min: 4 }) && folgaOk) {
+      // A grade so compara cada inimigo com os das 9 celulas ao redor. Se a
+      // celula for menor que o alcance do empurrao, dois inimigos que deveriam
+      // se empurrar caem em celulas nao vizinhas e a separacao os perde em
+      // silencio — nada quebra, o bando so volta a empilhar. Por isso e erro, e
+      // nao aviso: quando a fase 09 der raio maior a um inimigo novo, o check
+      // avisa antes de alguem descobrir olhando a tela.
+      let maiorRaio = 0;
+      if (Array.isArray(conteudo.inimigos)) {
+        for (const inimigo of conteudo.inimigos) {
+          if (inimigo && typeof inimigo.raio === 'number' && inimigo.raio > maiorRaio) {
+            maiorRaio = inimigo.raio;
+          }
+        }
+      }
+      const minimo = 2 * maiorRaio + conteudo.separacao.folga;
+      if (conteudo.separacao.gradePasso < minimo) {
+        erros.push(
+          `separacao.gradePasso: ${conteudo.separacao.gradePasso} e menor que 2 x maior raio de inimigo ` +
+            `+ folga (${minimo}) — a separacao perderia vizinhos entre celulas`
+        );
+      }
     }
   }
 

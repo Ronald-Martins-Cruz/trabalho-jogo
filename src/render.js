@@ -14,6 +14,7 @@ export function desenhar(estado, ctx) {
 
   if (estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.PAUSA) {
     desenharArena(ctx, largura, altura, v);
+    desenharInimigos(ctx, estado.enemies, v);
     desenharJogador(ctx, estado.player, v);
   }
 
@@ -42,6 +43,15 @@ function desenharArena(ctx, largura, altura, v) {
   ctx.strokeStyle = v.corBorda;
   ctx.lineWidth = 2;
   ctx.strokeRect(1, 1, largura - 2, altura - 2);
+}
+
+// estado.enemies guarda so os inimigos ativos da pool — o que nao esta em uso
+// nao aparece aqui, entao nao precisa de teste de `ativo` no desenho.
+function desenharInimigos(ctx, inimigos, v) {
+  for (let i = 0; i < inimigos.length; i += 1) {
+    const e = inimigos[i];
+    desenharEmoji(ctx, e.emoji, e.x, e.y, e.raio * v.emojiInimigoFator, v);
+  }
 }
 
 function desenharJogador(ctx, player, v) {
