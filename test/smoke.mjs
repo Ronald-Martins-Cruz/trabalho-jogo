@@ -11,7 +11,16 @@
 import { CONTEUDO } from '../data/content.js';
 import { novoEstado, iniciarAvaliacao, TELAS } from '../src/state.js';
 import { atualizar } from '../src/main.js';
-import { aplicarDano, spawnInimigo, poolInimigos } from '../src/enemies.js';
+import { spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
+import {
+  atualizarArmas,
+  dadosDaArma,
+  equiparArma,
+  nivelDaArma,
+  poolProjeteis,
+  subirNivelArma,
+  verificarArmasDoConteudo,
+} from '../src/weapons.js';
 import { criarPool } from '../src/pool.js';
 
 const SEMENTE = 20261110;
@@ -20,8 +29,9 @@ const PASSO = CONTEUDO.loop.passo;
 const INTERVALO_VARREDURA = 60; // varredura profunda de NaN/Infinity a cada 1s
 const VOLTA_TICKS = 600; // bot: ticks para uma volta completa (10s a 60 ticks/s)
 const TICKS_AQUECIMENTO = 600; // 10s: depois disso nenhuma alocacao nova e aceita
-const TICKS_POR_ABATE = 30; // o bot "mata" um inimigo a cada meio segundo
 const MINIMO_INIMIGOS = 20; // pico abaixo disso significa spawn quebrado
+const TICKS_ARMA = 1800; // 30s da corrida do bot parado (checarArmaSozinha)
+const MINIMO_MORTOS_ARMA = 20; // abaixo disso a arma nao esta matando de verdade
 
 // Teste de carga: `npm run smoke -- --carga` enche a arena ate o teto da pool
 // e mantem o jogador de pe, para medir o custo de IA + separacao + colisao no
@@ -146,6 +156,28 @@ const VERIFICACOES = [
     },
   },
   {
+    nome: 'projeteis sadios',
+    rodar(estado) {
+      const projeteis = estado.projectiles;
+      for (let i = 0; i < projeteis.length; i += 1) {
+        const p = projeteis[i];
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+          return `projetil ${i} (${p.arma}) em posicao invalida (${p.x}, ${p.y})`;
+        }
+        if (!Number.isFinite(p.vx) || !Number.isFinite(p.vy)) {
+          return `projetil ${i} (${p.arma}) com velocidade invalida (${p.vx}, ${p.vy})`;
+        }
+        if (!Number.isFinite(p.vida) || p.raio <= 0 || !Number.isFinite(p.dano)) {
+          return `projetil ${i} (${p.arma}) com vida=${p.vida} raio=${p.raio} dano=${p.dano}`;
+        }
+        // Projetil parado e projetil que nunca sai da frente do jogador: ou a
+        // mira devolveu (0,0) ou a velocidade do nivel nao chegou ate aqui.
+        if (p.vx === 0 && p.vy === 0) return `projetil ${i} (${p.arma}) parado no lugar`;
+      }
+      return null;
+    },
+  },
+  {
     nome: 'pools sem alocar no loop',
     rodar(estado, tick) {
       const pools = estado.scratch && estado.scratch.pools;
@@ -201,15 +233,6 @@ function botCircular(estado, tick) {
   const angulo = (tick / VOLTA_TICKS) * 2 * Math.PI;
   estado.input.eixoX = Math.cos(angulo);
   estado.input.eixoY = Math.sin(angulo);
-}
-
-// O bot ainda nao tem arma (fase 03), entao nada mataria inimigo e todo o
-// caminho de morte — kills, evento e devolucao a pool — ficaria sem cobertura
-// nenhuma. Isto usa a API publica aplicarDano() como uma arma usaria.
-function botAbate(estado, tick) {
-  if (tick % TICKS_POR_ABATE !== 0) return;
-  const alvo = estado.enemies[0];
-  if (alvo) aplicarDano(estado, alvo, alvo.hp);
 }
 
 // No modo carga a arena fica cheia ate o teto da pool e o jogador nao morre —
@@ -277,9 +300,305 @@ function checarReciclagemDaPool() {
   }
 }
 
+// Arma e dado: a entrada de content.js so vira tiro se `comportamento` apontar
+// para uma funcao registrada em weapons.js. Sem esta checagem, uma arma nova
+// (fase 05) so explodiria no instante do primeiro disparo, dentro do update.
+function checarArmasDoConteudo() {
+  const problema = verificarArmasDoConteudo();
+  if (problema) falhar(0, problema);
+}
+
+// Os numeros de cada nivel precisam sair de content.js e o nivel precisa ficar
+// grampeado na faixa: nivel fora do array viraria `undefined` dentro do update
+// e o projetil sairia com NaN em tudo.
+function checarNiveisDaArma() {
+  const estado = novoEstado(SEMENTE + 2);
+  const id = CONTEUDO.arma.inicial;
+  const dados = dadosDaArma(id);
+  const arma = equiparArma(estado, id);
+
+  if (!arma) falhar(0, `equiparArma("${id}") devolveu null: a arma inicial nao existe em content.js`);
+  if (arma.nivel !== 1 || arma.cooldown !== 0) {
+    falhar(0, `arma equipada veio com nivel=${arma.nivel} cooldown=${arma.cooldown}, esperava 1 e 0`);
+  }
+  if (estado.player.armas.length !== 1) falhar(0, 'equiparArma nao pos a instancia em player.armas');
+  if (equiparArma(estado, id) !== arma) falhar(0, 'equiparArma duplicou uma arma que o jogador ja tinha');
+  if (nivelDaArma(arma) !== dados.niveis[0]) falhar(0, 'nivel 1 nao esta lendo niveis[0] de content.js');
+
+  let subidas = 0;
+  while (subirNivelArma(estado, id)) {
+    subidas += 1;
+    if (subidas > 50) falhar(0, 'subirNivelArma nunca devolve false: o nivel maximo nao segura');
+  }
+  if (arma.nivel !== dados.niveis.length) {
+    falhar(0, `arma parou no nivel ${arma.nivel}, content.js tem ${dados.niveis.length} niveis`);
+  }
+  if (nivelDaArma(arma) !== dados.niveis[dados.niveis.length - 1]) {
+    falhar(0, 'nivel maximo nao esta lendo o ultimo objeto de niveis');
+  }
+
+  arma.nivel = dados.niveis.length + 99; // nivel impossivel, vindo de um bug futuro
+  if (nivelDaArma(arma) !== dados.niveis[dados.niveis.length - 1]) {
+    falhar(0, 'nivel fora da faixa nao foi grampeado: o update leria undefined');
+  }
+}
+
+// Bot PARADO no centro, spawn ligado: e a corrida que prova que a arma mata
+// sozinha. Na corrida principal o bot anda em circulo e foge, o que embaralha
+// "a arma funciona" com "o jogador escapou".
+//
+// Teto de projeteis vivos calculado a partir dos proprios dados da arma
+// (quantos cabem dentro de um tempo de voo): se algum projetil deixar de voltar
+// a pool, o pico estoura este teto em poucos segundos. Sai de content.js de
+// proposito — a fase 05 muda os numeros e a assercao se ajusta sozinha.
+function tetoDeProjeteisVivos(nivel) {
+  const voo = Math.min(CONTEUDO.projetil.vidaMaxima, nivel.alcance / nivel.velocidade);
+  return (Math.ceil(voo / nivel.cadencia) + 1) * nivel.projeteis;
+}
+
+function checarArmaSozinha() {
+  const estado = novoEstado(SEMENTE + 1);
+  iniciarAvaliacao(estado);
+
+  let pico = 0;
+  let mortos = 0;
+  let disparos = 0;
+  let acertos = 0;
+
+  for (let tick = 1; tick <= TICKS_ARMA; tick += 1) {
+    estado.input.eixoX = 0;
+    estado.input.eixoY = 0;
+    // O que se mede aqui e a arma, nao a sobrevivencia: o jogador toma dano
+    // mas nao cai, senao a corrida terminaria no meio.
+    estado.player.hp = estado.player.hpMax;
+    try {
+      atualizar(estado, PASSO);
+    } catch (e) {
+      falhar(tick, `excecao com o bot parado: ${e && e.stack ? e.stack : e}`);
+    }
+
+    if (estado.projectiles.length > pico) pico = estado.projectiles.length;
+    for (const evento of estado.eventos) {
+      if (evento.tipo === 'inimigo-morto') mortos += 1;
+      if (evento.tipo === 'arma-disparo') disparos += 1;
+      if (evento.tipo === 'arma-acerto') acertos += 1;
+    }
+    estado.eventos.length = 0;
+  }
+
+  const pool = poolProjeteis(estado);
+
+  if (estado.player.armas.length === 0) {
+    falhar(TICKS_ARMA, 'o jogador terminou a avaliacao sem arma nenhuma: atualizarArmas() roda no update?');
+  }
+  if (disparos === 0) falhar(TICKS_ARMA, 'a arma nao disparou nenhuma vez com o bot parado no centro');
+  const teto = tetoDeProjeteisVivos(nivelDaArma(estado.player.armas[0]));
+
+  if (acertos === 0) falhar(TICKS_ARMA, `${disparos} disparos e nenhum acerto: a colisao do projetil roda?`);
+  if (mortos < MINIMO_MORTOS_ARMA) {
+    falhar(TICKS_ARMA, `a arma matou ${mortos} inimigos em ${TICKS_ARMA} ticks (minimo ${MINIMO_MORTOS_ARMA})`);
+  }
+  if (pico > teto) {
+    falhar(TICKS_ARMA, `pico de ${pico} projeteis vivos, teto calculado e ${teto}: algum projetil nao volta a pool`);
+  }
+  if (pool.nascimentos < disparos) {
+    falhar(TICKS_ARMA, `${disparos} disparos mas so ${pool.nascimentos} projeteis nasceram da pool`);
+  }
+  if (pool.criados !== pool.capacidade) {
+    falhar(TICKS_ARMA, `pool de projeteis fabricou ${pool.criados} objetos para capacidade ${pool.capacidade}`);
+  }
+  const problema = pool.verificar();
+  if (problema) falhar(TICKS_ARMA, `pool de projeteis inconsistente: ${problema}`);
+
+  // Drenagem: sem inimigo nenhum a arma nao tem alvo, entao so os projeteis em
+  // voo continuam andando. Depois do tempo maximo de voo a pool tem que estar
+  // vazia — se sobrar um, ele e imortal. Aqui se chama atualizarArmas direto,
+  // sem atualizar(), justamente para que ninguem nasca durante a drenagem.
+  limparInimigos(estado);
+  const ticksDrenagem = Math.ceil(CONTEUDO.projetil.vidaMaxima / PASSO) + 60;
+  for (let i = 0; i < ticksDrenagem; i += 1) atualizarArmas(estado, PASSO);
+  if (estado.projectiles.length !== 0) {
+    falhar(
+      TICKS_ARMA + ticksDrenagem,
+      `${estado.projectiles.length} projeteis continuam vivos ${ticksDrenagem} ticks depois do ultimo alvo`
+    );
+  }
+
+  return { pico, mortos, disparos, acertos, teto };
+}
+
+// A armadilha desta fase. Um inimigo morto volta para a reserva da pool e o
+// proximo spawn pode reaproveitar O MESMO objeto — outra vida no mesmo slot.
+// Um projetil perfurante lembra quem ja atingiu para nao bater duas vezes no
+// mesmo inimigo; se essa lembranca guardar so a referencia, o inimigo novo
+// herda a imunidade do morto e fica intocavel para aquele projetil. O par
+// (ref, nasc) e o que separa as duas vidas.
+//
+// O cenario e montado a mao porque so acontece na ordem exata: alvo morre,
+// pool recicla o objeto, o mesmo projetil (ainda com perfuracao) alcanca o
+// inimigo novo.
+const DIST_ALVO = 60; // px do jogador ate o primeiro alvo
+const DIST_RECICLADO = 200; // px do jogador ate o inimigo que reusa o objeto
+
+function checarGuardaDeGeracao() {
+  const estado = novoEstado(SEMENTE + 3);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+
+  const arma = equiparArma(estado, CONTEUDO.arma.inicial);
+  const dados = dadosDaArma(arma.id);
+  // Precisa de um nivel de UM projetil so (senao o vizinho do leque acerta o
+  // reciclado e o teste passa sem provar nada) e com perfuracao (senao o
+  // projetil morre no primeiro alvo e nunca chega ao segundo).
+  const indice = dados.niveis.findIndex((n) => n.projeteis === 1 && n.perfuracao >= 1);
+  if (indice < 0) {
+    falhar(0, 'nenhum nivel da arma inicial tem 1 projetil com perfuracao: aponte este teste para outra arma');
+  }
+  arma.nivel = indice + 1;
+  const nivel = nivelDaArma(arma);
+  if (nivel.alcance < DIST_RECICLADO + 40) {
+    falhar(0, `alcance ${nivel.alcance} curto demais para o cenario (precisa de ${DIST_RECICLADO + 40})`);
+  }
+
+  const alvo = spawnInimigo(estado);
+  if (!alvo) falhar(0, 'spawnInimigo devolveu null montando o cenario da guarda de geracao');
+  alvo.x = player.x + DIST_ALVO;
+  alvo.y = player.y;
+
+  // So a primeira salva interessa: uma segunda acertaria o inimigo reciclado
+  // sem memoria nenhuma e esconderia o bug.
+  const passo = () => {
+    atualizarArmas(estado, PASSO);
+    arma.cooldown = 999;
+  };
+
+  let passos = 0;
+  while (alvo.ativo && passos < 120) {
+    passo();
+    passos += 1;
+  }
+  if (alvo.ativo) falhar(0, `o projetil nao matou o alvo a ${DIST_ALVO}px em 120 ticks`);
+
+  const reciclado = spawnInimigo(estado);
+  if (reciclado !== alvo) {
+    falhar(0, 'a pool nao reaproveitou o objeto do inimigo morto: este teste depende disso para ter sentido');
+  }
+  reciclado.x = player.x + DIST_RECICLADO;
+  reciclado.y = player.y;
+  const hpAntes = reciclado.hp;
+
+  passos = 0;
+  while (reciclado.ativo && reciclado.hp === hpAntes && passos < 120) {
+    passo();
+    passos += 1;
+  }
+  if (reciclado.ativo && reciclado.hp === hpAntes) {
+    falhar(
+      0,
+      'o inimigo que reusou o objeto do morto nao levou dano nenhum: a memoria do projetil ' +
+        'esta comparando so a referencia, sem o `nasc` — guarda de geracao quebrada'
+    );
+  }
+}
+
+// A outra metade da memoria de perfuracao. `checarGuardaDeGeracao()` prova que
+// o `nasc` separa duas vidas no mesmo objeto, mas passa igual com a memoria
+// inteira desligada — um projetil sem memoria nenhuma tambem acerta o inimigo
+// reciclado. Aqui se prova que a memoria EXISTE, nas duas pontas:
+//
+//   1a salva  um projetil perfurante fica ~5 quadros dentro do raio de colisao
+//             de um alvo parado. Sem `jaAtingiu`, ele rebate no mesmo inimigo a
+//             cada quadro ate gastar a perfuracao: 2 acertos em vez de 1.
+//   2a salva  o mesmo objeto da pool e reaproveitado. Sem `esquecerAtingidos`,
+//             ele ainda lembra do alvo da salva anterior — que continua vivo,
+//             com o mesmo `nasc` — e atravessa sem dano: 0 acertos em vez de 1.
+//
+// O alvo e imortal de proposito: o que se conta aqui e acerto, nao morte.
+const DIST_IMORTAL = 120; // px do jogador ate o alvo parado
+const HP_IMORTAL = 1e6; // hp alto o bastante para o alvo nunca sair da arena
+const TICKS_SALVA = 240; // teto de ticks que uma salva tem para ir e voltar
+
+function salvaUnica(estado, arma) {
+  arma.cooldown = 0;
+  let acertos = 0;
+  let objeto = null;
+  let passos = 0;
+  do {
+    atualizarArmas(estado, PASSO);
+    arma.cooldown = 999; // trava a arma: uma salva por vez, sem reforco
+    if (!objeto && estado.projectiles.length > 0) objeto = estado.projectiles[0];
+    for (const evento of estado.eventos) if (evento.tipo === 'arma-acerto') acertos += 1;
+    estado.eventos.length = 0;
+    passos += 1;
+  } while (estado.projectiles.length > 0 && passos < TICKS_SALVA);
+  return { acertos, objeto };
+}
+
+function checarMemoriaDePerfuracao() {
+  const estado = novoEstado(SEMENTE + 4);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+
+  const arma = equiparArma(estado, CONTEUDO.arma.inicial);
+  const dados = dadosDaArma(arma.id);
+  const indice = dados.niveis.findIndex((n) => n.projeteis === 1 && n.perfuracao >= 1);
+  if (indice < 0) {
+    falhar(0, 'nenhum nivel da arma inicial tem 1 projetil com perfuracao: aponte este teste para outra arma');
+  }
+  arma.nivel = indice + 1;
+  if (nivelDaArma(arma).alcance < DIST_IMORTAL + 40) {
+    falhar(0, `alcance ${nivelDaArma(arma).alcance} curto demais para o alvo a ${DIST_IMORTAL}px`);
+  }
+
+  const alvo = spawnInimigo(estado);
+  if (!alvo) falhar(0, 'spawnInimigo devolveu null montando o alvo imortal');
+  alvo.x = player.x + DIST_IMORTAL;
+  alvo.y = player.y;
+  alvo.hpMax = HP_IMORTAL;
+  alvo.hp = HP_IMORTAL;
+
+  const primeira = salvaUnica(estado, arma);
+  const segunda = salvaUnica(estado, arma);
+
+  if (!primeira.objeto || !segunda.objeto) falhar(0, 'a arma nao disparou contra o alvo parado');
+  if (primeira.objeto !== segunda.objeto) {
+    falhar(0, 'a pool nao reaproveitou o mesmo projetil nas duas salvas: este teste depende disso');
+  }
+  if (primeira.acertos !== 1) {
+    falhar(
+      0,
+      `a primeira salva acertou ${primeira.acertos}x o mesmo inimigo parado (esperava 1): ` +
+        'o projetil perfurante esta rebatendo quadro a quadro — jaAtingiu() nao esta filtrando'
+    );
+  }
+  if (segunda.acertos !== 1) {
+    falhar(
+      0,
+      `a segunda salva acertou ${segunda.acertos}x o mesmo inimigo (esperava 1): ` +
+        'o projetil reciclado ainda carrega a memoria da salva anterior — falta esquecerAtingidos() no disparo'
+    );
+  }
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
+// Antes de qualquer coisa que dispare: um `comportamento` digitado errado na
+// arma inicial mata o update com stack trace cru, e a mensagem limpa daqui e
+// que diz o que aconteceu.
+checarArmasDoConteudo();
+checarNiveisDaArma();
+checarGuardaDeGeracao();
+checarMemoriaDePerfuracao();
+const corridaArma = checarArmaSozinha();
 
 const estado = novoEstado(SEMENTE);
 iniciarAvaliacao(estado);
@@ -290,7 +609,6 @@ function rodarTick(estado, tick, { reiniciarAvaliacao = true } = {}) {
 
   try {
     atualizar(estado, PASSO);
-    botAbate(estado, tick);
   } catch (e) {
     falhar(tick, `excecao em atualizar(): ${e && e.stack ? e.stack : e}`);
   }
@@ -376,7 +694,13 @@ if (danoTotal <= 0) {
   falhar(TICKS + extras, 'o jogador nao tomou dano nenhum: inimigos perseguem e colidem?');
 }
 if (!contadores.porTipo['inimigo-morto']) {
-  falhar(TICKS + extras, 'nenhum inimigo morreu: aplicarDano() nao devolveu ninguem a pool');
+  falhar(TICKS + extras, 'nenhum inimigo morreu: as armas atiraram e aplicarDano() devolveu alguem a pool?');
+}
+// Desde a fase 03 nada mais mata inimigo no smoke — quem abatia era um bot de
+// mentira, removido junto com esta fase. Se as armas pararem de ser chamadas em
+// atualizarAvaliacao(), estas duas assercoes caem juntas.
+if (picos.projectiles === 0) {
+  falhar(TICKS + extras, 'nenhum projetil foi disparado na corrida: atualizarArmas() roda dentro do update?');
 }
 const poolFinal = poolInimigos(estado);
 if (poolFinal.criados !== poolFinal.capacidade) {
@@ -388,6 +712,7 @@ if (poolFinal.criados !== poolFinal.capacidade) {
 
 const segundos = (Date.now() - comecou) / 1000;
 const picosTexto = POOLS.map((p) => `${p}=${picos[p]}`).join(' ');
+const poolProjetil = poolProjeteis(estado);
 console.log(
   `smoke ok${CARGA ? ' (carga)' : ''} — ${TICKS}+${extras} ticks (${((TICKS + extras) * PASSO).toFixed(1)}s simulados` +
     ` em ${segundos.toFixed(2)}s) · avaliacoes=${contadores.avaliacoesConcluidas}` +
@@ -396,6 +721,13 @@ console.log(
     ` · amplitude=${amplitudeX.toFixed(0)}x${amplitudeY.toFixed(0)}px` +
     ` · dano=${danoTotal} · jubilado=${contadores.porTipo.jubilado || 0}` +
     ` · mortos=${contadores.porTipo['inimigo-morto'] || 0}` +
+    ` · disparos=${contadores.porTipo['arma-disparo'] || 0}` +
+    ` acertos=${contadores.porTipo['arma-acerto'] || 0}` +
     ` · pool inimigos: criados=${poolFinal.criados} reciclados=${poolFinal.reciclados}` +
-    ` ressinc=${poolFinal.ressincronizacoes} · picos: ${picosTexto}`
+    ` ressinc=${poolFinal.ressincronizacoes}` +
+    ` · pool projeteis: criados=${poolProjetil.criados} nascimentos=${poolProjetil.nascimentos}` +
+    ` reciclados=${poolProjetil.reciclados}` +
+    ` · bot parado: mortos=${corridaArma.mortos} disparos=${corridaArma.disparos}` +
+    ` pico=${corridaArma.pico}/${corridaArma.teto}` +
+    ` · picos: ${picosTexto}`
 );

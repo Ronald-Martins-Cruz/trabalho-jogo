@@ -15,6 +15,7 @@ export function desenhar(estado, ctx) {
   if (estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.PAUSA) {
     desenharArena(ctx, largura, altura, v);
     desenharInimigos(ctx, estado.enemies, v);
+    desenharProjeteis(ctx, estado.projectiles, v);
     desenharJogador(ctx, estado.player, v);
   }
 
@@ -51,6 +52,16 @@ function desenharInimigos(ctx, inimigos, v) {
   for (let i = 0; i < inimigos.length; i += 1) {
     const e = inimigos[i];
     desenharEmoji(ctx, e.emoji, e.x, e.y, e.raio * v.emojiInimigoFator, v);
+  }
+}
+
+// Desenhados depois dos inimigos e antes do jogador: o projetil precisa
+// aparecer por cima de quem ele vai acertar para a leitura funcionar no meio
+// do bando.
+function desenharProjeteis(ctx, projeteis, v) {
+  for (let i = 0; i < projeteis.length; i += 1) {
+    const p = projeteis[i];
+    desenharEmoji(ctx, p.emoji, p.x, p.y, p.raio * v.emojiProjetilFator, v);
   }
 }
 

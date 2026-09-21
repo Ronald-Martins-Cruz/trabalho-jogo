@@ -51,6 +51,7 @@ export const CONTEUDO = {
     rastroRaioFator: 0.55, // multiplica jogador.raio para o raio do ponto do rastro
     piscaIntervalo: 0.08, // segundos entre estados do pisca-pisca de i-frames
     emojiInimigoFator: 2.2, // tamanho do emoji = raio do inimigo x este fator
+    emojiProjetilFator: 2.6, // tamanho do emoji = raio do projetil x este fator
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -67,10 +68,59 @@ export const CONTEUDO = {
     xpBase: 5, // XP do nivel 1 -> 2; fase 04 define a curva
   },
 
-  // Armas. Fases 03 e 05.
-  // Forma esperada por entrada:
-  // { id, nome, descricao, emoji, niveis: [{ dano, cadencia, alcance, ... }] }
-  armas: [],
+  // Regras gerais de arma — nao confundir com `armas` logo abaixo, que e a
+  // lista. Aqui so o que vale para todas.
+  arma: {
+    inicial: 'cafe', // id da arma com que o jogador comeca toda avaliacao
+    nivelMaximo: 5, // design §6: toda arma sobe ate 5 e zera no fim da avaliacao
+  },
+
+  // Numeros que valem para qualquer projetil, de qualquer arma.
+  projetil: {
+    margemDescarte: 60, // px alem da borda: projetil que passa disso volta pra pool
+    memoriaAtingidos: 4, // alvos que cada projetil lembra (perfuracao nao rebate no mesmo)
+    vidaMaxima: 3, // teto de segundos de voo; rede contra projetil eterno
+  },
+
+  // Armas. A fase 03 monta o sistema com o Café; a fase 05 pendura as outras
+  // tres (design §6) SEM tocar em weapons.js — basta apontar `comportamento`
+  // para uma das funcoes ja registradas la.
+  //
+  // Contrato de uma entrada:
+  //   id, nome, descricao, emoji  identidade e o que a carta mostra
+  //   comportamento               nome de uma funcao registrada em weapons.js
+  //   niveis[arma.nivelMaximo]    TODOS os numeros da arma, um objeto por nivel
+  //
+  // Campos de cada nivel (a arma nunca muda de regra entre niveis, so de numero):
+  //   dano        dano por acerto
+  //   cadencia    segundos entre disparos
+  //   velocidade  px/s do projetil
+  //   alcance     px: raio de busca do alvo E distancia que o projetil percorre
+  //   raio        px: raio de colisao do projetil
+  //   projeteis   quantos saem por disparo
+  //   dispersao   radianos de abertura do leque quando projeteis > 1
+  //   perfuracao  inimigos que o projetil atravessa alem do primeiro
+  armas: [
+    {
+      id: 'cafe',
+      nome: 'Café',
+      descricao: 'Dispara no inimigo mais próximo. Cadência alta, dano baixo.',
+      emoji: '☕',
+      comportamento: 'projetilMirado',
+      // dano 12 no nivel 1 nao e generosidade: e exatamente o hp do Prazo de
+      // Entrega. Medido com o bot do smoke, a mesma dps repartida em dois
+      // acertos (dano 10, cadencia 0.34) matava 48 inimigos por avaliacao
+      // contra 113 do tiro que mata de primeira — o segundo projetil quase
+      // sempre erra um alvo que ja se mexeu, e a arma parecia quebrada.
+      niveis: [
+        { dano: 12, cadencia: 0.4, velocidade: 430, alcance: 330, raio: 7, projeteis: 1, dispersao: 0, perfuracao: 0 },
+        { dano: 14, cadencia: 0.36, velocidade: 450, alcance: 350, raio: 7, projeteis: 1, dispersao: 0, perfuracao: 0 },
+        { dano: 16, cadencia: 0.33, velocidade: 470, alcance: 370, raio: 8, projeteis: 1, dispersao: 0, perfuracao: 1 },
+        { dano: 18, cadencia: 0.3, velocidade: 490, alcance: 390, raio: 8, projeteis: 2, dispersao: 0.22, perfuracao: 1 },
+        { dano: 21, cadencia: 0.26, velocidade: 520, alcance: 420, raio: 9, projeteis: 3, dispersao: 0.3, perfuracao: 2 },
+      ],
+    },
+  ],
 
   // Coringas (modificadores passivos comprados na loja). Fase 07.
   // Forma esperada: { id, nome, descricao, emoji, custo, raridade, hook, efeito }
@@ -281,6 +331,90 @@ export function validarConteudo(conteudo = CONTEUDO) {
     if (typeof conteudo.jogador.emoji !== 'string' || conteudo.jogador.emoji === '') {
       erros.push('jogador.emoji: ausente ou vazio');
     }
+  }
+
+  // Armas: regras gerais, projeteis e os numeros de cada nivel. weapons.js le
+  // tudo daqui e nao tem numero nenhum dentro — se um nivel vier torto, e
+  // melhor o check reprovar do que a arma disparar NaN na tela.
+  const nivelMaximo =
+    conteudo.arma && typeof conteudo.arma.nivelMaximo === 'number' ? conteudo.arma.nivelMaximo : null;
+  if (exigeObjeto(conteudo.arma, 'arma')) {
+    exigeNumero(conteudo.arma.nivelMaximo, 'arma.nivelMaximo', { min: 1, max: 20 });
+    if (Array.isArray(conteudo.armas) && conteudo.armas.length > 0) {
+      const existe = conteudo.armas.some((a) => a && a.id === conteudo.arma.inicial);
+      if (!existe) {
+        erros.push(`arma.inicial: "${conteudo.arma.inicial}" nao existe em armas — o jogador comecaria desarmado`);
+      }
+    }
+  }
+
+  if (exigeObjeto(conteudo.projetil, 'projetil')) {
+    exigeNumero(conteudo.projetil.margemDescarte, 'projetil.margemDescarte', { min: 1 });
+    exigeNumero(conteudo.projetil.vidaMaxima, 'projetil.vidaMaxima', { min: 1 / 60 });
+    // A memoria e o que impede um projetil perfurante de bater varias vezes no
+    // mesmo inimigo em quadros seguidos. Menor que a perfuracao maxima + 1 e a
+    // lembranca do primeiro alvo ja teria sido sobrescrita quando ele volta a
+    // encostar — o inimigo levaria o dano duas vezes.
+    if (exigeNumero(conteudo.projetil.memoriaAtingidos, 'projetil.memoriaAtingidos', { min: 1 })) {
+      let maiorPerfuracao = 0;
+      for (const arma of Array.isArray(conteudo.armas) ? conteudo.armas : []) {
+        for (const nivel of Array.isArray(arma && arma.niveis) ? arma.niveis : []) {
+          if (nivel && typeof nivel.perfuracao === 'number' && nivel.perfuracao > maiorPerfuracao) {
+            maiorPerfuracao = nivel.perfuracao;
+          }
+        }
+      }
+      if (conteudo.projetil.memoriaAtingidos < maiorPerfuracao + 1) {
+        erros.push(
+          `projetil.memoriaAtingidos: ${conteudo.projetil.memoriaAtingidos} e menor que a maior perfuracao ` +
+            `+ 1 (${maiorPerfuracao + 1}) — um projetil perfurante acertaria o mesmo inimigo duas vezes`
+        );
+      }
+    }
+  }
+
+  if (Array.isArray(conteudo.armas)) {
+    const camposDeNivel = [
+      ['dano', 0.01],
+      ['cadencia', 1 / 60],
+      ['velocidade', 1],
+      ['alcance', 1],
+      ['raio', 1],
+      ['projeteis', 1],
+      ['dispersao', 0],
+      ['perfuracao', 0],
+    ];
+    conteudo.armas.forEach((arma, i) => {
+      const c = `armas[${i}]`;
+      if (typeof arma !== 'object' || arma === null) return;
+      if (typeof arma.comportamento !== 'string' || arma.comportamento === '') {
+        erros.push(`${c}.comportamento: ausente ou vazio — precisa nomear uma funcao de weapons.js`);
+      }
+      if (typeof arma.emoji !== 'string' || arma.emoji === '') erros.push(`${c}.emoji: ausente ou vazio`);
+      if (typeof arma.descricao !== 'string' || arma.descricao === '') {
+        erros.push(`${c}.descricao: ausente ou vazia`);
+      }
+      if (!Array.isArray(arma.niveis)) {
+        erros.push(`${c}.niveis: esperava um array`);
+        return;
+      }
+      if (nivelMaximo !== null && arma.niveis.length !== nivelMaximo) {
+        erros.push(`${c}.niveis: ${arma.niveis.length} niveis, arma.nivelMaximo pede ${nivelMaximo}`);
+      }
+      arma.niveis.forEach((nivel, j) => {
+        const cn = `${c}.niveis[${j}]`;
+        if (!exigeObjeto(nivel, cn)) return;
+        for (const [campo, min] of camposDeNivel) exigeNumero(nivel[campo], `${cn}.${campo}`, { min });
+        // Os dois sao contagem de coisas, nao medida: fracao aqui faria a conta
+        // de projetil.memoriaAtingidos fechar por acidente e o leque nascer com
+        // meio projetil.
+        for (const campo of ['projeteis', 'perfuracao']) {
+          if (typeof nivel[campo] === 'number' && !Number.isInteger(nivel[campo])) {
+            erros.push(`${cn}.${campo}: ${nivel[campo]} precisa ser inteiro`);
+          }
+        }
+      });
+    });
   }
 
   // Inimigos: campos que enemies.js le de cada tipo.

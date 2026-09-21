@@ -333,8 +333,10 @@ function colidirComJogador(estado, pool) {
   }
 }
 
-// Ninguem chama ainda — as armas chegam na fase 03. Devolve se o inimigo
-// morreu com este golpe.
+// Porta unica de dano em inimigo: weapons.js chama a cada acerto de projetil.
+// Devolve se o inimigo morreu com este golpe. Idempotente de proposito — dois
+// projeteis que matam o mesmo inimigo no mesmo quadro emitem um evento so,
+// porque o segundo encontra `ativo === false`.
 export function aplicarDano(estado, inimigo, dano) {
   // Antes de olhar `ativo`: se estado.enemies foi esvaziado por fora, a flag
   // do inimigo ainda estaria mentindo que ele existe.
