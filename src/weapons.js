@@ -15,12 +15,21 @@ import { aplicarDano, poolInimigos } from './enemies.js';
 // um cooldown de modulo sobreviveria a troca e ficaria mentindo.
 
 // Registro de comportamentos. Assinatura de todos:
-//   (estado, arma, dados, nivel) -> boolean   true = disparou, consome cadencia
-// `arma` e a instancia no estado, `dados` e a entrada de content.js e `nivel` e
-// o objeto de numeros do nivel atual.
-// A fase 05 acrescenta aqui: orbital, ondaArea, feixe.
+//   (estado, arma, dados, nivel, dt) -> boolean
+// `arma` e a instancia no estado, `dados` e a entrada de content.js, `nivel` e
+// o objeto de numeros do nivel atual, e `dt` e o passo fixo do quadro. O
+// retorno so serve de sinal informativo (nao ha mais gate central de cadencia
+// aqui — ver o comentario de atualizarArma() logo abaixo).
+//
+// A fase 03 entregou so projetilMirado. A fase 05 acrescentou orbital
+// (Caneta Bic), ondaArea (Resumo) e feixe (Marca-texto) SEM tocar em nenhuma
+// arma especifica: cada uma e so uma entrada em content.js apontando pra uma
+// destas funcoes.
 const COMPORTAMENTOS = {
   projetilMirado,
+  orbital,
+  ondaArea,
+  feixe,
 };
 
 // ------------------------------------------------------------------ armas
@@ -37,14 +46,20 @@ export function atualizarArmas(estado, dt) {
   atualizarProjeteis(estado, dt);
 }
 
+// A fase 03 tinha um portao unico de cadencia aqui: decrementava o cooldown,
+// so chamava o comportamento quando zerava, e aplicava nivel.cadencia sozinha
+// no retorno. Isso presumia que TODA arma dispara em pulsos discretos — valia
+// para o Café, mas orbital e feixe sao CONTINUOS (orbitam e causam dano todo
+// quadro, sem pausa entre "disparos"). Um portao central de cadencia mataria
+// o continuo; por isso cada comportamento agora controla o proprio ritmo:
+// projetilMirado e ondaArea ainda usam arma.cooldown do jeito antigo (o campo
+// e o contrato continuam os mesmos), so que a leitura/escrita mora na propria
+// funcao. orbital e feixe simplesmente agem a cada quadro.
 function atualizarArma(estado, arma, dt) {
   const dados = dadosDaArma(arma.id);
   if (!dados) return;
   const nivel = nivelDaArma(arma);
   if (!nivel) return;
-
-  arma.cooldown -= dt;
-  if (arma.cooldown > 0) return;
 
   const comportamento = COMPORTAMENTOS[dados.comportamento];
   if (!comportamento) {
@@ -54,15 +69,7 @@ function atualizarArma(estado, arma, dt) {
     );
   }
 
-  if (comportamento(estado, arma, dados, nivel)) {
-    // Soma em vez de atribuir: preserva a fracao de segundo que passou do
-    // cooldown e mantem a cadencia estavel mesmo com dt fixo.
-    arma.cooldown += nivel.cadencia;
-  } else {
-    // Sem alvo: nao acumula divida de cooldown, senao a arma dispararia uma
-    // rajada no instante em que o primeiro inimigo aparecesse.
-    arma.cooldown = 0;
-  }
+  comportamento(estado, arma, dados, nivel, dt);
 }
 
 // O jogador comeca toda avaliacao com a arma inicial. Fica aqui, e nao em
@@ -140,10 +147,21 @@ export function verificarArmasDoConteudo() {
 // reto, na direcao em que o alvo estava no instante do disparo: nao e
 // teleguiado de proposito — errar quem desviou e a contrapartida da cadencia
 // alta. Com projeteis > 1 o disparo vira um leque de `dispersao` radianos.
-function projetilMirado(estado, arma, dados, nivel) {
+//
+// Comportamento DISCRETO: controla o proprio arma.cooldown (decrementa dt, so
+// age quando chega a zero). Sem alvo, zera o cooldown em vez de deixar
+// negativo — senao a arma dispararia uma rajada no instante em que o primeiro
+// inimigo aparecesse.
+function projetilMirado(estado, arma, dados, nivel, dt) {
+  arma.cooldown -= dt;
+  if (arma.cooldown > 0) return false;
+
   const player = estado.player;
   const alvo = inimigoMaisProximo(estado, player.x, player.y, nivel.alcance);
-  if (!alvo) return false;
+  if (!alvo) {
+    arma.cooldown = 0;
+    return false;
+  }
 
   const angulo = Math.atan2(alvo.y - player.y, alvo.x - player.x);
   const quantidade = Math.max(1, nivel.projeteis);
@@ -155,7 +173,164 @@ function projetilMirado(estado, arma, dados, nivel) {
     dispararProjetil(estado, dados, nivel, player.x, player.y, Math.cos(a), Math.sin(a));
   }
   emitir(estado, 'arma-disparo', { arma: dados.id, x: player.x, y: player.y, angulo });
+  // Soma em vez de atribuir: preserva a fracao de segundo que passou do
+  // cooldown e mantem a cadencia estavel mesmo com dt fixo.
+  arma.cooldown += nivel.cadencia;
   return true;
+}
+
+// ✏️ Caneta Bic orbita o jogador continuamente e fere por contato. E
+// CONTINUO: nao ha "disparo", o angulo avanca TODO quadro (independente de
+// qualquer cooldown) e a colisao roda todo quadro contra os inimigos ativos.
+// O cooldown por inimigo (nivel.intervaloDano) existe para um unico inimigo
+// parado dentro da caneta nao levar 60 acertos por segundo — sem ele a arma
+// mataria tudo que encostasse num unico quadro.
+//
+// `arma.angulo` acumula a rotacao (a fase 03 ja previa este campo na
+// instancia). `arma.golpes` e a memoria de quem foi atingido e quando pode
+// ser atingido de novo — mesma guarda de geracao (ref+nasc) que o projetil
+// perfurante usa, so que aqui o "ja atingiu" EXPIRA sozinho (`expiraEm`), em
+// vez de durar o voo inteiro. Alocada uma unica vez, no primeiro quadro
+// depois de equipar — nao a cada quadro — o mesmo padrao de scratch
+// preguicoso que `contextoInimigos()` usa em enemies.js.
+function orbital(estado, arma, dados, nivel, dt) {
+  arma.angulo = (arma.angulo || 0) + nivel.velocidadeAngular * dt;
+  if (!arma.golpes) arma.golpes = criarMemoriaGolpes(CONTEUDO.orbital.memoriaAlvos);
+
+  const player = estado.player;
+  const inimigos = poolInimigos(estado).ativos;
+  const agora = estado.run.avaliacao.decorrido;
+  let atingiu = false;
+
+  for (let s = 0; s < nivel.quantidade; s += 1) {
+    const pos = posicaoSatelite(player, arma, nivel, s);
+    // De tras para frente: aplicarDano() pode liberar o inimigo morto, e
+    // liberar() troca o ultimo elemento para o buraco.
+    for (let i = inimigos.length - 1; i >= 0; i -= 1) {
+      const e = inimigos[i];
+      const soma = nivel.raioColisao + e.raio;
+      const dx = e.x - pos.x;
+      const dy = e.y - pos.y;
+      if (dx * dx + dy * dy > soma * soma) continue;
+      if (emCooldown(arma.golpes, e, agora)) continue;
+
+      lembrarGolpe(arma.golpes, e, agora + nivel.intervaloDano, agora);
+      const matou = aplicarDano(estado, e, nivel.dano);
+      emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, matou });
+      atingiu = true;
+    }
+  }
+  return atingiu;
+}
+
+// Posicao de uma caneta orbitando, na ordem i = 0..quantidade-1. Pura (nao
+// muta nada): weapons.js usa para colisao e render.js usa para desenhar, sem
+// duplicar a formula nem arriscar os dois lados desenharem coisas diferentes.
+export function posicaoSatelite(player, arma, nivel, i) {
+  const passo = (Math.PI * 2) / nivel.quantidade;
+  const angulo = (arma.angulo || 0) + passo * i;
+  return {
+    x: player.x + Math.cos(angulo) * nivel.raioOrbita,
+    y: player.y + Math.sin(angulo) * nivel.raioOrbita,
+  };
+}
+
+// 📝 Resumo pulsa uma onda circular ao redor do jogador a cada nivel.cadencia
+// segundos: dano e empurrao em quem estiver dentro do raio. Sempre "dispara"
+// — e uma onda automatica, nao depende de achar alvo — entao arma.cooldown
+// funciona identico ao de projetilMirado (DISCRETO, controlado aqui dentro).
+//
+// O empurrao e um deslocamento INSTANTANEO em px, nao uma velocidade: nao da
+// para dar impulso de verdade escrevendo em e.empurraoX/Y, porque
+// calcularSeparacao() de enemies.js zera e recalcula esses campos do zero
+// TODO quadro a partir da grade de vizinhanca, antes mesmo de moverInimigos
+// usa-los — qualquer valor externo escrito ali e apagado antes de ser lido.
+// Um empurraozinho de posicao direto e mais simples e nao exige tocar em
+// enemies.js (ver decisao no handoff da fase 05).
+//
+// `arma.animacao` cresce TODO quadro, de 0 ate CONTEUDO.ondaArea.duracaoAnimacao,
+// e zera de novo a cada pulso: e o que da ao render.js o "circulo que cresce"
+// do telegrafo, sem o qual o dano pareceria aleatorio (tarefa 2 do contrato).
+function ondaArea(estado, arma, dados, nivel, dt) {
+  arma.animacao = Math.min(CONTEUDO.ondaArea.duracaoAnimacao, (arma.animacao || 0) + dt);
+
+  arma.cooldown -= dt;
+  if (arma.cooldown > 0) return false;
+  arma.cooldown += nivel.cadencia;
+  arma.animacao = 0;
+
+  const player = estado.player;
+  const inimigos = poolInimigos(estado).ativos;
+
+  for (let i = inimigos.length - 1; i >= 0; i -= 1) {
+    const e = inimigos[i];
+    const soma = nivel.raio + e.raio;
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > soma * soma) continue;
+
+    const matou = aplicarDano(estado, e, nivel.dano);
+    if (!matou) {
+      const d = Math.sqrt(d2);
+      const dirX = d > 0 ? dx / d : 0;
+      const dirY = d > 0 ? dy / d : 0;
+      e.x += dirX * nivel.empurrao;
+      e.y += dirY * nivel.empurrao;
+    }
+    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, matou });
+  }
+  // angulo:0 porque a onda nao tem direcao — e simetrica ao redor do jogador.
+  emitir(estado, 'arma-disparo', { arma: dados.id, x: player.x, y: player.y, angulo: 0 });
+  return true;
+}
+
+// 🖍️ Marca-texto e um feixe CONTINUO na direcao do movimento: atravessa todo
+// mundo (nao ha projetil nem perfuracao — o "feixe" e so uma forma geometrica
+// recalculada a cada quadro) e da nivel.dano por SEGUNDO, nao por acerto —
+// `dt` escala o dano deste quadro especifico.
+//
+// `arma.angulo` guarda a direcao atual e so gira quando o jogador esta
+// realmente se movendo (velocidade > 0); parado, mantem a ultima direcao —
+// decisao explicita do contrato desta fase para o feixe nao sumir quando o
+// jogador para. aplicarAtrito() em player.js zera vx/vy exatamente (nao so
+// assintoticamente), entao "parado" aqui e sempre um zero de verdade, sem
+// limiar arbitrario para configurar em content.js.
+function feixe(estado, arma, dados, nivel, dt) {
+  const player = estado.player;
+  const vx = player.vx;
+  const vy = player.vy;
+  if (vx * vx + vy * vy > 0) {
+    arma.angulo = Math.atan2(vy, vx);
+  } else if (arma.angulo === undefined) {
+    arma.angulo = 0; // direcao padrao antes do primeiro movimento
+  }
+
+  const dirX = Math.cos(arma.angulo);
+  const dirY = Math.sin(arma.angulo);
+  const meiaLargura = nivel.largura / 2;
+  const dano = nivel.dano * dt;
+
+  const inimigos = poolInimigos(estado).ativos;
+  let atingiu = false;
+  for (let i = inimigos.length - 1; i >= 0; i -= 1) {
+    const e = inimigos[i];
+    const dx = e.x - player.x;
+    const dy = e.y - player.y;
+    // Distancia do inimigo ao segmento [jogador, jogador + direcao*alcance]:
+    // projeta no eixo do feixe, depois mede o quanto sobra na perpendicular.
+    const proj = dx * dirX + dy * dirY;
+    if (proj < -e.raio || proj > nivel.alcance + e.raio) continue;
+    const perpX = dx - dirX * proj;
+    const perpY = dy - dirY * proj;
+    const limite = meiaLargura + e.raio;
+    if (perpX * perpX + perpY * perpY > limite * limite) continue;
+
+    const matou = aplicarDano(estado, e, dano);
+    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano, matou });
+    atingiu = true;
+  }
+  return atingiu;
 }
 
 // Varredura linear sobre os inimigos ativos. So roda quando uma arma dispara
@@ -314,4 +489,75 @@ function esquecerAtingidos(p) {
     p.atingidos[i].nasc = -1;
   }
   p.memoriaIndice = 0;
+}
+
+// --------------------------------------------------- guarda de geracao (orbital)
+
+// Mesma ideia do (ref, nasc) dos projeteis, mas para um cooldown que EXPIRA
+// sozinho em vez de durar o voo inteiro: cada slot lembra qual inimigo foi
+// atingido, com qual `nasc`, e ate quando (`expiraEm`, em segundos de
+// avaliacao) ele fica protegido. Sem o `nasc`, um inimigo novo que reusasse o
+// objeto do morto herdaria a imunidade — o mesmo bug que a fase 03 blindou
+// para os projeteis perfurantes, aqui na sua outra forma.
+function criarMemoriaGolpes(tamanho) {
+  const itens = [];
+  // -1 (nao -Infinity) porque a varredura profunda do smoke reprova qualquer
+  // numero nao finito no estado inteiro; -1 ja e menor que qualquer
+  // `agora` possivel (avaliacao.decorrido nunca fica negativo).
+  for (let i = 0; i < tamanho; i += 1) itens.push({ ref: null, nasc: -1, expiraEm: -1 });
+  return { itens, indice: 0 };
+}
+
+function emCooldown(memoria, e, agora) {
+  const itens = memoria.itens;
+  for (let i = 0; i < itens.length; i += 1) {
+    if (itens[i].ref === e && itens[i].nasc === e.nasc) return itens[i].expiraEm > agora;
+  }
+  return false;
+}
+
+// Um MESMO inimigo e atingido varias vezes ao longo da vida dele (a cada
+// passe da orbita) — nao e "uma vez so", como a perfuracao do projetil.
+// Por isso precisa achar a entrada JA existente para este (ref, nasc) e
+// ATUALIZAR o expiraEm nela, em vez de sempre gravar num slot novo do anel:
+// gravar sempre num slot novo deixaria uma entrada ANTIGA e ja vencida do
+// mesmo inimigo sobrevivendo em outro slot, e como emCooldown() devolve no
+// PRIMEIRO match que encontra (nao o mais recente), essa entrada velha
+// venceria a nova e o cooldown pareceria nunca ter sido aplicado — foi visto
+// isto acontecendo: 15 acertos seguidos no mesmo inimigo parado, num teste
+// que so devia permitir 1 por passe.
+//
+// Para um inimigo NOVO (sem entrada), o slot escolhido tambem importa: um
+// enxame maior que CONTEUDO.orbital.memoriaAlvos reabre uma forma diferente
+// do mesmo problema se o round-robin sobrescrever um slot cujo cooldown
+// AINDA esta vivo (protegendo outro inimigo) — esse outro inimigo perde a
+// protecao sem ter vencido o proprio intervaloDano. Por isso procura-se
+// primeiro um slot JA VENCIDO (expiraEm <= agora, nao protege ninguem de
+// verdade) antes de cair no round-robin. So quando TODOS os slots estao
+// vivos — mais inimigos distintos em cooldown ao mesmo tempo do que
+// memoriaAlvos consegue lembrar — o round-robin sobrescreve um slot vivo
+// mesmo assim; nesse ponto o limite e de capacidade, nao de logica, e quem
+// resolve e subir memoriaAlvos (ver checarCooldownComEnxameOrbital()).
+function lembrarGolpe(memoria, e, expiraEm, agora) {
+  const itens = memoria.itens;
+  for (let i = 0; i < itens.length; i += 1) {
+    if (itens[i].ref === e && itens[i].nasc === e.nasc) {
+      itens[i].expiraEm = expiraEm;
+      return;
+    }
+  }
+  for (let i = 0; i < itens.length; i += 1) {
+    if (itens[i].expiraEm <= agora) {
+      itens[i].ref = e;
+      itens[i].nasc = e.nasc;
+      itens[i].expiraEm = expiraEm;
+      memoria.indice = (i + 1) % itens.length;
+      return;
+    }
+  }
+  const slot = itens[memoria.indice];
+  slot.ref = e;
+  slot.nasc = e.nasc;
+  slot.expiraEm = expiraEm;
+  memoria.indice = (memoria.indice + 1) % itens.length;
 }

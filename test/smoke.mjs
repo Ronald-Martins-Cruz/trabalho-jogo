@@ -18,6 +18,7 @@ import {
   equiparArma,
   nivelDaArma,
   poolProjeteis,
+  posicaoSatelite,
   subirNivelArma,
   verificarArmasDoConteudo,
 } from '../src/weapons.js';
@@ -392,10 +393,19 @@ function checarArmaSozinha() {
     escolherCarta(estado, 0);
 
     if (estado.projectiles.length > pico) pico = estado.projectiles.length;
+    // Filtrado pela arma inicial (Café): com 4 armas em content.js o bot
+    // parado tambem sobe de nivel rapido e pode pegar outra arma na carta
+    // (sempre aceita a opcao 0). 'arma-disparo'/'arma-acerto' carregam o id de
+    // quem disparou/acertou — sem o filtro, um pulso do Resumo (que tambem
+    // emite 'arma-disparo') infla `disparos` sem nascer projetil nenhum na
+    // pool, e a conta contra pool.nascimentos abaixo quebra por um motivo que
+    // nao tem nada a ver com o Café.
     for (const evento of estado.eventos) {
-      if (evento.tipo === 'inimigo-morto') mortos += 1;
-      if (evento.tipo === 'arma-disparo') disparos += 1;
-      if (evento.tipo === 'arma-acerto') acertos += 1;
+      if (evento.tipo === 'arma-disparo' && evento.dados.arma === CONTEUDO.arma.inicial) disparos += 1;
+      if (evento.tipo === 'arma-acerto' && evento.dados.arma === CONTEUDO.arma.inicial) {
+        acertos += 1;
+        if (evento.dados.matou) mortos += 1;
+      }
     }
     estado.eventos.length = 0;
   }
@@ -598,6 +608,302 @@ function checarMemoriaDePerfuracao() {
       0,
       `a segunda salva acertou ${segunda.acertos}x o mesmo inimigo (esperava 1): ` +
         'o projetil reciclado ainda carrega a memoria da salva anterior — falta esquecerAtingidos() no disparo'
+    );
+  }
+}
+
+// ------------------------------------------------------- orbital (Caneta Bic)
+//
+// orbital guarda estado entre quadros (arma.golpes com o par ref+nasc, e
+// arma.angulo) do mesmo jeito que o projetil perfurante guarda `atingidos` —
+// a mesma armadilha da fase 03, so que aqui o "ja atingiu" tem que EXPIRAR
+// sozinho (intervaloDano) em vez de durar o voo inteiro. As duas funcoes
+// abaixo cobrem as duas pontas, no mesmo espirito de checarGuardaDeGeracao()
+// e checarMemoriaDePerfuracao() para o projetil.
+//
+// Chama-se atualizarArmas() direto (sem atualizar()) para isolar a arma —
+// mas isso pula atualizarAvaliacao(), que e quem avanca
+// run.avaliacao.decorrido. orbital usa decorrido para o cooldown por inimigo,
+// entao o teste precisa avancar esse relogio manualmente, senao o cooldown
+// nunca expira (decorrido ficaria travado em 0 para sempre).
+function passoOrbital(estado, dt) {
+  estado.run.avaliacao.decorrido += dt;
+  atualizarArmas(estado, dt);
+}
+
+function prepararCenarioOrbital(seedOffset) {
+  const estado = novoEstado(seedOffset);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+
+  const arma = equiparArma(estado, 'caneta');
+  if (!arma) falhar(0, 'equiparArma("caneta") falhou montando o cenario orbital: a arma ainda existe em content.js?');
+  const dados = dadosDaArma('caneta');
+  // Precisa de 1 caneta so (senao a segunda passa em outro angulo e acerta o
+  // alvo num instante diferente, embaralhando a contagem esperada) — mesmo
+  // espirito do `findIndex` de checarGuardaDeGeracao() para o leque de
+  // projeteis: procura o nivel certo em vez de supor que e sempre o 1.
+  const indice = dados.niveis.findIndex((n) => n.quantidade === 1);
+  if (indice < 0) {
+    falhar(0, 'nenhum nivel da Caneta Bic tem 1 caneta orbitando: ajuste este teste para outro nivel/arma');
+  }
+  arma.nivel = indice + 1;
+  const nivel = nivelDaArma(arma);
+  return { estado, player, arma, dados, nivel };
+}
+
+// A mesma guarda de geracao dos projeteis (ref+nasc), aqui para o cooldown por
+// inimigo do orbital: mata o alvo no primeiro passe (a caneta gira e da uma
+// tacada rapida nele), deixa a pool reciclar o MESMO objeto para o proximo
+// inimigo (LIFO) e reposiciona-o exatamente onde a caneta esta agora. Sem o
+// `nasc`, o inimigo novo herdaria o cooldown do morto e sairia ileso.
+function checarGuardaDeGeracaoOrbital() {
+  const { estado, player, arma, nivel } = prepararCenarioOrbital(SEMENTE + 10);
+
+  const alvo = spawnInimigo(estado);
+  if (!alvo) falhar(0, 'spawnInimigo devolveu null montando o cenario orbital');
+  alvo.x = player.x + nivel.raioOrbita;
+  alvo.y = player.y;
+  alvo.hpMax = 1;
+  alvo.hp = 1; // um toque da caneta (dano bem maior que 1) mata na hora
+
+  let passos = 0;
+  while (alvo.ativo && passos < 60) {
+    passoOrbital(estado, PASSO);
+    passos += 1;
+  }
+  if (alvo.ativo) falhar(0, 'a caneta orbital nao matou o alvo no primeiro passe em 60 ticks (1s)');
+
+  const reciclado = spawnInimigo(estado);
+  if (reciclado !== alvo) {
+    falhar(0, 'a pool nao reaproveitou o objeto do inimigo morto: este teste depende disso para ter sentido');
+  }
+  // A caneta nao para de girar so porque matou alguem: reposiciona no ponto
+  // EXATO onde ela esta agora para o contato ser imediato no proximo quadro.
+  const pos = posicaoSatelite(player, arma, nivel, 0);
+  reciclado.x = pos.x;
+  reciclado.y = pos.y;
+  reciclado.hpMax = 1;
+  reciclado.hp = 1;
+
+  passos = 0;
+  while (reciclado.ativo && passos < 10) {
+    passoOrbital(estado, PASSO);
+    passos += 1;
+  }
+  if (reciclado.ativo) {
+    falhar(
+      0,
+      'o inimigo que reusou o objeto do morto nao levou dano nenhum da caneta orbital: a memoria de cooldown ' +
+        'esta comparando so a referencia, sem o `nasc` — guarda de geracao quebrada'
+    );
+  }
+}
+
+// O cooldown por inimigo em si: um alvo IMORTAL e parado no ponto de contato
+// nunca pode ser atingido duas vezes com MENOS de nivel.intervaloDano de
+// intervalo (a caneta fica varios quadros dentro do raio de colisao a cada
+// passagem — sem o cooldown seria um acerto por quadro de contato), mas TEM
+// que voltar a ser atingivel depois que o cooldown expira.
+//
+// Mede-se os TIMESTAMPS de cada acerto (em vez de contar "acertos por passe")
+// de proposito: quanto o contato dura por passagem depende de
+// raioColisao/velocidadeAngular/raioOrbita, e um numero fixo de "1 por passe"
+// quebra sempre que a fase 13 (ou esta mesma fase, durante o balanceamento)
+// mexer nesses numeros e o contato passar a durar mais que uma unica janela
+// de cooldown — o que aconteceu de verdade ao tunar a Caneta Bic nesta fase.
+// O invariante que realmente importa nao muda: nenhum par de acertos
+// consecutivos pode ficar mais perto no tempo que intervaloDano.
+function checarCooldownPorInimigoOrbital() {
+  const { estado, player, dados, nivel } = prepararCenarioOrbital(SEMENTE + 11);
+
+  const alvo = spawnInimigo(estado);
+  if (!alvo) falhar(0, 'spawnInimigo devolveu null montando o alvo imortal do cenario orbital');
+  alvo.x = player.x + nivel.raioOrbita;
+  alvo.y = player.y;
+  alvo.hpMax = 1e6;
+  alvo.hp = 1e6;
+
+  // Duas voltas completas de folga: tempo de sobra para o alvo ser atingido
+  // de novo pelo menos uma vez depois do cooldown expirar.
+  const periodoTicks = Math.ceil((Math.PI * 2) / nivel.velocidadeAngular / PASSO);
+  const totalTicks = periodoTicks * 2 + 30;
+  const timestamps = [];
+
+  for (let i = 0; i < totalTicks; i += 1) {
+    passoOrbital(estado, PASSO);
+    for (const evento of estado.eventos) {
+      if (evento.tipo === 'arma-acerto' && evento.dados.arma === dados.id) {
+        timestamps.push(estado.run.avaliacao.decorrido);
+      }
+    }
+    estado.eventos.length = 0;
+  }
+
+  if (timestamps.length < 2) {
+    falhar(
+      0,
+      `a caneta acertou o alvo parado so ${timestamps.length}x em duas voltas completas (esperava 2+): ` +
+        'o cooldown por inimigo nao esta liberando o alvo de novo depois de expirar'
+    );
+  }
+  // Pequena folga de ponto flutuante: dt acumulado em soma nao bate exato com
+  // o expiraEm calculado por multiplicacao.
+  const FOLGA = 1e-9;
+  for (let i = 1; i < timestamps.length; i += 1) {
+    const intervalo = timestamps[i] - timestamps[i - 1];
+    if (intervalo < nivel.intervaloDano - FOLGA) {
+      falhar(
+        0,
+        `dois acertos na mesma caneta ficaram a ${intervalo.toFixed(4)}s um do outro, menos que ` +
+          `nivel.intervaloDano (${nivel.intervaloDano}s): o cooldown por inimigo nao esta bloqueando — ` +
+          'e o mesmo bug de "so lembra o slot mais antigo" que ja foi visto aqui'
+      );
+    }
+  }
+}
+
+// checarCooldownPorInimigoOrbital() usa UM alvo so e nunca estoura o anel de
+// memoria (CONTEUDO.orbital.memoriaAlvos) — o bug que ela cobre e de LOGICA
+// (comparar so a referencia). Existe uma segunda forma do mesmo sintoma que
+// so aparece com um ENXAME: se mais inimigos DISTINTOS forem atingidos
+// dentro de uma janela de intervaloDano do que memoriaAlvos consegue
+// lembrar ao mesmo tempo, o round-robin de lembrarGolpe() pode sobrescrever
+// o slot de um inimigo cujo cooldown AINDA esta vivo — esse inimigo perde a
+// protecao sem ter vencido o proprio intervaloDano. Usa o nivel MAXIMO da
+// Caneta Bic (mais canetas girando, cooldown mais curto — o pior caso pra
+// capacidade) e um numero de inimigos parados na propria orbita,
+// deliberadamente maior que memoriaAlvos, pra tentar estourar o anel de
+// verdade. Os eventos `arma-acerto` nao carregam qual inimigo foi atingido,
+// mas os alvos sao IMORTAIS e PARADOS: casar pela posicao (x, y) exata do
+// evento identifica o alvo sem ambiguidade.
+function checarCooldownComEnxameOrbital() {
+  const estado = novoEstado(SEMENTE + 13);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+
+  const arma = equiparArma(estado, 'caneta');
+  if (!arma) falhar(0, 'equiparArma("caneta") falhou montando o cenario de enxame orbital');
+  const dados = dadosDaArma('caneta');
+  arma.nivel = dados.niveis.length; // nivel maximo: mais canetas, intervaloDano mais curto
+  const nivel = nivelDaArma(arma);
+
+  // Acima de memoriaAlvos por uma MARGEM FIXA, nao um multiplo dela — um
+  // multiplo (ex.: 3x) faria este teste nunca passar, nao importa quanto a
+  // memoria cresca, porque o enxame cresceria junto. +8 basta pra forcar o
+  // anel a reciclar slot (com N <= memoriaAlvos, todo inimigo acha sua
+  // propria entrada de primeira e o codigo de reciclagem nunca roda — o
+  // teste passaria sem testar nada). Visto falhando com o round-robin puro
+  // (sem preferir slot vencido) e passando com o conserto — ver handoff.
+  const N = CONTEUDO.orbital.memoriaAlvos + 8;
+  const ultimoPorAlvo = new Map();
+  for (let i = 0; i < N; i += 1) {
+    const e = spawnInimigo(estado);
+    if (!e) falhar(0, 'spawnInimigo devolveu null montando o enxame do cenario orbital');
+    const angulo = (Math.PI * 2 * i) / N;
+    e.x = player.x + Math.cos(angulo) * nivel.raioOrbita;
+    e.y = player.y + Math.sin(angulo) * nivel.raioOrbita;
+    e.hpMax = 1e6;
+    e.hp = 1e6;
+    ultimoPorAlvo.set(`${e.x.toFixed(3)},${e.y.toFixed(3)}`, null);
+  }
+
+  const DURACAO_TICKS = 600; // 10s, o mesmo tamanho de janela usado na medicao da revisao
+  const FOLGA = 1e-9;
+  let acertos = 0;
+  for (let i = 0; i < DURACAO_TICKS; i += 1) {
+    passoOrbital(estado, PASSO);
+    const agora = estado.run.avaliacao.decorrido;
+    for (const evento of estado.eventos) {
+      if (evento.tipo !== 'arma-acerto' || evento.dados.arma !== dados.id) continue;
+      acertos += 1;
+      const chave = `${evento.dados.x.toFixed(3)},${evento.dados.y.toFixed(3)}`;
+      const anterior = ultimoPorAlvo.get(chave);
+      if (anterior !== null && anterior !== undefined && agora - anterior < nivel.intervaloDano - FOLGA) {
+        falhar(
+          0,
+          `com ${N} inimigos na orbita (memoriaAlvos=${CONTEUDO.orbital.memoriaAlvos}), dois acertos no MESMO ` +
+            `inimigo do enxame ficaram a ${(agora - anterior).toFixed(4)}s um do outro, menos que intervaloDano ` +
+            `(${nivel.intervaloDano}s): o anel de cooldown estourou — outro inimigo tomou o slot antes de vencer`
+        );
+      }
+      ultimoPorAlvo.set(chave, agora);
+    }
+    estado.eventos.length = 0;
+  }
+  if (acertos === 0) falhar(0, 'a caneta orbital nao acertou ninguem no cenario de enxame — o cenario nao vale nada');
+}
+
+// ------------------------------------------------------------- feixe (Marca-texto)
+//
+// feixe NAO guarda memoria de inimigo entre quadros — e uma forma geometrica
+// recalculada do zero a cada quadro, sem projetil nem perfuracao — entao nao
+// ha guarda de geracao para testar aqui (nada para confundir entre vidas
+// diferentes do mesmo objeto reciclado). O que precisa de prova e o outro
+// jeito de errar: dano por SEGUNDO escalado errado por dt viraria dano por
+// QUADRO (60x mais forte a 60fps) ou dano fixo por acerto (dano NAO escalando
+// com o tempo de contato).
+function checarFeixeContinuo() {
+  const estado = novoEstado(SEMENTE + 12);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const player = estado.player;
+  player.x = CONTEUDO.arena.largura / 2;
+  player.y = CONTEUDO.arena.altura / 2;
+
+  const arma = equiparArma(estado, 'marcatexto');
+  if (!arma) falhar(0, 'equiparArma("marcatexto") falhou montando o cenario do feixe');
+  const dados = dadosDaArma('marcatexto');
+  const nivel = nivelDaArma(arma);
+
+  // "Parado mantem a ultima direcao" so tem dente se a direcao guardada NAO
+  // for a mesma que o valor padrao (0): usa-se movimento para BAIXO
+  // (angulo = PI/2), nao para a direita, de proposito.
+  player.vx = 0;
+  player.vy = 100;
+  atualizarArmas(estado, PASSO);
+  if (Math.abs(arma.angulo - Math.PI / 2) > 1e-9) {
+    falhar(0, `o feixe nao girou para a direcao do movimento: angulo=${arma.angulo}, esperava ${Math.PI / 2}`);
+  }
+  player.vx = 0;
+  player.vy = 0; // "parado": velocidade exatamente zero, como aplicarAtrito() deixa
+
+  const alvo = spawnInimigo(estado);
+  if (!alvo) falhar(0, 'spawnInimigo devolveu null montando o alvo do feixe');
+  alvo.x = player.x;
+  alvo.y = player.y + nivel.alcance / 2; // no meio do feixe, na direcao guardada
+  alvo.hpMax = 1e6;
+  alvo.hp = 1e6;
+
+  const TICKS_FEIXE = 120; // 2s
+  let danoTotal = 0;
+  for (let i = 0; i < TICKS_FEIXE; i += 1) {
+    atualizarArmas(estado, PASSO);
+    if (Math.abs(arma.angulo - Math.PI / 2) > 1e-9) {
+      falhar(i, `o feixe mudou de direcao (angulo=${arma.angulo}) com o jogador parado: nao deveria`);
+    }
+    for (const evento of estado.eventos) {
+      if (evento.tipo === 'arma-acerto' && evento.dados.arma === dados.id) danoTotal += evento.dados.dano;
+    }
+    estado.eventos.length = 0;
+  }
+
+  const esperado = nivel.dano * TICKS_FEIXE * PASSO;
+  const erroRelativo = Math.abs(danoTotal - esperado) / esperado;
+  if (erroRelativo > 1e-6) {
+    falhar(
+      TICKS_FEIXE,
+      `o feixe aplicou ${danoTotal.toFixed(4)} de dano em ${(TICKS_FEIXE * PASSO).toFixed(2)}s, esperava ` +
+        `${esperado.toFixed(4)} (nivel.dano x tempo): o dano por segundo nao esta escalado por dt corretamente`
     );
   }
 }
@@ -859,7 +1165,13 @@ function checarFilaDeCartas() {
     );
   }
 
+  // Com 4 armas em content.js a opcao 0 nao e mais sempre "Cafe +1": pode ser
+  // uma arma nova ou o nivel de qualquer uma das equipadas. Guarda-se o que a
+  // opcao PROMETE antes de escolher, para depois conferir o efeito certo —
+  // independente de qual carta o sorteio ofereceu (tarefa 5 do contrato desta
+  // fase: o sorteio agora tem o que oferecer de verdade).
   const versaoPrimeira = estado.cartas.versao;
+  const primeiraOpcao = { ...estado.cartas.opcoes[0] };
   if (!escolherCarta(estado, 0)) falhar(0, 'escolherCarta(0) recusou a primeira carta');
   atualizar(estado, PASSO);
 
@@ -873,15 +1185,16 @@ function checarFilaDeCartas() {
   if (estado.cartas.versao === versaoPrimeira) {
     falhar(0, 'a segunda carta manteve a versao da primeira: a UI nao redesenharia as opcoes');
   }
+  const segundaOpcao = { ...estado.cartas.opcoes[0] };
   if (!escolherCarta(estado, 0)) falhar(0, 'escolherCarta(0) recusou a segunda carta');
 
   // apontarCarta e o que o mouse (mouseenter) e o foco do DOM chamam — sem
   // trilho, ela podia ser esvaziada e o realce voltaria a nao seguir o mouse,
   // que foi o bloqueio da revisao. Aponta-se a ULTIMA opcao com a escolha ja
   // registrada: prova de uma vez que ela move o cursor, que apontar NAO mexe
-  // na escolha pendente (a carta levada continua sendo a 0, e a arma chega ao
-  // nivel 3 logo abaixo) e deixa o cursor fora do zero para a carta seguinte,
-  // que e o que da dente a assercao de reset.
+  // na escolha pendente (a carta levada continua sendo a 0, verificado logo
+  // abaixo) e deixa o cursor fora do zero para a carta seguinte, que e o que
+  // da dente a assercao de reset.
   const ultimaOpcao = estado.cartas.opcoes.length - 1;
   if (!apontarCarta(estado, ultimaOpcao)) falhar(0, `apontarCarta(${ultimaOpcao}) recusou uma opcao valida`);
   if (estado.cartas.selecionada !== ultimaOpcao) {
@@ -906,12 +1219,25 @@ function checarFilaDeCartas() {
   if (estado.cartas.fila !== 0 || estado.cartas.escolhidas !== 2) {
     falhar(0, `fila=${estado.cartas.fila} escolhidas=${estado.cartas.escolhidas} depois das duas cartas`);
   }
-  // O bot pegou a primeira opcao duas vezes; com uma arma so em content.js ela
-  // e sempre "+1 nivel no Café". Se o efeito nao tivesse sido aplicado, a arma
-  // estaria parada no nivel 1 e nada mais neste teste acusaria.
-  const arma = estado.player.armas[0];
-  if (!arma || arma.nivel !== 3) {
-    falhar(0, `a arma ficou no nivel ${arma ? arma.nivel : '(nenhuma)'} depois de duas cartas de +1 nivel`);
+  // As duas opcoes prometidas (guardadas ANTES de cada escolha) precisam ter
+  // sido de fato aplicadas — arma-nova equipa, arma-nivel sobe o nivel certo.
+  // Sem isso a arma ficaria parada e nada mais neste teste acusaria.
+  for (const opcao of [primeiraOpcao, segundaOpcao]) {
+    if (opcao.tipo === 'arma-nova') {
+      if (!estado.player.armas.some((a) => a.id === opcao.id)) {
+        falhar(0, `a carta de arma nova (${opcao.id}) nao equipou nada`);
+      }
+    } else if (opcao.tipo === 'arma-nivel') {
+      const arma = estado.player.armas.find((a) => a.id === opcao.id);
+      if (!arma || arma.nivel !== opcao.nivelProximo) {
+        falhar(
+          0,
+          `a carta de nivel (${opcao.id} -> ${opcao.nivelProximo}) nao aplicou: ficou em ` +
+            `${arma ? arma.nivel : '(sem arma)'}`
+        );
+      }
+    }
+    // Outros tipos (carta de consolo) tem teste dedicado em checarCartasNoMaximo().
   }
 
   // Navegacao por teclado, que e o plano B da apresentacao se o mouse falhar.
@@ -1076,6 +1402,121 @@ function checarSorteioDeCartas() {
   }
 }
 
+// Tarefa 6 do contrato da fase 05: uma corrida de 60s por arma, cada uma
+// equipada e levada ao nivel maximo ANTES do primeiro tick (comparacao justa
+// entre armas no pico de poder, sem depender da sorte do sorteio de cartas
+// pra saber quem cresce mais rapido). O bot roda em circulo, com HP sempre
+// cheio — o que se mede e dano, nao sobrevivencia.
+//
+// O jogador so pode ter a arma especializada: qualquer 'arma-nova' que a
+// carta ofereça e removida de estado.player.armas no mesmo tick, antes que
+// ela consiga disparar. Sem isso, a carta ainda oferece as outras 3 armas de
+// vez em quando (o bot aceita a opcao 0 cegamente, como em toda a corrida
+// principal), e cada arma extra que entra MATA inimigos que a arma medida
+// mataria — a medida de uma arma passa a depender de quais outras ela por
+// acaso pegou. Foi visto acontecendo: bufar o Marca-texto derrubava a
+// contagem da Caneta Bic e do Resumo sem tocar em nenhum numero deles.
+const MINIMO_KILLS_ESPECIALIZADO = 15; // por arma, em 60s; abaixo disso ela nao esta matando de verdade
+const FATOR_MINIMO_ENTRE_ARMAS = 0.4; // a pior nao pode ficar abaixo disto da melhor (criterio de aceite)
+
+function checarArmasEspecializadas() {
+  const resultados = [];
+
+  CONTEUDO.armas.forEach((dados, indice) => {
+    const estado = novoEstado(SEMENTE + 300 + indice);
+    iniciarAvaliacao(estado);
+
+    const arma = equiparArma(estado, dados.id);
+    if (!arma) falhar(0, `equiparArma("${dados.id}") falhou montando a corrida especializada`);
+    let subidas = 0;
+    while (subirNivelArma(estado, dados.id)) {
+      subidas += 1;
+      if (subidas > 50) falhar(0, `subirNivelArma("${dados.id}") nunca devolve false: o nivel maximo nao segura`);
+    }
+
+    let kills = 0;
+    let acertos = 0;
+    let disparos = 0;
+    for (let tick = 1; tick <= TICKS; tick += 1) {
+      botCircular(estado, tick);
+      estado.player.hp = estado.player.hpMax;
+      try {
+        atualizar(estado, PASSO);
+      } catch (e) {
+        falhar(tick, `excecao especializando "${dados.id}": ${e && e.stack ? e.stack : e}`);
+      }
+      if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+      // Isolamento: nenhuma outra arma sobrevive ate o proximo tick.
+      if (estado.player.armas.length > 1) {
+        estado.player.armas = estado.player.armas.filter((a) => a.id === dados.id);
+      }
+
+      for (const evento of estado.eventos) {
+        if (evento.tipo === 'arma-acerto' && evento.dados.arma === dados.id) {
+          acertos += 1;
+          if (evento.dados.matou) kills += 1;
+        }
+        if (evento.tipo === 'arma-disparo' && evento.dados.arma === dados.id) disparos += 1;
+      }
+      estado.eventos.length = 0;
+    }
+
+    // Teto de disparos dirigido por DADO, nao por lista de nomes de
+    // comportamento: qualquer arma cujo nivel maximo tenha campo `cadencia`
+    // e DISCRETA (o proprio comportamento decrementa arma.cooldown e so age
+    // quando zera — ver o comentario de atualizarArma() em weapons.js). Ela
+    // nao pode disparar mais que ceil(T/cadencia)+1 vezes em T segundos; mais
+    // que isso e o portao de cadencia parou de bloquear (o bug generico que
+    // a descentralizacao do portao na fase 05 poderia introduzir sem
+    // ninguem perceber, porque o sintoma que aparece primeiro e sempre
+    // indireto — "matou de mais" ou "ninguem tomou dano" — nunca aponta pro
+    // `-= dt` que sumiu). orbital e feixe ficam de fora sozinhos: nenhum
+    // nivel deles tem `cadencia` em content.js.
+    //
+    // Roda ANTES da checagem de MINIMO_KILLS_ESPECIALIZADO de proposito: com
+    // o portao de cadencia quebrado, um disparo desenfreado tambem produz
+    // kills de sobra, entao a checagem de minimo nunca falharia sozinha —
+    // ordem errada deixaria essa asserção sem dente em varias das potencias
+    // de dano varridas (visto perdendo pra min-kills so por ordem nas mais
+    // baixas: /40 e /80 do dano do Resumo).
+    const nivelMax = dados.niveis[dados.niveis.length - 1];
+    if (typeof nivelMax.cadencia === 'number') {
+      const duracao = TICKS * PASSO;
+      const teto = Math.ceil(duracao / nivelMax.cadencia) + 1;
+      if (disparos > teto) {
+        falhar(
+          TICKS,
+          `arma "${dados.id}" disparou ${disparos}x em ${duracao.toFixed(1)}s, teto calculado pela cadencia ` +
+            `(${nivelMax.cadencia}s) e ${teto}: o portao de cadencia (arma.cooldown) parou de bloquear?`
+        );
+      }
+    }
+
+    if (kills < MINIMO_KILLS_ESPECIALIZADO) {
+      falhar(
+        TICKS,
+        `arma "${dados.id}" especializada matou so ${kills} em 60s (minimo ${MINIMO_KILLS_ESPECIALIZADO}): ` +
+          'ela esta matando de verdade sozinha?'
+      );
+    }
+
+    resultados.push({ id: dados.id, nome: dados.nome, kills, acertos, disparos });
+  });
+
+  const maior = resultados.reduce((m, r) => (r.kills > m.kills ? r : m), resultados[0]);
+  for (const r of resultados) {
+    if (r.kills < maior.kills * FATOR_MINIMO_ENTRE_ARMAS) {
+      falhar(
+        TICKS,
+        `arma "${r.id}" matou ${r.kills}, menos que ${(FATOR_MINIMO_ENTRE_ARMAS * 100).toFixed(0)}% da melhor ` +
+          `("${maior.id}", ${maior.kills}): ajuste os numeros dela em content.js`
+      );
+    }
+  }
+
+  return resultados;
+}
+
 // O numero que o contrato pede: o nivel que o bot atinge em 60s. O HP e
 // segurado porque o que se mede aqui e a curva de XP, nao a sobrevivencia — o
 // bot circular morre por volta dos 57s desde a fase 03 e a avaliacao
@@ -1171,12 +1612,17 @@ checarArmasDoConteudo();
 checarNiveisDaArma();
 checarGuardaDeGeracao();
 checarMemoriaDePerfuracao();
+checarGuardaDeGeracaoOrbital();
+checarCooldownPorInimigoOrbital();
+checarCooldownComEnxameOrbital();
+checarFeixeContinuo();
 checarCartasDoConteudo();
 checarImaDeOrbes();
 checarFilaDeCartas();
 checarCartasNoMaximo();
 checarSorteioDeCartas();
 const corridaArma = checarArmaSozinha();
+const especializacao = checarArmasEspecializadas();
 const progressao = checarProgressao();
 
 const estado = novoEstado(SEMENTE);
@@ -1323,5 +1769,9 @@ console.log(
     ` · cartas=${progressao.cartas} · xp ${progressao.xpColetado} coletado` +
     ` + ${progressao.xpNoChao} no chao = ${progressao.xpSoltado} solto por ${progressao.mortos} mortes` +
     ` · pico de orbes no chao=${progressao.orbesPico}` +
-    `\n  cartas na corrida principal=${contadores.cartas}`
+    `\n  cartas na corrida principal=${contadores.cartas}` +
+    // Insumo do balanceamento da fase 13 (tarefa 6 do contrato): cada arma
+    // sozinha, no nivel maximo, 60s, corrida propria (SEMENTE+300+indice).
+    `\n  arsenal especializado (60s cada, nivel maximo, corridas proprias): ` +
+    especializacao.map((r) => `${r.nome}=${r.kills}kills/${r.acertos}acertos`).join(' · ')
 );

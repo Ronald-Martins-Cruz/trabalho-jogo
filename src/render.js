@@ -1,5 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { TELAS } from './state.js';
+import { dadosDaArma, nivelDaArma, posicaoSatelite } from './weapons.js';
 
 // Le o estado e desenha. Nunca escreve no estado — se uma funcao daqui
 // precisar mudar alguma coisa, ela esta no arquivo errado.
@@ -24,6 +25,10 @@ export function desenhar(estado, ctx) {
     desenharInimigos(ctx, estado.enemies, v);
     desenharProjeteis(ctx, estado.projectiles, v);
     desenharJogador(ctx, estado.player, v);
+    // Depois do jogador: caneta orbital, onda e feixe sao "efeitos da propria
+    // arma", nao entidades da pool — fazem mais sentido desenhados por cima,
+    // como um halo do jogador.
+    desenharArmasEspeciais(ctx, estado.player, v);
   }
 
   if (estado.tela === TELAS.PAUSA) {
@@ -116,6 +121,63 @@ function desenharRastro(ctx, player, v) {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+}
+
+// orbital, ondaArea e feixe nao passam pela pool de projeteis (a orbita e o
+// feixe seguem o jogador continuamente; discretizar isso em objetos pooled
+// so pra desenhar seria mais estado pra sincronizar por nenhum ganho). O
+// desenho le a mesma instancia de arma (estado.player.armas) e os mesmos
+// numeros de content.js que weapons.js usa para a colisao, entao o que
+// aparece na tela e sempre exatamente onde o dano acontece.
+function desenharArmasEspeciais(ctx, player, v) {
+  for (let i = 0; i < player.armas.length; i += 1) {
+    const arma = player.armas[i];
+    const dados = dadosDaArma(arma.id);
+    if (!dados) continue;
+    const nivel = nivelDaArma(arma);
+    if (!nivel) continue;
+
+    if (dados.comportamento === 'orbital') desenharOrbital(ctx, player, arma, dados, nivel, v);
+    else if (dados.comportamento === 'ondaArea') desenharOnda(ctx, player, arma, nivel, v);
+    else if (dados.comportamento === 'feixe') desenharFeixe(ctx, player, arma, nivel, v);
+  }
+}
+
+function desenharOrbital(ctx, player, arma, dados, nivel, v) {
+  const tamanho = nivel.raioColisao * v.emojiSateliteFator;
+  for (let s = 0; s < nivel.quantidade; s += 1) {
+    const pos = posicaoSatelite(player, arma, nivel, s);
+    desenharEmoji(ctx, dados.emoji, pos.x, pos.y, tamanho, v);
+  }
+}
+
+// O telegrafo cresce de 0 ate nivel.raio ao longo de CONTEUDO.ondaArea.
+// duracaoAnimacao e desaparece (alpha cai) no mesmo ritmo — sem isso o dano
+// da onda parece aleatorio (tarefa 2 do contrato da fase 05).
+function desenharOnda(ctx, player, arma, nivel, v) {
+  const duracao = CONTEUDO.ondaArea.duracaoAnimacao;
+  const progresso = Math.min(1, (arma.animacao || 0) / duracao);
+  if (progresso >= 1) return; // pulso anterior ja terminou de sumir
+  ctx.strokeStyle = v.corOndaTelegrafo;
+  ctx.globalAlpha = 1 - progresso;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, nivel.raio * progresso, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+// Desenhado como uma faixa translucida (a "marcacao" do highlighter) do
+// jogador ate o alcance, na direcao guardada em arma.angulo — a mesma
+// direcao que weapons.js usa para a colisao.
+function desenharFeixe(ctx, player, arma, nivel, v) {
+  const angulo = arma.angulo || 0;
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  ctx.rotate(angulo);
+  ctx.fillStyle = v.corFeixe;
+  ctx.fillRect(0, -nivel.largura / 2, nivel.alcance, nivel.largura);
+  ctx.restore();
 }
 
 export function desenharEmoji(ctx, emoji, x, y, tamanho, v = CONTEUDO.visual) {

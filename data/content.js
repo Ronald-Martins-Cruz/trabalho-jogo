@@ -54,6 +54,9 @@ export const CONTEUDO = {
     emojiProjetilFator: 2.6, // tamanho do emoji = raio do projetil x este fator
     emojiOrbeFator: 2.4, // tamanho do emoji = raio do orbe de xp x este fator
     corSombraCarta: 'rgba(5, 6, 14, 0.72)', // escurece a arena atras da carta
+    emojiSateliteFator: 2.2, // tamanho do emoji = raioColisao da caneta orbital x este fator
+    corOndaTelegrafo: 'rgba(255, 210, 90, 0.55)', // anel do telegrafo do Resumo (comportamento ondaArea)
+    corFeixe: 'rgba(255, 235, 59, 0.32)', // faixa translucida do Marca-texto (comportamento feixe)
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -107,8 +110,36 @@ export const CONTEUDO = {
   // da avaliacao.
   cartas: {
     quantidade: 3,
-    pesoArmaNova: 5, // arma nova pesa mais: variedade e o que faz a build
-    pesoArmaNivel: 3,
+    // A fase 04 escreveu pesoArmaNova=5 > pesoArmaNivel=3 com UMA arma no
+    // jogo — com so o Café equipavel, "arma nova" nunca era candidata de
+    // verdade e o peso nunca rodou de fato. A fase 05 acrescentou as outras
+    // tres e deu a este peso a primeira chance real de fazer diferenca.
+    //
+    // NAO e sobre sobrevivencia: medido nos numeros FINAIS das 4 armas (apos
+    // o balanceamento desta fase), 30 sementes, corrida principal completa
+    // (HP real, sem segurar) — nenhum dos dois pesos causa jubilado
+    // (0/30 jubilados nos dois). Uma medicao anterior deste comentario dizia
+    // que 5/3 matava o jogador em 5 de 8 sementes; isso foi medido num
+    // estado INTERMEDIARIO desta fase, antes de as 3 armas novas serem
+    // calibradas (o Marca-texto, por exemplo, foi de 62 para 100 kills
+    // especializados durante a sessao) — a medicao era verdadeira naquele
+    // momento e ficou falsa quando os numeros das armas mudaram por baixo
+    // dela. Fica registrado aqui como licao: remedir depois de qualquer
+    // mudanca nos numeros que a medicao depende, nunca supor que ainda vale.
+    //
+    // O que pesoArmaNova=2/pesoArmaNivel=5 realmente faz e CONCENTRAR a
+    // build: com 4 armas candidatas, 5/3 da a Café cerca de 17% de chance de
+    // ser a opcao 0 oferecida contra ~45% em 2/5 (café so concorre com as
+    // OUTRAS armas ja equipadas por "arma-nivel", contra 3 candidatas de
+    // "arma-nova" cada uma pesando por si). Mortos por avaliacao, mesmas 30
+    // sementes: 5/3 media 171,3 (min 159, max 207); 2/5 media 179,8 (min
+    // 156, max 219) — cerca de 5% a mais, nao 100%+ como a versao antiga
+    // deste comentario dava a entender. Mantido em 2/5 porque concentra a
+    // build sem custar sobrevivencia nem esconder arma fraca (a pior das 4,
+    // Marca-texto, fica em 49% da melhor — ver o bloco de armas abaixo).
+    // Nao e balanceamento final (isso e fase 13).
+    pesoArmaNova: 2,
+    pesoArmaNivel: 5,
     consolo: {
       id: 'lanche',
       nome: 'Lanche da Cantina',
@@ -133,24 +164,88 @@ export const CONTEUDO = {
     vidaMaxima: 3, // teto de segundos de voo; rede contra projetil eterno
   },
 
-  // Armas. A fase 03 monta o sistema com o Café; a fase 05 pendura as outras
-  // tres (design §6) SEM tocar em weapons.js — basta apontar `comportamento`
-  // para uma das funcoes ja registradas la.
+  // Regras gerais do comportamento `orbital` (Caneta Bic e qualquer arma
+  // futura que orbite o jogador). `memoriaAlvos` e quantos inimigos distintos
+  // a arma lembra ter atingido recentemente, para aplicar o cooldown por
+  // inimigo (nivel.intervaloDano) sem crescer sem limite.
+  //
+  // Era 16; a revisao da fase 05 achou um segundo jeito do mesmo bug de
+  // guarda de geracao (ver `lembrarGolpe()` em weapons.js): com mais
+  // inimigos distintos em cooldown ao mesmo tempo do que slots existem, o
+  // anel sobrescrevia a entrada de um inimigo cujo cooldown ainda estava
+  // vivo. O conserto (preferir um slot ja vencido antes do round-robin)
+  // reduz o problema mas nao o elimina — se o numero de inimigos distintos
+  // realmente atingidos dentro de uma janela de intervaloDano passar de
+  // memoriaAlvos, alguem perde a protecao de qualquer jeito, e isso e limite
+  // de capacidade, nao de logica. Nao e alcancavel hoje com o unico inimigo
+  // do jogo (ele morre num toque so, nunca acumula entrada viva) — fica
+  // pronto pra quando a fase 06/10 trouxer um inimigo que aguenta mais de um
+  // toque.
+  //
+  // Subiu de 48 para 160 depois de medir a margem real do teste
+  // `checarCooldownComEnxameOrbital()` (N = memoriaAlvos+8): com 48, a
+  // primeira violacao medida aparece em N=57 contra um N de teste de 56 —
+  // so ~2% de folga, e o `+8` fixo do teste NAO cresce junto se
+  // memoriaAlvos subir (verificado). 160 mede limpo (zero violacoes) ate
+  // N=172 — o teste roda em N=168, ~3% abaixo do primeiro N que viola de
+  // verdade, com uma faixa cheia de 12 valores de N sem nenhum sinal de
+  // violacao entre eles (nada de intermitencia logo depois do N do teste,
+  // ao contrario do que 48 tinha). Nao subir mais que isso: o teto de
+  // `spawn.maxSimultaneos` (180) faz `spawnInimigo()` devolver null pra
+  // N >= 181, entao memoriaAlvos+8 tem que sobrar bem abaixo de 180 pra
+  // sobrar espaco de medir a violacao de verdade, nao so o limite de spawn.
+  // Custo extra medido em `smoke:carga`: nao mensuravel (a variacao entre
+  // rodadas e maior que a diferenca entre 48 e valores bem maiores).
+  orbital: {
+    memoriaAlvos: 160,
+  },
+
+  // Regras gerais do comportamento `ondaArea` (Resumo e qualquer arma futura
+  // de pulso). `duracaoAnimacao` e puramente cosmetica: quanto tempo o anel do
+  // telegrafo leva para crescer e sumir depois de cada pulso — nao afeta dano
+  // nem cadencia, so a leitura visual do golpe.
+  ondaArea: {
+    duracaoAnimacao: 0.35,
+  },
+
+  // Armas. A fase 03 montou o sistema com o Café (projetilMirado); a fase 05
+  // pendura as outras tres do MVP (design §6) apontando `comportamento` para
+  // as funcoes novas de weapons.js — nenhuma arma especifica esta codificada
+  // la, so o registro de comportamentos.
   //
   // Contrato de uma entrada:
   //   id, nome, descricao, emoji  identidade e o que a carta mostra
   //   comportamento               nome de uma funcao registrada em weapons.js
   //   niveis[arma.nivelMaximo]    TODOS os numeros da arma, um objeto por nivel
   //
-  // Campos de cada nivel (a arma nunca muda de regra entre niveis, so de numero):
-  //   dano        dano por acerto
-  //   cadencia    segundos entre disparos
-  //   velocidade  px/s do projetil
-  //   alcance     px: raio de busca do alvo E distancia que o projetil percorre
-  //   raio        px: raio de colisao do projetil
-  //   projeteis   quantos saem por disparo
-  //   dispersao   radianos de abertura do leque quando projeteis > 1
-  //   perfuracao  inimigos que o projetil atravessa alem do primeiro
+  // Os CAMPOS de cada nivel dependem do comportamento (a arma nunca muda de
+  // REGRA entre niveis, so de numero — regra e assunto de coringa):
+  //
+  //   projetilMirado  dano, cadencia (s entre disparos), velocidade (px/s),
+  //                   alcance (px: raio de busca E distancia de voo),
+  //                   raio (px de colisao do projetil), projeteis (qtd por
+  //                   disparo), dispersao (rad de abertura do leque),
+  //                   perfuracao (inimigos atravessados alem do primeiro)
+  //   orbital         dano (por contato), quantidade (canetas orbitando),
+  //                   raioOrbita (px do jogador ate a caneta),
+  //                   velocidadeAngular (rad/s), raioColisao (px da caneta),
+  //                   intervaloDano (s de cooldown por inimigo)
+  //   ondaArea        dano, cadencia (s entre pulsos), raio (px do pulso),
+  //                   empurrao (px de deslocamento instantaneo de quem e
+  //                   atingido, para longe do jogador)
+  //   feixe           dano (por SEGUNDO, nao por acerto), alcance (px de
+  //                   comprimento), largura (px de largura total do feixe)
+  //
+  // Balanceamento medido por test/smoke.mjs (checarArmasEspecializadas,
+  // tarefa 6 da fase 05): cada arma sozinha, no nivel maximo, 60s de bot
+  // circular, numa corrida ISOLADA (nenhuma outra arma pode contribuir —
+  // sem isso, bufar uma arma rouba inimigos das outras e a medida de cada
+  // uma passa a depender do que as outras por acaso pegaram na carta).
+  // Resultado: Café 204 · Caneta Bic 145 (71%) · Resumo 162 (79%) ·
+  // Marca-texto 100 (49%) — todas acima do minimo de 40% do contrato. Café
+  // (fase 03) nao foi tocado; as outras tres foram calibradas para chegar
+  // ali. Nao e o balanceamento final (isso e fase 13), e o piso de "nenhuma
+  // arma obviamente inutil".
   armas: [
     {
       id: 'cafe',
@@ -169,6 +264,58 @@ export const CONTEUDO = {
         { dano: 16, cadencia: 0.33, velocidade: 470, alcance: 370, raio: 8, projeteis: 1, dispersao: 0, perfuracao: 1 },
         { dano: 18, cadencia: 0.3, velocidade: 490, alcance: 390, raio: 8, projeteis: 2, dispersao: 0.22, perfuracao: 1 },
         { dano: 21, cadencia: 0.26, velocidade: 520, alcance: 420, raio: 9, projeteis: 3, dispersao: 0.3, perfuracao: 2 },
+      ],
+    },
+    {
+      id: 'caneta',
+      nome: 'Caneta Bic',
+      descricao: 'Fica girando ao seu redor cutucando quem chega perto. Nunca erra, nunca corre.',
+      emoji: '✏️',
+      comportamento: 'orbital',
+      // Continua (sem cadencia de disparo): a colisao roda todo quadro contra
+      // quem estiver dentro de raioColisao da caneta. intervaloDano e o que
+      // evita que um inimigo parado dentro dela leve 60 hits por segundo.
+      niveis: [
+        { dano: 12, quantidade: 1, raioOrbita: 55, velocidadeAngular: 3.6, raioColisao: 20, intervaloDano: 0.16 },
+        { dano: 15, quantidade: 2, raioOrbita: 58, velocidadeAngular: 4.0, raioColisao: 21, intervaloDano: 0.14 },
+        { dano: 18, quantidade: 3, raioOrbita: 62, velocidadeAngular: 4.4, raioColisao: 22, intervaloDano: 0.12 },
+        { dano: 22, quantidade: 3, raioOrbita: 65, velocidadeAngular: 4.8, raioColisao: 23, intervaloDano: 0.1 },
+        { dano: 27, quantidade: 4, raioOrbita: 68, velocidadeAngular: 5.2, raioColisao: 24, intervaloDano: 0.09 },
+      ],
+    },
+    {
+      id: 'resumo',
+      nome: 'Resumo',
+      descricao: 'Resume tudo numa pancada só: uma onda que empurra e machuca quem está por perto.',
+      emoji: '📝',
+      comportamento: 'ondaArea',
+      // Pulso ao redor do proprio jogador: sempre "dispara", nao depende de
+      // achar alvo. O empurrao e deslocamento instantaneo (px), nao
+      // velocidade — ver decisao no handoff da fase 05 sobre por que nao da
+      // pra usar o empurraoX/Y de enemies.js aqui.
+      niveis: [
+        { dano: 10, cadencia: 2.2, raio: 90, empurrao: 40 },
+        { dano: 13, cadencia: 2.0, raio: 100, empurrao: 45 },
+        { dano: 16, cadencia: 1.8, raio: 110, empurrao: 50 },
+        { dano: 20, cadencia: 1.6, raio: 120, empurrao: 55 },
+        { dano: 25, cadencia: 1.4, raio: 135, empurrao: 65 },
+      ],
+    },
+    {
+      id: 'marcatexto',
+      nome: 'Marca-texto',
+      descricao: 'Risca tudo que está na frente. Ninguém sai ileso de um grifo bem passado.',
+      emoji: '🖍️',
+      comportamento: 'feixe',
+      // Continua, sem cadencia: dano e por SEGUNDO (o codigo multiplica por
+      // dt a cada quadro), nao por acerto — atravessar mais inimigos nao
+      // dilui o dano de ninguem.
+      niveis: [
+        { dano: 58, alcance: 195, largura: 55 },
+        { dano: 70, alcance: 210, largura: 60 },
+        { dano: 84, alcance: 225, largura: 67 },
+        { dano: 100, alcance: 240, largura: 74 },
+        { dano: 122, alcance: 260, largura: 83 },
       ],
     },
   ],
@@ -513,17 +660,41 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
   }
 
+  if (exigeObjeto(conteudo.orbital, 'orbital')) {
+    exigeNumero(conteudo.orbital.memoriaAlvos, 'orbital.memoriaAlvos', { min: 1 });
+  }
+  if (exigeObjeto(conteudo.ondaArea, 'ondaArea')) {
+    exigeNumero(conteudo.ondaArea.duracaoAnimacao, 'ondaArea.duracaoAnimacao', { min: 1 / 60 });
+  }
+
+  // Cada comportamento pede um conjunto proprio de numeros por nivel — nem
+  // toda arma "atira projetil", entao nem toda arma tem `dispersao` ou
+  // `perfuracao`. Isto e o que content.js sabe sobre cada comportamento SEM
+  // importar weapons.js (fecharia ciclo): a ligacao "esse nome de
+  // comportamento existe de verdade" e responsabilidade do smoke
+  // (verificarArmasDoConteudo), a mesma divisao que ja valia so para o Café.
+  const CAMPOS_POR_COMPORTAMENTO = {
+    projetilMirado: [
+      ['dano', 0.01], ['cadencia', 1 / 60], ['velocidade', 1], ['alcance', 1],
+      ['raio', 1], ['projeteis', 1], ['dispersao', 0], ['perfuracao', 0],
+    ],
+    orbital: [
+      ['dano', 0.01], ['quantidade', 1], ['raioOrbita', 1],
+      ['velocidadeAngular', 1 / 60], ['raioColisao', 1], ['intervaloDano', 1 / 60],
+    ],
+    ondaArea: [
+      ['dano', 0.01], ['cadencia', 1 / 60], ['raio', 1], ['empurrao', 0],
+    ],
+    feixe: [
+      ['dano', 0.01], ['alcance', 1], ['largura', 1],
+    ],
+  };
+  // Contagem de coisas, nao medida: fracao aqui faria a conta de
+  // projetil.memoriaAtingidos fechar por acidente (projeteis/perfuracao) ou o
+  // orbital nascer com meia caneta (quantidade).
+  const CAMPOS_INTEIROS = new Set(['projeteis', 'perfuracao', 'quantidade']);
+
   if (Array.isArray(conteudo.armas)) {
-    const camposDeNivel = [
-      ['dano', 0.01],
-      ['cadencia', 1 / 60],
-      ['velocidade', 1],
-      ['alcance', 1],
-      ['raio', 1],
-      ['projeteis', 1],
-      ['dispersao', 0],
-      ['perfuracao', 0],
-    ];
     conteudo.armas.forEach((arma, i) => {
       const c = `armas[${i}]`;
       if (typeof arma !== 'object' || arma === null) return;
@@ -541,14 +712,15 @@ export function validarConteudo(conteudo = CONTEUDO) {
       if (nivelMaximo !== null && arma.niveis.length !== nivelMaximo) {
         erros.push(`${c}.niveis: ${arma.niveis.length} niveis, arma.nivelMaximo pede ${nivelMaximo}`);
       }
+      // Comportamento desconhecido nao tem lista de campos aqui — quem
+      // reprova isso e o smoke (a arma nao existe em weapons.js), nao o check.
+      const campos = CAMPOS_POR_COMPORTAMENTO[arma.comportamento];
       arma.niveis.forEach((nivel, j) => {
         const cn = `${c}.niveis[${j}]`;
         if (!exigeObjeto(nivel, cn)) return;
-        for (const [campo, min] of camposDeNivel) exigeNumero(nivel[campo], `${cn}.${campo}`, { min });
-        // Os dois sao contagem de coisas, nao medida: fracao aqui faria a conta
-        // de projetil.memoriaAtingidos fechar por acidente e o leque nascer com
-        // meio projetil.
-        for (const campo of ['projeteis', 'perfuracao']) {
+        if (!campos) return;
+        for (const [campo, min] of campos) exigeNumero(nivel[campo], `${cn}.${campo}`, { min });
+        for (const campo of CAMPOS_INTEIROS) {
           if (typeof nivel[campo] === 'number' && !Number.isInteger(nivel[campo])) {
             erros.push(`${cn}.${campo}: ${nivel[campo]} precisa ser inteiro`);
           }
