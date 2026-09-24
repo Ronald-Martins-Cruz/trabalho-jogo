@@ -177,6 +177,143 @@ if (erros.length === 0) {
   }
 }
 
+// ------------------------------------- 7. regras puras da nota (run.js)
+
+// calcularNota e a unica conta do jogo que o jogador ve em numero na tela, e
+// ela nao depende de simulacao nenhuma — entao mora aqui, junto do resto do
+// que e verificavel sem rodar a partida. Os casos sao os de borda: ninguem
+// morto, HP cheio, HP 1, ileso, e o grampo do teto.
+if (erros.length === 0) {
+  try {
+    const { CONTEUDO } = await import(pathToFileURL(join(RAIZ, 'data', 'content.js')).href);
+    const run = await import(pathToFileURL(join(RAIZ, 'src', 'run.js')).href);
+    const pesos = CONTEUDO.nota;
+    const casas = pesos.casasDecimais;
+    const arredondar = (v) => Math.round(v * 10 ** casas) / 10 ** casas;
+    const exigir = (condicao, mensagem) => {
+      if (!condicao) erros.push(`run.js — ${mensagem}`);
+    };
+    const nota = (kills, hpRestante, hpMax, ileso) =>
+      run.calcularNota({ kills, hpRestante, hpMax, ileso });
+
+    const hpMax = CONTEUDO.jogador.hpMax;
+
+    // Ninguem morto e HP cheio: so o peso de HP. E o jogador que passou a
+    // avaliacao inteira fugindo — ele e aprovado, mas a nota tem que dizer
+    // que ele nao fez nada.
+    exigir(
+      nota(0, hpMax, hpMax, false) === arredondar(pesos.pesoHp),
+      `0 kills com HP cheio deu ${nota(0, hpMax, hpMax, false)}, esperava ${arredondar(pesos.pesoHp)} (so pesoHp)`
+    );
+    exigir(
+      nota(0, hpMax, hpMax, true) === arredondar(pesos.pesoHp + pesos.bonusIleso),
+      `0 kills, HP cheio e ileso deu ${nota(0, hpMax, hpMax, true)}, esperava pesoHp + bonusIleso`
+    );
+    // HP 1 depois de uma cacada: a parcela de HP e quase nada (4/100 some no
+    // arredondamento de uma casa), mas sobreviver por um fio nao pode valer
+    // MAIS que terminar inteiro, nem menos que os kills que ele fez.
+    const killsDoFio = 100;
+    const soKills = arredondar(killsDoFio * pesos.pesoKill);
+    exigir(
+      nota(killsDoFio, 1, hpMax, false) < nota(killsDoFio, hpMax, hpMax, false),
+      `HP 1/${hpMax} com ${killsDoFio} kills deu ${nota(killsDoFio, 1, hpMax, false)}, ` +
+        `nao menos que HP cheio (${nota(killsDoFio, hpMax, hpMax, false)})`
+    );
+    exigir(
+      nota(killsDoFio, 1, hpMax, false) === arredondar(soKills + arredondar(pesos.pesoHp / hpMax)),
+      `HP 1/${hpMax} com ${killsDoFio} kills deu ${nota(killsDoFio, 1, hpMax, false)}, ` +
+        `esperava os kills (${soKills}) mais a parcela de HP arredondada`
+    );
+    exigir(nota(0, 0, hpMax, false) === 0, 'HP 0 e 0 kills tinha que dar nota 0');
+    // Cada peso precisa MUDAR a nota. Sem estas duas, um `alvo.kills = 0` em
+    // parcelasDaNota passaria: a nota e a decomposicao sairiam consistentes
+    // entre si, so que erradas, e o smoke nao teria como saber.
+    exigir(
+      nota(100, hpMax, hpMax, false) > nota(0, hpMax, hpMax, false),
+      'matar 100 inimigos nao mudou a nota: pesoKill nao entra na conta'
+    );
+    exigir(
+      nota(0, hpMax, hpMax, false) > nota(0, 0, hpMax, false),
+      'terminar com HP cheio nao vale mais que terminar com HP 0: pesoHp nao entra na conta'
+    );
+    exigir(
+      nota(0, hpMax, hpMax, true) > nota(0, hpMax, hpMax, false),
+      'terminar ileso nao vale mais que terminar arranhado: bonusIleso nao entra na conta'
+    );
+    // Monotonia: mais kill nunca pode dar nota menor.
+    let anterior = -1;
+    for (const kills of [0, 1, 10, 50, 100, 200, 500]) {
+      const atual = nota(kills, hpMax, hpMax, false);
+      exigir(atual >= anterior, `nota caiu de ${anterior} para ${atual} ao subir para ${kills} kills`);
+      anterior = atual;
+    }
+    // Grampo do teto: nenhuma cacada rende mais que nota.maxima, senao a
+    // decomposicao mostraria 14,2 numa escala de 10.
+    exigir(
+      nota(1e6, hpMax, hpMax, true) === pesos.maxima,
+      `um milhao de kills deu ${nota(1e6, hpMax, hpMax, true)} e o teto e ${pesos.maxima}`
+    );
+    // A nota e a soma das parcelas que a tela mostra, ja arredondadas — senao
+    // o boletim exibe "+5,5 · +3,7" e nota 9,3. Varre combinacoes o bastante
+    // para pegar os meios-arredondamentos e o grampo do teto.
+    for (const kills of [0, 1, 7, 50, 157, 173, 188, 400]) {
+      for (const hp of [0, 1, 33, 62, 93, hpMax]) {
+        for (const ileso of [false, true]) {
+          const p = run.parcelasDaNota({ kills, hpRestante: hp, hpMax, ileso });
+          const n = nota(kills, hp, hpMax, ileso);
+          exigir(
+            arredondar(p.kills + p.hp + p.ileso) === n,
+            `${kills} kills, HP ${hp}/${hpMax}, ileso=${ileso}: parcelas ${p.kills}+${p.hp}+${p.ileso} ` +
+              `nao somam a nota ${n}`
+          );
+          for (const chave of ['kills', 'hp', 'ileso']) {
+            exigir(arredondar(p[chave]) === p[chave], `parcela ${chave}=${p[chave]} nao esta arredondada`);
+          }
+        }
+      }
+    }
+    // Entrada podre nao pode virar NaN no estado: a tela mostraria "NaN" e a
+    // varredura do smoke so pegaria isso na proxima avaliacao.
+    exigir(Number.isFinite(nota(NaN, NaN, NaN, false)), 'calcularNota devolveu NaN para entrada invalida');
+    // hpMax 0 nao pode virar "HP cheio": 10/0 e Infinity, e um grampo ingenuo
+    // (Math.min(1, ...)) daria o peso de HP inteiro a um jogador sem HP nenhum.
+    exigir(
+      nota(0, 10, 0, false) === 0,
+      `hpMax 0 rendeu ${nota(0, 10, 0, false)} pontos de HP — a divisao por zero virou HP cheio`
+    );
+
+    // Faixas: o minimo de cada faixa tem que cair NELA, e um passo abaixo do
+    // minimo tem que cair na de baixo. E o teste que pega o `>` trocado por
+    // `>=` na escolha da faixa.
+    const passo = 1 / 10 ** casas;
+    pesos.faixas.forEach((faixa, i) => {
+      exigir(
+        run.conceitoDaNota(faixa.minimo) === faixa.conceito,
+        `nota ${faixa.minimo} devia ser conceito "${faixa.conceito}" e veio "${run.conceitoDaNota(faixa.minimo)}"`
+      );
+      const abaixo = arredondar(faixa.minimo - passo);
+      if (i + 1 < pesos.faixas.length) {
+        exigir(
+          run.conceitoDaNota(abaixo) === pesos.faixas[i + 1].conceito,
+          `nota ${abaixo} (um passo abaixo de ${faixa.conceito}) devia cair em ` +
+            `"${pesos.faixas[i + 1].conceito}" e veio "${run.conceitoDaNota(abaixo)}"`
+        );
+      }
+      exigir(
+        run.creditosDaNota(faixa.minimo) === Math.round(pesos.creditosBase * faixa.creditosFator),
+        `conceito ${faixa.conceito} pagou ${run.creditosDaNota(faixa.minimo)} creditos, ` +
+          `esperava ${Math.round(pesos.creditosBase * faixa.creditosFator)}`
+      );
+    });
+    // Nota acima do teto e nota negativa continuam tendo conceito: a faixa
+    // nunca pode devolver undefined, senao a tela mostra "Conceito undefined".
+    exigir(run.conceitoDaNota(pesos.maxima + 1) !== '', 'nota acima do teto ficou sem conceito');
+    exigir(run.conceitoDaNota(-1) !== '', 'nota negativa ficou sem conceito');
+  } catch (e) {
+    erros.push(`src/run.js nao pode ser verificado: ${e.message}`);
+  }
+}
+
 // --------------------------------------------------------------- relatorio
 
 for (const aviso of avisos) console.log(`  aviso: ${aviso}`);
@@ -190,5 +327,5 @@ if (erros.length > 0) {
 
 console.log(
   `check ok — ${modulos.length} modulos + ${marcacoes.length} html/css + package.json` +
-    ' · sintaxe, regras estruturais, zero externo, content.js'
+    ' · sintaxe, regras estruturais, zero externo, content.js, nota'
 );

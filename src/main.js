@@ -1,11 +1,12 @@
 import { CONTEUDO } from '../data/content.js';
-import { novoEstado, iniciarAvaliacao, irParaTela, emitir, TELAS } from './state.js';
+import { novoEstado, irParaTela, emitir, TELAS } from './state.js';
 import { desenhar } from './render.js';
 import { criarUi } from './ui.js';
 import { atualizarPlayer, atualizarOrbes } from './player.js';
 import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
 import { apontarCarta, atualizarCartas, escolherCarta, moverSelecaoCarta } from './cards.js';
+import { fecharAvaliacao, iniciarRun, MOTIVO_JUBILADO, MOTIVO_TEMPO } from './run.js';
 
 // Nada de document/window no topo deste modulo: e o que permite ao node
 // importar `atualizar` e rodar a partida inteira sem navegador.
@@ -26,6 +27,11 @@ export function atualizar(estado, dt) {
       break;
     case TELAS.MENU:
     case TELAS.PAUSA:
+    case TELAS.RESULTADO:
+    case TELAS.JUBILADO:
+      // Nada roda: a partida inteira fica congelada por tras do overlay. Toda
+      // tela nova entra aqui — o `default` congela igual, mas listar deixa
+      // explicito que foi decisao, nao esquecimento.
       break;
     default:
       break;
@@ -34,8 +40,13 @@ export function atualizar(estado, dt) {
 
 function atualizarAvaliacao(estado, dt) {
   const av = estado.run.avaliacao;
-  atualizarPlayer(estado, dt);
+  // O guard vem ANTES de tudo, inclusive do jogador. Enquanto atualizarPlayer
+  // ficou acima dele (fases 01 a 05) isso era inofensivo, porque o tick que
+  // encerrava a avaliacao tambem saia da tela; com a tela de resultado no
+  // lugar do menu, um caminho que voltasse aqui com a avaliacao concluida
+  // deixaria o jogador andando atras do overlay. Pendencia 9 do ESTADO.md.
   if (av.concluida) return;
+  atualizarPlayer(estado, dt);
 
   av.decorrido += dt;
   av.restante = Math.max(0, av.duracao - av.decorrido);
@@ -54,19 +65,19 @@ function atualizarAvaliacao(estado, dt) {
 
   // Unico observador da morte do jogador: qualquer fonte de dano (inimigo
   // agora, modificador e chefe depois) so precisa zerar o hp via receberDano().
-  // Provisorio, igual ao fim por tempo: a fase 10 poe a tela de fim no lugar
-  // do menu.
   if (!estado.player.vivo) {
+    av.concluida = true;
     emitir(estado, 'jubilado', av.id);
-    irParaTela(estado, TELAS.MENU);
+    fecharAvaliacao(estado, MOTIVO_JUBILADO);
+    irParaTela(estado, TELAS.JUBILADO);
     return;
   }
 
   if (av.restante <= 0) {
     av.concluida = true;
     emitir(estado, 'avaliacao-fim', av.id);
-    // Provisorio: a fase 06 poe a tela de resultado no lugar do menu.
-    irParaTela(estado, TELAS.MENU);
+    fecharAvaliacao(estado, MOTIVO_TEMPO);
+    irParaTela(estado, TELAS.RESULTADO);
     return;
   }
 
@@ -74,6 +85,38 @@ function atualizarAvaliacao(estado, dt) {
   // ganham do nivel que subiu no mesmo quadro. Uma carta aberta por cima de
   // uma avaliacao ja encerrada travaria a tela.
   atualizarCartas(estado);
+}
+
+// ------------------------------------------------------- relogio do quadro
+
+// O acumulador de dt fixo, separado do navegador para poder ser testado. Um
+// acumulador mal cuidado e o bug classico da pausa: a aba volta do background
+// (ou o jogador fica 30s no ESC), o relogio de parede acumula tudo isso e o
+// quadro seguinte roda 1800 passos de uma vez — o jogo "pula" e o jogador
+// perde HP que nao viu chegar.
+export function criarRelogio() {
+  return { acumulador: 0, passos: 0, descartado: 0 };
+}
+
+// Converte tempo de parede em passos de dt fixo, no maximo
+// loop.maxPassosPorFrame por quadro. O que passar disso e DESCARTADO em vez de
+// ficar na divida: recuperar o atraso e o que espirala.
+export function avancarRelogio(relogio, dtReal) {
+  const { passo, maxPassosPorFrame } = CONTEUDO.loop;
+  if (Number.isFinite(dtReal) && dtReal > 0) relogio.acumulador += dtReal;
+
+  let passos = 0;
+  while (relogio.acumulador >= passo && passos < maxPassosPorFrame) {
+    relogio.acumulador -= passo;
+    passos += 1;
+  }
+  if (passos >= maxPassosPorFrame && relogio.acumulador > 0) {
+    relogio.descartado += relogio.acumulador;
+    relogio.acumulador = 0;
+  }
+
+  relogio.passos = passos;
+  return passos;
 }
 
 // ------------------------------------------------------------------ browser
@@ -89,9 +132,14 @@ export function iniciar() {
 
   ligarTeclado(estado);
   ui.ligarBotoes({
-    jogar: () => iniciarAvaliacao(estado),
+    jogar: () => iniciarRun(estado),
     continuar: () => irParaTela(estado, TELAS.AVALIACAO),
     menu: () => irParaTela(estado, TELAS.MENU),
+    // Os dois botoes de fim de avaliacao chamam a MESMA funcao que o teclado:
+    // quem decide para onde ir e a simulacao, nao o DOM. Fase 07: e aqui que
+    // a loja entra no lugar do menu.
+    resultado: () => sairDoResultado(estado),
+    jubilado: () => sairDoResultado(estado),
   });
   // Mouse na carta: a UI nao mexe no estado nem na classe CSS, so avisa qual
   // indice foi apontado ou escolhido. Mesmo caminho do teclado, e por isso
@@ -101,23 +149,14 @@ export function iniciar() {
     (indice) => apontarCarta(estado, indice)
   );
 
-  const { passo, maxPassosPorFrame } = CONTEUDO.loop;
+  const passo = CONTEUDO.loop.passo;
+  const relogio = criarRelogio();
   let anterior = performance.now();
-  let acumulador = 0;
 
   function frame(agora) {
-    acumulador += (agora - anterior) / 1000;
+    const passos = avancarRelogio(relogio, (agora - anterior) / 1000);
     anterior = agora;
-
-    let passos = 0;
-    while (acumulador >= passo && passos < maxPassosPorFrame) {
-      atualizar(estado, passo);
-      acumulador -= passo;
-      passos += 1;
-    }
-    // Sobrou tempo alem do teto? Descarta, senao o loop espirala tentando
-    // alcancar o relogio (aba que voltou do background).
-    if (acumulador > passo * maxPassosPorFrame) acumulador = 0;
+    for (let i = 0; i < passos; i += 1) atualizar(estado, passo);
 
     desenhar(estado, ctx);
     ui.sincronizar(estado);
@@ -161,6 +200,12 @@ function ligarTeclado(estado) {
       ev.preventDefault();
       return;
     }
+    // Tela de fim de avaliacao: Enter e Espaco seguem adiante. Sem isto
+    // o jogador precisaria achar o botao com o mouse (ou com Tab) para sair.
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && sairDoResultado(estado)) {
+      ev.preventDefault();
+      return;
+    }
     if (aplicar(ev.code, true)) ev.preventDefault();
     // ev.repeat: segurar ESC repete o keydown ~30x/s e a pausa piscaria.
     if (ev.code === 'Escape' && !ev.repeat) alternarPausa(estado);
@@ -175,7 +220,32 @@ function ligarTeclado(estado) {
     estado.input.teclas = {};
     estado.input.eixoX = 0;
     estado.input.eixoY = 0;
+    // E nao deixa o jogador morrer enquanto olha para outra janela: trocar de
+    // aba no meio da apresentacao pausa a avaliacao, como o ESC.
+    if (estado.tela === TELAS.AVALIACAO) irParaTela(estado, TELAS.PAUSA);
   });
+
+  // Minimizar ou trocar de aba nem sempre dispara `blur` (depende do
+  // navegador e de onde estava o foco). visibilitychange cobre o resto.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && estado.tela === TELAS.AVALIACAO) irParaTela(estado, TELAS.PAUSA);
+  });
+}
+
+// Enter/Espaco seguem adiante na tela de resultado e na de jubilado. ESC NAO:
+// quem aperta ESC para pausar no instante em que o cronometro zera fecharia o
+// boletim sem ler. Na tela de fim o ESC cai em alternarPausa, que nao faz nada.
+const TECLAS_SEGUIR = new Set(['Enter', 'NumpadEnter', 'Space']);
+
+// A unica saida das duas telas de fim de avaliacao, usada pelo teclado e
+// pelos dois botoes. Devolve false quando nao ha nada para fechar — e o que
+// deixa o mesmo keydown cair para a pausa e para o movimento.
+export function sairDoResultado(estado) {
+  if (estado.tela !== TELAS.RESULTADO && estado.tela !== TELAS.JUBILADO) return false;
+  // Fase 07: aprovado vai para a loja daqui; jubilado continua indo ao menu,
+  // porque a run acabou.
+  irParaTela(estado, TELAS.MENU);
+  return true;
 }
 
 // Mouse pode falhar na apresentacao; teclado nao. 1/2/3 escolhe direto,

@@ -56,7 +56,35 @@
     <div id="pausa" class="camada pausa oculto">
       <h2 class="titulo-pausa">Pausado</h2>
       <button id="botao-continuar" class="botao" type="button">Continuar</button>
-      <button id="botao-menu" class="botao botao-discreto" type="button">Sair para o menu</button>
+      <button id="botao-menu" class="botao botao-discreto" type="button">Desistir</button>
+      <p class="dica">Trocar de aba também pausa</p>
+    </div>
+
+    <!-- Resultado: sobreviveu ao cronômetro. Os números saem de
+         estado.run.resultado; aqui só mora o texto fixo. -->
+    <div id="resultado" class="camada resultado oculto">
+      <p class="resultado-cabecalho">
+        <span id="resultado-periodo">1º Período</span> ·
+        <span id="resultado-avaliacao">Avaliação 1</span>
+      </p>
+      <h2 class="titulo-resultado">Aprovado</h2>
+      <div class="nota-caixa">
+        <span id="resultado-nota" class="nota-valor">0,0</span>
+        <span id="resultado-conceito" class="nota-conceito">Conceito F</span>
+      </div>
+      <p id="resultado-decomposicao" class="decomposicao">—</p>
+      <p id="resultado-creditos" class="creditos">◉ 0 créditos</p>
+      <button id="botao-resultado" class="botao botao-destaque" type="button">Continuar</button>
+      <p class="dica">Enter ou Espaço para seguir</p>
+    </div>
+
+    <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. -->
+    <div id="jubilado" class="camada jubilado oculto">
+      <h2 class="titulo-jubilado">Jubilado</h2>
+      <p class="subtitulo">Seu HP chegou a zero no meio da prova.</p>
+      <p id="jubilado-resumo" class="decomposicao">—</p>
+      <button id="botao-jubilado" class="botao" type="button">Voltar ao menu</button>
+      <p class="dica">Enter ou Espaço para voltar</p>
     </div>
   </div>
 

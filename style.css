@@ -178,6 +178,25 @@ body {
   text-shadow: 0 0 0.4em rgba(122, 162, 255, 0.6);
 }
 
+/* Ultimos segundos (hud.timerUrgente). A classe vem do ESTADO, pintada por
+   ui.js a partir de avaliacao.restante. O pulso em si e animacao de CSS, que
+   correria sozinha com o jogo pausado — por isso ui.js poe .parado no timer
+   fora da tela de avaliacao, e a animacao congela junto com o mundo. */
+.timer.urgente {
+  color: var(--hp);
+  text-shadow: 0 0 0.5em rgba(255, 93, 122, 0.8);
+  animation: pulsar-timer 1s ease-in-out infinite;
+}
+
+.timer.urgente.parado {
+  animation-play-state: paused;
+}
+
+@keyframes pulsar-timer {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+
 .hud-nivel {
   display: flex;
   align-items: baseline;
@@ -258,6 +277,86 @@ body {
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--neon);
+}
+
+/* ------------------------------------------------------------ resultado */
+
+/* O boletim. A nota grande e o conceito ficam juntos numa caixa so, e a
+   decomposicao logo abaixo: e ela que ensina o jogador a jogar melhor, entao
+   nao pode ser rodape. */
+.resultado {
+  background: radial-gradient(circle at 50% 35%, rgba(19, 35, 30, 0.9), rgba(6, 7, 15, 0.97));
+  gap: 0.45em;
+}
+
+.resultado-cabecalho {
+  margin: 0;
+  font-size: 0.8em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tinta-fraca);
+}
+
+.titulo-resultado {
+  margin: 0;
+  font-size: 2.4em;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--xp);
+  text-shadow: 0 0 0.5em rgba(86, 216, 166, 0.55);
+}
+
+.nota-caixa {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7em;
+  padding: 0.35em 1.4em;
+  border: 1px solid var(--borda);
+  border-radius: 0.4em;
+  background: rgba(122, 162, 255, 0.07);
+}
+
+.nota-valor {
+  font-size: 3.6em;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 0.35em rgba(122, 162, 255, 0.6);
+}
+
+.nota-conceito {
+  font-size: 1.1em;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--neon-quente);
+}
+
+.decomposicao {
+  margin: 0.2em 0 0;
+  font-size: 0.9em;
+  color: var(--tinta-fraca);
+  text-align: center;
+}
+
+.creditos {
+  margin: 0.1em 0 0.4em;
+  font-size: 1.15em;
+  letter-spacing: 0.08em;
+  color: var(--neon-quente);
+}
+
+/* ------------------------------------------------------------- jubilado */
+
+.jubilado {
+  background: radial-gradient(circle at 50% 35%, rgba(46, 12, 22, 0.92), rgba(6, 7, 15, 0.97));
+}
+
+.titulo-jubilado {
+  margin: 0;
+  font-size: 2.8em;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--hp);
+  text-shadow: 0 0 0.5em rgba(255, 93, 122, 0.6);
 }
 
 /* --------------------------------------------------------------- cartas */

@@ -19,9 +19,20 @@ export function criarUi(doc) {
     periodoNome: doc.getElementById('periodo-nome'),
     carta: doc.getElementById('carta'),
     cartaOpcoes: doc.getElementById('carta-opcoes'),
+    resultado: doc.getElementById('resultado'),
+    resultadoPeriodo: doc.getElementById('resultado-periodo'),
+    resultadoAvaliacao: doc.getElementById('resultado-avaliacao'),
+    resultadoNota: doc.getElementById('resultado-nota'),
+    resultadoConceito: doc.getElementById('resultado-conceito'),
+    resultadoDecomposicao: doc.getElementById('resultado-decomposicao'),
+    resultadoCreditos: doc.getElementById('resultado-creditos'),
+    jubilado: doc.getElementById('jubilado'),
+    jubiladoResumo: doc.getElementById('jubilado-resumo'),
     botaoJogar: doc.getElementById('botao-jogar'),
     botaoContinuar: doc.getElementById('botao-continuar'),
     botaoMenu: doc.getElementById('botao-menu'),
+    botaoResultado: doc.getElementById('botao-resultado'),
+    botaoJubilado: doc.getElementById('botao-jubilado'),
   };
 
   const cache = {};
@@ -41,6 +52,10 @@ export function criarUi(doc) {
   const visivel = (no, mostrar) => {
     if (!no) return;
     no.classList.toggle('oculto', !mostrar);
+  };
+  const classe = (no, nome, ligada) => {
+    if (!no) return;
+    no.classList.toggle(nome, ligada);
   };
 
   // As opcoes da carta sao montadas UMA vez, na abertura, e depois so trocam
@@ -131,20 +146,47 @@ export function criarUi(doc) {
     }
   }
 
-  function ligarBotoes({ jogar, continuar, menu }) {
+  function ligarBotoes({ jogar, continuar, menu, resultado, jubilado }) {
     if (el.botaoJogar && jogar) el.botaoJogar.addEventListener('click', jogar);
     if (el.botaoContinuar && continuar) el.botaoContinuar.addEventListener('click', continuar);
     if (el.botaoMenu && menu) el.botaoMenu.addEventListener('click', menu);
+    if (el.botaoResultado && resultado) el.botaoResultado.addEventListener('click', resultado);
+    if (el.botaoJubilado && jubilado) el.botaoJubilado.addEventListener('click', jubilado);
+  }
+
+  // As duas telas de fim de avaliacao. Nada e montado aqui: os nos existem
+  // desde o index.html e so trocam de texto, como as cartas. O `texto()` ja
+  // pula a escrita quando o valor nao mudou, entao redesenhar todo frame e de
+  // graca e nao precisa de contador de versao.
+  function sincronizarResultado(estado) {
+    const r = estado.run.resultado;
+    const t = CONTEUDO.textos.resultado;
+    texto(el.resultadoPeriodo, r.periodo);
+    texto(el.resultadoAvaliacao, r.nome);
+    texto(el.resultadoNota, formatarNota(r.nota));
+    texto(el.resultadoConceito, `${t.conceito} ${r.conceito}`);
+    texto(el.resultadoDecomposicao, decomposicaoDaNota(r));
+    texto(el.resultadoCreditos, `${t.simboloCredito} ${r.creditos} ${t.creditos}`);
+  }
+
+  function sincronizarJubilado(estado) {
+    texto(el.jubiladoResumo, resumoDoJubilado(estado.run.resultado));
   }
 
   function sincronizar(estado) {
     const naCarta = estado.tela === TELAS.CARTA;
+    const noResultado = estado.tela === TELAS.RESULTADO;
+    const noJubilado = estado.tela === TELAS.JUBILADO;
     const emJogo = estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.PAUSA || naCarta;
     visivel(el.menu, estado.tela === TELAS.MENU);
     visivel(el.hud, emJogo);
     visivel(el.pausa, estado.tela === TELAS.PAUSA);
     visivel(el.carta, naCarta);
+    visivel(el.resultado, noResultado);
+    visivel(el.jubilado, noJubilado);
     if (naCarta) sincronizarCartas(estado);
+    if (noResultado) sincronizarResultado(estado);
+    if (noJubilado) sincronizarJubilado(estado);
 
     const p = estado.player;
     largura(el.hpBarra, p.hpMax > 0 ? p.hp / p.hpMax : 0);
@@ -156,9 +198,52 @@ export function criarUi(doc) {
     texto(el.timer, formatarTempo(av.restante));
     texto(el.avaliacaoNome, av.nome);
     texto(el.periodoNome, av.periodo);
+    // O unico aviso de "esta acabando" que existe sem ficar lendo o numero.
+    // Sai do ESTADO (av.restante), como o realce da carta sai de
+    // cartas.selecionada — nada de classe pintada por evento.
+    classe(el.timer, 'urgente', emJogo && !av.concluida && av.restante <= CONTEUDO.hud.timerUrgente);
+    // Com o mundo congelado (pausa, carta) o pulso do timer congela junto.
+    classe(el.timer, 'parado', estado.tela !== TELAS.AVALIACAO);
   }
 
   return { ligarBotoes, ligarCartas, sincronizar, el };
+}
+
+// ------------------------------------------------ formatacao do resultado
+// Funcoes puras: recebem o resultado ja calculado por run.js e devolvem
+// texto. Nenhuma conta de nota acontece aqui — a UI so formata o que a
+// simulacao decidiu, e e por isso que o smoke consegue testa-las sem DOM.
+
+// "8,4". Virgula porque o jogo esta em portugues; as casas vem de content.js
+// (as mesmas que run.js usa para arredondar, senao a tela mostraria mais
+// precisao do que a nota tem).
+export function formatarNota(valor, casas = CONTEUDO.nota.casasDecimais) {
+  const numero = Number.isFinite(valor) ? valor : 0;
+  return numero.toFixed(Math.max(0, Math.floor(casas))).replace('.', ',');
+}
+
+// "47 mortos (+1,5) · 62% de HP (+2,5) · sem levar dano (+1,0)".
+// A parcela perdida aparece como (+0,0) de proposito: e assim que o jogador
+// descobre que o bonus de ileso existe.
+export function decomposicaoDaNota(resultado, textos = CONTEUDO.textos.resultado) {
+  const p = resultado.parcelas;
+  const pct = Math.round(Math.max(0, Math.min(1, resultado.hpFracao)) * 100);
+  const partes = [
+    `${resultado.kills} ${textos.mortos} (+${formatarNota(p.kills)})`,
+    `${pct}% ${textos.hp} (+${formatarNota(p.hp)})`,
+    `${resultado.ileso ? textos.ileso : textos.feriu} (+${formatarNota(p.ileso)})`,
+  ];
+  return partes.join(textos.separador);
+}
+
+// "47 mortos · sobreviveu 0:42 de 1:00". Sem nota: jubilado nao tem boletim,
+// tem o que deu tempo de fazer.
+export function resumoDoJubilado(resultado, textos = CONTEUDO.textos.resultado) {
+  const partes = [
+    `${resultado.kills} ${textos.mortos}`,
+    `${textos.sobreviveu} ${formatarTempo(resultado.tempo)} ${textos.de} ${formatarTempo(resultado.duracao)}`,
+  ];
+  return partes.join(textos.separador);
 }
 
 // "Nv. 2 → 3" para quem ja tem a arma, "Nova arma" para quem nao tem, "+25 de

@@ -10,7 +10,19 @@
 
 import { CONTEUDO } from '../data/content.js';
 import { novoEstado, iniciarAvaliacao, TELAS } from '../src/state.js';
-import { atualizar } from '../src/main.js';
+import { alternarPausa, atualizar, avancarRelogio, criarRelogio, sairDoResultado } from '../src/main.js';
+import {
+  calcularNota,
+  creditosDaFaixa,
+  faixaDaNota,
+  iniciarRun,
+  MOTIVO_JUBILADO,
+  MOTIVO_TEMPO,
+} from '../src/run.js';
+// ui.js nao toca no DOM no topo do modulo (criarUi recebe o `document`), entao
+// os formatadores puros da tela de resultado podem ser testados aqui — e a
+// primeira cobertura automatica que ui.js tem.
+import { decomposicaoDaNota, formatarNota, resumoDoJubilado } from '../src/ui.js';
 import { spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
 import {
   atualizarArmas,
@@ -23,7 +35,7 @@ import {
   verificarArmasDoConteudo,
 } from '../src/weapons.js';
 import { apontarCarta, escolherCarta, moverSelecaoCarta, verificarCartasDoConteudo } from '../src/cards.js';
-import { atualizarOrbes, poolOrbes, soltarOrbeXp, xpParaSubir } from '../src/player.js';
+import { atualizarOrbes, poolOrbes, receberDano, soltarOrbeXp, xpParaSubir } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
 
 const SEMENTE = 20261110;
@@ -45,6 +57,21 @@ const NIVEL_MINIMO_60S = 4;
 const NIVEL_MAXIMO_60S = 9;
 const TICKS_CONGELADO = 30; // ticks com a carta aberta sem ninguem escolher
 
+// Fim de avaliacao. A corrida dedicada roda uma avaliacao inteira sem segurar
+// o HP do jogador — e a unica que produz uma nota honesta para imprimir.
+const TICKS_AVALIACAO_COMPLETA = TICKS + 240;
+const TEMPO_FORA = 30; // segundos de aba escondida/pausa longa no teste do relogio
+const DANO_DO_CENARIO = 30; // arranhao no cenario de resultado: hp != hpMax e ileso = false
+const CREDITOS_ANTERIORES = 7; // creditos ja na run antes do boletim: soma tem que somar
+const KILLS_DO_CENARIO = 120; // mortos plantados no boletim do cenario de resultado
+const EPSILON = 1e-9;
+
+// As duas telas em que uma avaliacao termina. Antes desta fase as duas eram o
+// menu, e todo o smoke procurava por TELAS.MENU.
+function telaDeFim(estado) {
+  return estado.tela === TELAS.RESULTADO || estado.tela === TELAS.JUBILADO;
+}
+
 // Teste de carga: `npm run smoke -- --carga` enche a arena ate o teto da pool
 // e mantem o jogador de pe, para medir o custo de IA + separacao + colisao no
 // pior caso. Fora desse modo a corrida e a de sempre.
@@ -56,7 +83,7 @@ const POOLS = Object.keys(CONTEUDO.arena.limites).filter((p) => p !== 'eventos')
 
 const picos = {};
 for (const pool of POOLS) picos[pool] = 0;
-const contadores = { avaliacoesConcluidas: 0, eventos: 0, cartas: 0, porTipo: {} };
+const contadores = { avaliacoesConcluidas: 0, eventos: 0, cartas: 0, porTipo: {}, notas: [], conceitos: [] };
 
 // Pools: alocacao so na abertura. `criados` e o numero de vezes que a fabrica
 // rodou — se crescer depois do aquecimento, alguem esta alocando dentro do
@@ -1015,8 +1042,15 @@ function checarCartasDoConteudo() {
 // da outra. Perder um nivel porque dois cairam no mesmo quadro e um bug que
 // nao aparece na tela — a carta some e ninguem percebe que era para ter vindo
 // outra. Tambem e aqui que se prova que a carta congela a simulacao.
-function checarFilaDeCartas() {
-  const estado = novoEstado(SEMENTE + 6);
+// Cenario compartilhado por TODA tela que congela a partida (carta, resultado,
+// jubilado, pausa). Inimigos vivos, parados e DENTRO do alcance da arma,
+// montados a mao: com a arena vazia o teste de congelamento fica verde mesmo
+// com atualizarInimigos ou atualizarArmas rodando por tras do overlay — nao ha
+// o que se mexer. Estes tres sao a unica coisa que separa "a simulacao
+// congelou" de "nao havia simulacao nenhuma para congelar". Fase 07: a loja
+// congela igual e reusa isto.
+function montarCenarioCongelavel(semente) {
+  const estado = novoEstado(semente);
   iniciarAvaliacao(estado);
   limparInimigos(estado);
 
@@ -1024,11 +1058,6 @@ function checarFilaDeCartas() {
   player.x = CONTEUDO.arena.largura / 2;
   player.y = CONTEUDO.arena.altura / 2;
 
-  // Inimigos vivos, parados e DENTRO do alcance da arma, montados a mao. Com a
-  // arena vazia o teste de congelamento fica verde mesmo com atualizarInimigos
-  // ou atualizarArmas rodando na tela de carta — nao ha o que se mexer. Estes
-  // tres sao a unica coisa que separa "a simulacao congelou" de "nao havia
-  // simulacao nenhuma para congelar".
   const alvos = [];
   for (let i = 0; i < 3; i += 1) {
     const inimigo = spawnInimigo(estado);
@@ -1039,6 +1068,118 @@ function checarFilaDeCartas() {
     inimigo.vy = 0;
     alvos.push(inimigo);
   }
+  return { estado, player, alvos };
+}
+
+// Congela por TICKS_CONGELADO ticks com o jogador empurrando para a direita e
+// confere que o mundo nao andou um milimetro. Cada sistema tem seu proprio
+// sinal — jogador, cronometro, orbe, hp/xp, arma, projeteis, inimigos —
+// porque quando uma linha sobra rodando e preciso saber QUAL.
+//
+// A ORDEM DAS ASSERCOES E PARTE DO TESTE (licao da fase 04): um sinal pode ter
+// mais de uma causa, e quem chega primeiro leva a culpa. O orbe PARADO vem
+// antes do teste de hp/xp porque coletar um orbe tambem mexe no xp; a CONTAGEM
+// de orbes fica por ultimo, com texto neutro, porque ela sobe quando a arma
+// mata um inimigo atras do overlay e acusar atualizarOrbes por isso mandaria o
+// proximo agente ler o arquivo errado.
+function exigirCongelado(estado, alvos, { quando, onde }) {
+  const player = estado.player;
+  const armaViva = player.armas[0];
+  if (!armaViva) falhar(0, `o jogador chegou ${quando} sem arma nenhuma: o cenario de congelamento nao vale`);
+
+  // Um orbe parado DENTRO do raio do ima, criado depois de a tela abrir: se
+  // atualizarOrbes() continuar rodando, ele sai do lugar e e coletado. Sem
+  // ele, a tela podia aspirar XP a noite inteira sem teste reclamar.
+  const orbeParado = soltarOrbeXp(estado, player.x + CONTEUDO.jogador.raioColeta * 0.5, player.y, 1);
+  if (!orbeParado) falhar(0, 'soltarOrbeXp devolveu null montando o cenario de congelamento');
+  orbeParado.vx = 0;
+  orbeParado.vy = 0;
+
+  const antes = {
+    x: player.x,
+    y: player.y,
+    hp: player.hp,
+    xp: player.xp,
+    decorrido: estado.run.avaliacao.decorrido,
+    inimigos: estado.enemies.length,
+    cooldown: armaViva.cooldown,
+    projeteis: estado.projectiles.length,
+    projetilX: estado.projectiles.length > 0 ? estado.projectiles[0].x : 0,
+    orbes: estado.xpOrbs.length,
+    orbeX: orbeParado.x,
+    alvos: alvos.map((e) => ({ ativo: e.ativo, x: e.x, y: e.y, hp: e.hp })),
+  };
+  estado.input.eixoX = 1;
+  for (let i = 0; i < TICKS_CONGELADO; i += 1) atualizar(estado, PASSO);
+  estado.input.eixoX = 0;
+
+  if (player.x !== antes.x || player.y !== antes.y) {
+    falhar(0, `o jogador andou ${(player.x - antes.x).toFixed(2)}px ${quando}: a simulacao nao congelou`);
+  }
+  if (estado.run.avaliacao.decorrido !== antes.decorrido) {
+    falhar(0, `o cronometro da avaliacao andou ${quando}`);
+  }
+  if (orbeParado.x !== antes.orbeX || !orbeParado.ativo) {
+    falhar(
+      0,
+      `o orbe parado saiu ${(orbeParado.x - antes.orbeX).toFixed(2)}px${orbeParado.ativo ? '' : ' e foi coletado'} ` +
+        `${quando}: atualizarOrbes() roda ${onde}?`
+    );
+  }
+  if (player.hp !== antes.hp || player.xp !== antes.xp) {
+    falhar(
+      0,
+      `o jogador perdeu hp (${antes.hp} -> ${player.hp}) ou ganhou xp (${antes.xp} -> ${player.xp}) ${quando}`
+    );
+  }
+  if (armaViva.cooldown !== antes.cooldown) {
+    falhar(
+      0,
+      `o cooldown da arma foi de ${antes.cooldown.toFixed(3)} para ${armaViva.cooldown.toFixed(3)} ${quando}: ` +
+        `atualizarArmas() roda ${onde}?`
+    );
+  }
+  if (
+    estado.projectiles.length !== antes.projeteis ||
+    (estado.projectiles.length > 0 && estado.projectiles[0].x !== antes.projetilX)
+  ) {
+    falhar(
+      0,
+      `os projeteis andaram (${antes.projeteis} -> ${estado.projectiles.length} vivos) ${quando}: ` +
+        `atualizarArmas() roda ${onde}?`
+    );
+  }
+  if (estado.enemies.length !== antes.inimigos) {
+    falhar(
+      0,
+      `a arena tinha ${antes.inimigos} inimigos e ficou com ${estado.enemies.length} ${quando}: ` +
+        `o spawn (ou a morte) continua rodando ${onde}`
+    );
+  }
+  alvos.forEach((e, i) => {
+    const antigo = antes.alvos[i];
+    if (e.ativo !== antigo.ativo || e.x !== antigo.x || e.y !== antigo.y || e.hp !== antigo.hp) {
+      falhar(
+        0,
+        `o inimigo ${i} andou ${Math.hypot(e.x - antigo.x, e.y - antigo.y).toFixed(2)}px e foi de ` +
+          `${antigo.hp} para ${e.hp} de hp ${quando}: atualizarInimigos() roda ${onde}?`
+      );
+    }
+  });
+  // Rede final, de texto neutro: orbe a mais so aparece se alguem morreu atras
+  // do overlay, e as verificacoes acima ja apontaram o culpado quando ele existe.
+  if (estado.xpOrbs.length !== antes.orbes) {
+    falhar(
+      0,
+      `a arena tinha ${antes.orbes} orbes e ficou com ${estado.xpOrbs.length} ${quando}: ` +
+        'alguem matou inimigo atras da tela'
+    );
+  }
+  return orbeParado;
+}
+
+function checarFilaDeCartas() {
+  const { estado, player, alvos } = montarCenarioCongelavel(SEMENTE + 6);
 
   // XP de dois niveis de uma vez, exatamente como uma horda que morre junto.
   player.xp = xpParaSubir(1) + xpParaSubir(2);
@@ -1064,106 +1205,7 @@ function checarFilaDeCartas() {
     );
   }
 
-  // Congelamento: com a carta aberta e o jogador empurrando para a direita, o
-  // mundo nao pode andar um milimetro. Cada sistema tem seu proprio sinal —
-  // jogador, cronometro, inimigos, arma e projeteis — porque a fase 07 vai
-  // congelar de novo para a loja e a 12 vai mexer no update por causa do
-  // juice: se uma linha sobrar rodando, e preciso saber QUAL.
-  const armaViva = player.armas[0];
-  if (!armaViva) falhar(0, 'o jogador chegou na carta sem arma nenhuma: o cenario de congelamento nao vale');
-  // Um orbe parado DENTRO do raio do ima, criado depois de a carta abrir: se
-  // atualizarOrbes() continuar rodando, ele sai do lugar e e coletado. Sem
-  // ele, a tela de carta podia aspirar XP a noite inteira sem teste reclamar.
-  const orbeParado = soltarOrbeXp(estado, player.x + CONTEUDO.jogador.raioColeta * 0.5, player.y, 1);
-  if (!orbeParado) falhar(0, 'soltarOrbeXp devolveu null montando o cenario de congelamento');
-  orbeParado.vx = 0;
-  orbeParado.vy = 0;
-  const antes = {
-    x: player.x,
-    y: player.y,
-    hp: player.hp,
-    xp: player.xp,
-    decorrido: estado.run.avaliacao.decorrido,
-    inimigos: estado.enemies.length,
-    cooldown: armaViva.cooldown,
-    projeteis: estado.projectiles.length,
-    projetilX: estado.projectiles.length > 0 ? estado.projectiles[0].x : 0,
-    orbes: estado.xpOrbs.length,
-    orbeX: orbeParado.x,
-    alvos: alvos.map((e) => ({ ativo: e.ativo, x: e.x, y: e.y, hp: e.hp })),
-  };
-  estado.input.eixoX = 1;
-  for (let i = 0; i < TICKS_CONGELADO; i += 1) atualizar(estado, PASSO);
-  estado.input.eixoX = 0;
-
-  if (player.x !== antes.x || player.y !== antes.y) {
-    falhar(0, `o jogador andou ${(player.x - antes.x).toFixed(2)}px com a carta aberta: a simulacao nao congelou`);
-  }
-  if (estado.run.avaliacao.decorrido !== antes.decorrido) {
-    falhar(0, 'o cronometro da avaliacao andou com a carta aberta');
-  }
-  // So o orbe PARADO acusa atualizarOrbes, e ele vem antes do teste de hp/xp
-  // porque coletar um orbe tambem mexe no xp. A CONTAGEM de orbes fica para o
-  // fim, com texto neutro: ela sobe quando a arma mata um inimigo atras da
-  // carta, e acusar atualizarOrbes por isso manda o proximo agente ler o
-  // arquivo errado.
-  if (orbeParado.x !== antes.orbeX || !orbeParado.ativo) {
-    falhar(
-      0,
-      `o orbe parado saiu ${(orbeParado.x - antes.orbeX).toFixed(2)}px${orbeParado.ativo ? '' : ' e foi coletado'} ` +
-        'com a carta aberta: atualizarOrbes() roda na tela de carta?'
-    );
-  }
-  if (player.hp !== antes.hp || player.xp !== antes.xp) {
-    falhar(
-      0,
-      `o jogador perdeu hp (${antes.hp} -> ${player.hp}) ou ganhou xp (${antes.xp} -> ${player.xp}) ` +
-        'com a carta aberta'
-    );
-  }
-  if (armaViva.cooldown !== antes.cooldown) {
-    falhar(
-      0,
-      `o cooldown da arma foi de ${antes.cooldown.toFixed(3)} para ${armaViva.cooldown.toFixed(3)} com a carta ` +
-        'aberta: atualizarArmas() roda na tela de carta?'
-    );
-  }
-  if (
-    estado.projectiles.length !== antes.projeteis ||
-    (estado.projectiles.length > 0 && estado.projectiles[0].x !== antes.projetilX)
-  ) {
-    falhar(
-      0,
-      `os projeteis andaram (${antes.projeteis} -> ${estado.projectiles.length} vivos) com a carta aberta: ` +
-        'atualizarArmas() roda na tela de carta?'
-    );
-  }
-  if (estado.enemies.length !== antes.inimigos) {
-    falhar(
-      0,
-      `a arena tinha ${antes.inimigos} inimigos e ficou com ${estado.enemies.length} durante a carta: ` +
-        'o spawn (ou a morte) continua rodando na tela de carta'
-    );
-  }
-  alvos.forEach((e, i) => {
-    const antigo = antes.alvos[i];
-    if (e.ativo !== antigo.ativo || e.x !== antigo.x || e.y !== antigo.y || e.hp !== antigo.hp) {
-      falhar(
-        0,
-        `o inimigo ${i} andou ${Math.hypot(e.x - antigo.x, e.y - antigo.y).toFixed(2)}px e foi de ` +
-          `${antigo.hp} para ${e.hp} de hp com a carta aberta: atualizarInimigos() roda na tela de carta?`
-      );
-    }
-  });
-  // Rede final, de texto neutro: orbe a mais so aparece se alguem morreu atras
-  // da carta, e as verificacoes acima ja apontaram o culpado quando ele existe.
-  if (estado.xpOrbs.length !== antes.orbes) {
-    falhar(
-      0,
-      `a arena tinha ${antes.orbes} orbes e ficou com ${estado.xpOrbs.length} durante a carta: ` +
-        'alguem matou inimigo atras da carta'
-    );
-  }
+  exigirCongelado(estado, alvos, { quando: 'com a carta aberta', onde: 'na tela de carta' });
 
   // Com 4 armas em content.js a opcao 0 nao e mais sempre "Cafe +1": pode ser
   // uma arma nova ou o nivel de qualquer uma das equipadas. Guarda-se o que a
@@ -1602,6 +1644,306 @@ function checarProgressao() {
   return { nivel, cartas, orbesPico, xpColetado, xpSoltado, xpNoChao, mortos };
 }
 
+// ----------------------------------------------- fim de avaliacao (fase 06)
+
+// Leva o cenario ate o ultimo tick da avaliacao e deixa o cronometro zerar.
+// Devolve o estado ja na tela de fim.
+function correrAteOFim(contexto) {
+  const { estado } = contexto;
+  const av = estado.run.avaliacao;
+  av.decorrido = av.duracao;
+  atualizar(estado, PASSO);
+  return contexto;
+}
+
+// Tarefas 1, 2, 3 e 4 do contrato, no caminho de aprovacao: o cronometro zera,
+// a nota sai, o conceito e os creditos saem dela, e a partida congela por tras
+// do overlay.
+function checarTelaDeResultado() {
+  const contexto = montarCenarioCongelavel(SEMENTE + 8);
+  // Um arranhao antes do fim: com o jogador intacto, hp e hpMax sao o mesmo
+  // numero e trocar um pelo outro no calculo da nota passaria despercebido.
+  // De quebra, e este o caso comum — terminar ileso e raro.
+  receberDano(contexto.estado, DANO_DO_CENARIO);
+  // Creditos ja guardados de uma avaliacao anterior: com a run zerada,
+  // somar e sobrescrever dao o mesmo numero e o teste nao distinguiria.
+  contexto.estado.run.creditos = CREDITOS_ANTERIORES;
+  // Mortos de uma avaliacao inteira, postos a mao: um boletim de 0 mortos e
+  // degenerado — a parcela de kill fica em zero e qualquer erro nela some.
+  contexto.estado.run.avaliacao.kills = KILLS_DO_CENARIO;
+  correrAteOFim(contexto);
+  const { estado, player, alvos } = contexto;
+  const av = estado.run.avaliacao;
+  const r = estado.run.resultado;
+
+  if (estado.tela !== TELAS.RESULTADO) {
+    falhar(0, `o cronometro zerou e a tela virou "${estado.tela}": sobreviver nao leva a tela de resultado`);
+  }
+  if (!av.concluida) falhar(0, 'a tela de resultado abriu com avaliacao.concluida em false');
+  if (r.motivo !== MOTIVO_TEMPO || !r.aprovado) {
+    falhar(0, `resultado de fim por tempo veio motivo="${r.motivo}" aprovado=${r.aprovado}`);
+  }
+  if (r.id !== av.id || r.kills !== av.kills) {
+    falhar(0, `o boletim e de outra avaliacao: id="${r.id}" (${av.id}), kills=${r.kills} (${av.kills})`);
+  }
+  // A nota da tela precisa ser a que a funcao pura calcula com os MESMOS
+  // campos que o boletim mostra. Sem isto, decompor 62% de HP e pagar por 100%
+  // passaria despercebido.
+  const notaEsperada = calcularNota({
+    kills: r.kills,
+    hpRestante: r.hp,
+    hpMax: r.hpMax,
+    ileso: r.ileso,
+  });
+  if (r.nota !== notaEsperada) {
+    falhar(0, `nota do boletim ${r.nota} != calcularNota(${r.kills} kills, ${r.hp}/${r.hpMax} hp) = ${notaEsperada}`);
+  }
+  const faixa = faixaDaNota(r.nota);
+  if (r.conceito !== faixa.conceito) {
+    falhar(0, `nota ${r.nota} virou conceito "${r.conceito}" e a faixa diz "${faixa.conceito}"`);
+  }
+  if (r.creditos !== creditosDaFaixa(faixa)) {
+    falhar(0, `conceito ${r.conceito} pagou ${r.creditos} creditos, a faixa manda ${creditosDaFaixa(faixa)}`);
+  }
+  if (r.creditos <= 0) falhar(0, 'uma avaliacao aprovada pagou 0 creditos: a loja da fase 07 nasceria sem nada');
+  if (estado.run.creditos !== CREDITOS_ANTERIORES + r.creditos) {
+    falhar(
+      0,
+      `a run tinha ${CREDITOS_ANTERIORES} creditos, a avaliacao pagou ${r.creditos} e o total ficou ` +
+        `${estado.run.creditos}: o ganho nao esta sendo somado em run.creditos`
+    );
+  }
+  if (estado.run.creditos !== r.creditosTotal) {
+    falhar(0, `run.creditos=${estado.run.creditos} e o boletim diz creditosTotal=${r.creditosTotal}`);
+  }
+  // A decomposicao e o que ensina a jogar melhor; se ela sair sem o numero de
+  // mortos, virou enfeite.
+  const t = CONTEUDO.textos.resultado;
+  const linha = decomposicaoDaNota(r);
+  const pct = Math.round(r.hpFracao * 100);
+  // A conta que a TELA mostra precisa fechar: soma-se o que esta escrito entre
+  // parenteses, nao as parcelas do estado. Comparar os valores brutos deixava
+  // passar "+5,5 · +3,7" com nota 9,3 — cada parcela arredondada sozinha e a
+  // nota arredondada da soma bruta.
+  const casas = CONTEUDO.nota.casasDecimais;
+  const mostradas = [...linha.matchAll(/\(\+(-?\d+(?:,\d+)?)\)/g)].map((m) => Number(m[1].replace(',', '.')));
+  if (mostradas.length !== 3) {
+    falhar(0, `a decomposicao "${linha}" devia mostrar 3 parcelas "(+x)" e mostrou ${mostradas.length}`);
+  }
+  const somaMostrada = mostradas.reduce((acc, v) => acc + v, 0);
+  const notaMostrada = Number(formatarNota(r.nota).replace(',', '.'));
+  if (Math.round(somaMostrada * 10 ** casas) !== Math.round(notaMostrada * 10 ** casas)) {
+    falhar(
+      0,
+      `a tela mostra "${linha}" (soma ${somaMostrada.toFixed(casas)}) e nota ${formatarNota(r.nota)}: ` +
+        'a decomposicao mostra uma conta que nao fecha'
+    );
+  }
+  if (!linha.includes(`${r.kills} ${t.mortos}`)) {
+    falhar(0, `a decomposicao "${linha}" nao mostra os ${r.kills} mortos`);
+  }
+  if (!linha.includes(`${pct}% ${t.hp}`)) {
+    falhar(0, `a decomposicao "${linha}" nao mostra os ${pct}% de HP restantes`);
+  }
+  if (!linha.includes(r.ileso ? t.ileso : t.feriu)) {
+    falhar(0, `a decomposicao "${linha}" nao diz se o jogador terminou ileso`);
+  }
+
+  // Congelamento: e AQUI que a pendencia 9 do ESTADO.md aparece. Enquanto o
+  // fim da avaliacao ia para o menu, atualizarPlayer acima do guard de
+  // `concluida` era inalcancavel; com um overlay por cima da arena, o jogador
+  // passaria a andar por tras dele.
+  exigirCongelado(estado, alvos, {
+    quando: 'com a tela de resultado aberta',
+    onde: 'na tela de resultado',
+  });
+
+  // A saida: mesma funcao que o botao e o Enter chamam.
+  if (!sairDoResultado(estado)) falhar(0, 'sairDoResultado() recusou a tela de resultado');
+  if (estado.tela !== TELAS.MENU) falhar(0, `sairDoResultado deixou a tela em "${estado.tela}"`);
+  if (sairDoResultado(estado)) falhar(0, 'sairDoResultado() agiu fora das telas de fim — ESC deixaria de pausar');
+  if (!player.vivo) falhar(0, 'o jogador terminou morto numa avaliacao que acabou por tempo');
+}
+
+// O outro caminho: HP a zero leva a uma tela DIFERENTE, sem nota e sem
+// creditos. A run acabou; pagar o jubilamento seria pagar por perder.
+function checarTelaDeJubilado() {
+  const { estado, alvos } = montarCenarioCongelavel(SEMENTE + 9);
+  const creditosAntes = estado.run.creditos;
+
+  receberDano(estado, estado.player.hpMax * 2);
+  if (estado.player.vivo) falhar(0, 'receberDano com o dobro do hpMax nao matou o jogador');
+  atualizar(estado, PASSO);
+
+  const r = estado.run.resultado;
+  if (estado.tela !== TELAS.JUBILADO) {
+    falhar(0, `o jogador morreu e a tela virou "${estado.tela}": morrer nao leva a tela de jubilado`);
+  }
+  if (r.motivo !== MOTIVO_JUBILADO || r.aprovado) {
+    falhar(0, `resultado de morte veio motivo="${r.motivo}" aprovado=${r.aprovado}`);
+  }
+  if (r.nota !== 0 || r.conceito !== '' || r.creditos !== 0) {
+    falhar(0, `jubilado saiu com nota ${r.nota}, conceito "${r.conceito}" e ${r.creditos} creditos`);
+  }
+  if (estado.run.creditos !== creditosAntes) {
+    falhar(0, `jubilamento mexeu nos creditos da run (${creditosAntes} -> ${estado.run.creditos})`);
+  }
+  if (r.ileso) falhar(0, 'o boletim de um jubilado diz que ele terminou ileso');
+  const resumo = resumoDoJubilado(r);
+  if (!resumo.includes(String(r.kills))) falhar(0, `o resumo do jubilado "${resumo}" nao mostra os mortos`);
+
+  exigirCongelado(estado, alvos, {
+    quando: 'com a tela de jubilado aberta',
+    onde: 'na tela de jubilado',
+  });
+  if (!sairDoResultado(estado)) falhar(0, 'sairDoResultado() recusou a tela de jubilado');
+  if (estado.tela !== TELAS.MENU) falhar(0, `sairDoResultado deixou a tela em "${estado.tela}" depois do jubilamento`);
+}
+
+// "Jogar" no menu comeca uma run NOVA. Sem isto os creditos de uma partida
+// jubilada vazariam para a seguinte — e o bug nao aparece em teste nenhum que
+// comece de novoEstado, porque ali a run ja nasce zerada. Chama o mesmo
+// caminho que o botao usa (iniciarRun), depois de uma run que juntou
+// creditos e foi jubilada.
+function checarNovaRunZeraCreditos() {
+  const { estado } = montarCenarioCongelavel(SEMENTE + 14);
+  estado.run.creditos = CREDITOS_ANTERIORES;
+  receberDano(estado, estado.player.hpMax * 2);
+  atualizar(estado, PASSO);
+  if (!estado.run.jubilado) falhar(0, 'o cenario de nova run nao chegou a jubilar o jogador');
+  if (!sairDoResultado(estado)) falhar(0, 'sairDoResultado() recusou a tela de jubilado antes da nova run');
+
+  iniciarRun(estado);
+  if (estado.run.creditos !== 0) {
+    falhar(0, `uma run nova comecou com ${estado.run.creditos} creditos: vazaram da partida anterior`);
+  }
+  if (estado.run.jubilado) falhar(0, 'uma run nova comecou marcada como jubilada');
+  if (estado.tela !== TELAS.AVALIACAO) falhar(0, `iniciarRun deixou a tela em "${estado.tela}"`);
+  if (!estado.player.vivo) falhar(0, 'iniciarRun comecou a avaliacao com o jogador morto');
+}
+
+// Tarefa 5: ESC congela de verdade, despausa sem "pular" e o cenario volta a
+// andar depois — sem esta ultima parte, o teste de congelamento passaria com
+// o jogo travado para sempre.
+function checarPausa() {
+  const { estado, player, alvos } = montarCenarioCongelavel(SEMENTE + 10);
+  // Um tick de avaliacao de verdade antes de pausar: e ele que equipa a arma
+  // inicial (garantirArmaInicial roda dentro de atualizarArmas) e enche o
+  // cenario com cooldown e projeteis para o congelamento ter o que medir.
+  atualizar(estado, PASSO);
+
+  alternarPausa(estado);
+  if (estado.tela !== TELAS.PAUSA) falhar(0, `alternarPausa nao pausou (tela "${estado.tela}")`);
+  exigirCongelado(estado, alvos, { quando: 'com o jogo pausado', onde: 'na pausa' });
+
+  // Um quadro gigante — a aba que ficou 30s escondida, ou o ESC segurado —
+  // nao pode virar 1800 passos de uma vez. O teto e loop.maxPassosPorFrame e
+  // a divida restante e DESCARTADA: recuperar o atraso e o que espirala.
+  const relogio = criarRelogio();
+  const teto = CONTEUDO.loop.maxPassosPorFrame;
+  if (avancarRelogio(relogio, PASSO) !== 1) falhar(0, 'um quadro de 1 passo nao rendeu 1 passo');
+  const passos = avancarRelogio(relogio, TEMPO_FORA);
+  if (passos !== teto) {
+    falhar(0, `${TEMPO_FORA}s de aba escondida renderam ${passos} passos num quadro so (teto ${teto})`);
+  }
+  if (relogio.acumulador !== 0 || relogio.descartado <= 0) {
+    falhar(
+      0,
+      `o acumulador ficou com ${relogio.acumulador.toFixed(3)}s de divida depois do quadro gigante: ` +
+        'o proximo quadro adiantaria o jogo de novo'
+    );
+  }
+  if (avancarRelogio(relogio, 0) !== 0) falhar(0, 'um quadro de 0s rendeu passo: o acumulador nao zerou');
+
+  // O quadro real, como main.js o roda: pausado, a aba fica TEMPO_FORA
+  // segundos escondida, o relogio rende o teto de passos e todos eles passam
+  // por atualizar. Com a tela em pausa nenhum pode mexer no cronometro.
+  const relogioDoJogo = criarRelogio();
+  const decorridoPausado = estado.run.avaliacao.decorrido;
+  const passosPausado = avancarRelogio(relogioDoJogo, TEMPO_FORA);
+  for (let i = 0; i < passosPausado; i += 1) atualizar(estado, PASSO);
+  if (estado.run.avaliacao.decorrido !== decorridoPausado) {
+    falhar(
+      0,
+      `${passosPausado} passos de quadro pausado andaram o cronometro de ${decorridoPausado} para ` +
+        `${estado.run.avaliacao.decorrido}`
+    );
+  }
+
+  // Despausa e roda UM quadro normal. A divida do quadro gigante foi
+  // descartada, entao ele rende exatamente 1 passo — se o acumulador
+  // guardasse o tempo da pausa, a avaliacao pularia para a frente ao voltar.
+  alternarPausa(estado);
+  if (estado.tela !== TELAS.AVALIACAO) falhar(0, `alternarPausa nao despausou (tela "${estado.tela}")`);
+  const antes = { x: player.x, decorrido: estado.run.avaliacao.decorrido };
+  estado.input.eixoX = 1;
+  const passosDepois = avancarRelogio(relogioDoJogo, PASSO);
+  for (let i = 0; i < passosDepois; i += 1) atualizar(estado, PASSO);
+  estado.input.eixoX = 0;
+
+  if (passosDepois !== 1) {
+    falhar(0, `o primeiro quadro de ${PASSO.toFixed(4)}s depois da pausa rendeu ${passosDepois} passos (esperava 1)`);
+  }
+  const avanco = estado.run.avaliacao.decorrido - antes.decorrido;
+  if (avanco <= 0 || player.x === antes.x) {
+    falhar(0, 'depois de despausar o jogo continuou congelado: alternarPausa so pausa');
+  }
+  if (avanco > PASSO + EPSILON) {
+    falhar(0, `ao voltar da pausa a avaliacao adiantou ${avanco.toFixed(3)}s num quadro de ${PASSO.toFixed(4)}s`);
+  }
+}
+
+// Tarefa 6: uma avaliacao INTEIRA, do inicio ao boletim, com o bot de verdade
+// e sem segurar o HP dele — a corrida principal segura, e por isso a nota dela
+// nao valeria nada. Corrida propria com semente propria, como a de progressao.
+function checarAvaliacaoCompleta() {
+  const estado = novoEstado(SEMENTE + 11);
+  iniciarAvaliacao(estado);
+
+  let cartas = 0;
+  let tick = 0;
+  while (!telaDeFim(estado) && tick < TICKS_AVALIACAO_COMPLETA) {
+    tick += 1;
+    botCircular(estado, tick);
+    try {
+      atualizar(estado, PASSO);
+    } catch (e) {
+      falhar(tick, `excecao na avaliacao completa: ${e && e.stack ? e.stack : e}`);
+    }
+    if (estado.tela === TELAS.CARTA && escolherCarta(estado, 0)) cartas += 1;
+    estado.eventos.length = 0;
+  }
+
+  const r = estado.run.resultado;
+  if (!telaDeFim(estado)) {
+    falhar(tick, `a avaliacao nao terminou em ${tick} ticks: o cronometro regressivo esta correndo?`);
+  }
+  if (estado.tela === TELAS.JUBILADO) {
+    falhar(
+      tick,
+      `o bot foi jubilado aos ${r.tempo.toFixed(1)}s de ${r.duracao}s com ${r.kills} mortos — ` +
+        'a avaliacao ficou insobrevivivel para quem so anda em circulo (balanceamento de inimigo/arma)'
+    );
+  }
+  if (r.kills <= 0) falhar(tick, 'a avaliacao inteira terminou com 0 mortos');
+  if (r.nota <= 0) falhar(tick, `a avaliacao terminou com nota ${r.nota}: os pesos de content.js estao zerados?`);
+  if (!r.conceito) falhar(tick, `nota ${r.nota} nao caiu em faixa de conceito nenhuma`);
+  if (r.tempo < r.duracao - PASSO) {
+    falhar(tick, `o boletim diz ${r.tempo.toFixed(2)}s sobrevividos numa avaliacao de ${r.duracao}s`);
+  }
+  return {
+    nota: r.nota,
+    conceito: r.conceito,
+    kills: r.kills,
+    hpFracao: r.hpFracao,
+    ileso: r.ileso,
+    creditos: r.creditos,
+    cartas,
+    ticks: tick,
+    decomposicao: decomposicaoDaNota(r),
+  };
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -1621,9 +1963,14 @@ checarImaDeOrbes();
 checarFilaDeCartas();
 checarCartasNoMaximo();
 checarSorteioDeCartas();
+checarTelaDeResultado();
+checarTelaDeJubilado();
+checarNovaRunZeraCreditos();
+checarPausa();
 const corridaArma = checarArmaSozinha();
 const especializacao = checarArmasEspecializadas();
 const progressao = checarProgressao();
+const boletim = checarAvaliacaoCompleta();
 
 const estado = novoEstado(SEMENTE);
 iniciarAvaliacao(estado);
@@ -1663,10 +2010,15 @@ function rodarTick(estado, tick, { reiniciarAvaliacao = true } = {}) {
   }
   estado.eventos.length = 0;
 
-  // A avaliacao acabou: comeca a proxima para que os ticks todos rodem dentro
-  // da jogabilidade, nao parados no menu.
-  if (estado.tela === TELAS.MENU) {
+  // A avaliacao acabou numa das duas telas de fim: fecha o boletim pela mesma
+  // porta que o botao e o Enter usam e comeca a proxima, para que os ticks
+  // todos rodem dentro da jogabilidade e nao parados numa tela.
+  if (telaDeFim(estado)) {
     contadores.avaliacoesConcluidas += 1;
+    contadores.notas.push(estado.run.resultado.nota);
+    contadores.conceitos.push(estado.run.resultado.conceito || '-');
+    if (!sairDoResultado(estado)) falhar(tick, 'sairDoResultado() nao fechou a tela de fim de avaliacao');
+    if (estado.tela !== TELAS.MENU) falhar(tick, `depois da tela de fim a tela ficou "${estado.tela}"`);
     if (reiniciarAvaliacao) iniciarAvaliacao(estado);
   }
 }
@@ -1684,6 +2036,8 @@ const TOLERANCIA_FIM = 120;
 if (estado.tela === TELAS.MENU) iniciarAvaliacao(estado);
 estado.run.avaliacao.decorrido = estado.run.avaliacao.duracao - 1;
 let extras = 0;
+// rodarTick ja sai da tela de fim (e vai para o menu) assim que ela aparece,
+// entao o alvo aqui e o MENU: e ele que prova que o ciclo inteiro fechou.
 while (estado.tela !== TELAS.MENU && extras < TOLERANCIA_FIM) {
   extras += 1;
   estado.player.hp = estado.player.hpMax;
@@ -1694,6 +2048,17 @@ if (estado.tela !== TELAS.MENU) {
 }
 if (!contadores.porTipo['avaliacao-fim']) {
   falhar(TICKS + extras, 'nenhum evento avaliacao-fim na corrida: o fim por tempo nao rodou');
+}
+// O evento que a fase 11 vai ouvir para a fanfarra de aprovacao. Ele sai de
+// fecharAvaliacao(), entao sem ele nao houve boletim nenhum nesta corrida.
+if (!contadores.porTipo['resultado']) {
+  falhar(TICKS + extras, 'nenhum evento resultado na corrida: fecharAvaliacao() foi chamado?');
+}
+if (contadores.notas.length !== contadores.avaliacoesConcluidas) {
+  falhar(
+    TICKS + extras,
+    `${contadores.avaliacoesConcluidas} avaliacoes encerradas e ${contadores.notas.length} notas registradas`
+  );
 }
 
 // O bot circular gira devagar (uma volta a cada 10s) contra um jogador que
@@ -1769,7 +2134,16 @@ console.log(
     ` · cartas=${progressao.cartas} · xp ${progressao.xpColetado} coletado` +
     ` + ${progressao.xpNoChao} no chao = ${progressao.xpSoltado} solto por ${progressao.mortos} mortes` +
     ` · pico de orbes no chao=${progressao.orbesPico}` +
+    // O boletim que o contrato da fase 06 pede impresso. Corrida dedicada
+    // (SEMENTE+11), avaliacao inteira, bot circular pegando sempre a primeira
+    // carta e SEM segurar o HP — a corrida principal segura, e a nota dela
+    // nao valeria nada.
+    `\n  boletim em 60s (corrida dedicada, semente fixa): NOTA ${formatarNota(boletim.nota)}` +
+    ` · CONCEITO ${boletim.conceito} · ${boletim.creditos} creditos` +
+    ` · ${boletim.decomposicao}` +
     `\n  cartas na corrida principal=${contadores.cartas}` +
+    ` · notas da corrida principal=${contadores.notas.map((n) => formatarNota(n)).join('/')}` +
+    ` (${contadores.conceitos.join('/')})` +
     // Insumo do balanceamento da fase 13 (tarefa 6 do contrato): cada arma
     // sozinha, no nivel maximo, 60s, corrida propria (SEMENTE+300+indice).
     `\n  arsenal especializado (60s cada, nivel maximo, corridas proprias): ` +

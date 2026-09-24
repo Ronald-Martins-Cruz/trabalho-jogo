@@ -410,22 +410,65 @@ export const CONTEUDO = {
     },
   ],
 
-  // Nota, conceito e economia. Fase 06 usa os pesos; fase 07 usa a recompensa.
-  // nota = kills * pesoKill + (hp/hpMax) * pesoHp + bonusIleso
+  // Nota, conceito e economia (design §4). A nota nao aprova nem reprova —
+  // sobreviver ao cronometro ja aprova. Ela decide quantos creditos a loja
+  // recebe, e por isso e o unico motivo mecanico para jogar bem.
+  //
+  //   nota = kills * pesoKill + (hp/hpMax) * pesoHp + (ileso ? bonusIleso : 0)
+  //
+  // arredondada para uma casa e grampeada em `maxima`. O design chama
+  // equilibrar pesoKill contra pesoHp de "a decisao de tunning mais importante
+  // do jogo": pesoKill paga quem cacca, pesoHp paga quem preserva, e os dois
+  // estilos precisam chegar em notas parecidas por caminhos diferentes.
+  //
+  // Calibrado contra o bot do smoke (60s, semente fixa, bot circular que pega
+  // sempre a primeira carta), que e o unico jogador medido que existe hoje:
+  // ele termina com 173 mortos e 93% de HP, e nao fica ileso. Com estes
+  // numeros isso da nota 9,2 = conceito B — de proposito: o bot joga bem, e o
+  // A exige o bonus de ileso ou uma cacada acima do que ele faz. As duas
+  // pontas conferidas: quem se esconde no canto (0 mortos, HP cheio, ileso)
+  // tira 5,0 = F, e a nota maxima exige 188 mortos com HP cheio (157 se
+  // terminar ileso).
+  //
+  // Os dois estilos que o design pede chegam perto por caminhos diferentes:
+  // defensivo com 100 mortos e HP cheio da 7,2 (C); agressivo com 200 mortos
+  // e 40% de HP da 8,0 (C).
+  //
+  // O que estes numeros NAO cobrem, e a fase 13 precisa olhar: como kills e
+  // termo absoluto, uma avaliacao de 85s (prova final) rende mais mortos e
+  // portanto nota maior que uma de 60s, mesmo jogando igual.
   nota: {
-    pesoKill: 0,
-    pesoHp: 0,
-    bonusIleso: 0,
+    pesoKill: 0.032, // por inimigo morto; ~5,5 pontos nos 173 mortos do bot
+    pesoHp: 4, // multiplica a fracao de HP restante: HP cheio vale 4 pontos
+    bonusIleso: 1, // so para quem terminou sem tomar UM ponto de dano
     maxima: 10,
+    // Casas decimais da nota. Nao e cosmetico: e a nota ARREDONDADA que
+    // escolhe a faixa, senao a tela mostraria 8,5 e pagaria creditos de C.
+    casasDecimais: 1,
+    // Creditos = creditosBase * creditosFator da faixa (design §4: D base,
+    // C +30%, B +60%, A +100%). A loja da fase 07 vende na casa dos 60-120,
+    // entao uma avaliacao rende de meia a duas compras.
+    creditosBase: 60,
     // Faixas em ordem decrescente de exigencia. A primeira cuja nota minima
-    // for atingida vence. creditos/itens/rerolls entram na fase 07.
+    // for atingida vence. itens/rerolls por faixa entram na fase 07.
     faixas: [
-      { conceito: 'A', minimo: 9.5 },
-      { conceito: 'B', minimo: 8.5 },
-      { conceito: 'C', minimo: 7 },
-      { conceito: 'D', minimo: 6 },
-      { conceito: 'F', minimo: 0 },
+      { conceito: 'A', minimo: 9.5, creditosFator: 2 },
+      { conceito: 'B', minimo: 8.5, creditosFator: 1.6 },
+      { conceito: 'C', minimo: 7, creditosFator: 1.3 },
+      { conceito: 'D', minimo: 6, creditosFator: 1 },
+      // F nao existe na tabela do design §4. Existe aqui porque a run continua
+      // (a nota nao reprova) e mandar o jogador para uma loja sem um credito
+      // sequer transformaria uma avaliacao ruim em duas.
+      { conceito: 'F', minimo: 0, creditosFator: 0.5 },
     ],
+  },
+
+  // HUD. Numeros de apresentacao que o ui.js le; o que o canvas desenha fica
+  // em `visual`.
+  hud: {
+    // Segundos finais em que o cronometro entra em vermelho pulsante. E a
+    // unica informacao de "acabando" que o jogador tem sem ficar lendo numero.
+    timerUrgente: 10,
   },
 
   // Toda string visivel ao jogador que nao esta no index.html mora aqui.
@@ -435,6 +478,8 @@ export const CONTEUDO = {
       avaliacao: 'Avaliação',
       pausa: 'Pausa',
       carta: 'Carta',
+      resultado: 'Resultado',
+      jubilado: 'Jubilado',
     },
     // Rotulos que a carta monta com numeros vindos do estado. O texto fixo da
     // tela (titulo, dica de teclado) mora no index.html.
@@ -443,6 +488,21 @@ export const CONTEUDO = {
       nivel: 'Nv.',
       seta: '→',
       cura: 'de HP',
+    },
+    // A decomposicao da nota: "47 mortos (+1,5) · 62% de HP (+2,5) · sem levar
+    // dano (+1,0)". Sem ela a nota e um numero arbitrario e o jogador nao tem
+    // como descobrir que caccar e preservar HP pagam os dois.
+    resultado: {
+      conceito: 'Conceito',
+      mortos: 'mortos',
+      hp: 'de HP',
+      ileso: 'sem levar dano',
+      feriu: 'levou dano', // aparece com +0,0: o bonus perdido ensina que ele existe
+      separador: ' · ',
+      creditos: 'créditos',
+      simboloCredito: '◉',
+      sobreviveu: 'sobreviveu',
+      de: 'de',
     },
   },
 };
@@ -858,15 +918,28 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(conteudo.nota.pesoHp, 'nota.pesoHp', { min: 0 });
     exigeNumero(conteudo.nota.bonusIleso, 'nota.bonusIleso', { min: 0 });
     exigeNumero(conteudo.nota.maxima, 'nota.maxima', { min: 1 });
+    exigeNumero(conteudo.nota.creditosBase, 'nota.creditosBase', { min: 0 });
+    if (exigeNumero(conteudo.nota.casasDecimais, 'nota.casasDecimais', { min: 0, max: 3 })) {
+      if (!Number.isInteger(conteudo.nota.casasDecimais)) {
+        erros.push(`nota.casasDecimais: ${conteudo.nota.casasDecimais} precisa ser inteiro`);
+      }
+    }
     if (!Array.isArray(conteudo.nota.faixas) || conteudo.nota.faixas.length === 0) {
       erros.push('nota.faixas: esperava um array nao vazio');
     } else {
       let anterior = Infinity;
+      const conceitosVistos = new Set();
       conteudo.nota.faixas.forEach((faixa, i) => {
         const c = `nota.faixas[${i}]`;
         if (!exigeObjeto(faixa, c)) return;
         if (typeof faixa.conceito !== 'string' || faixa.conceito === '') {
           erros.push(`${c}: conceito ausente ou vazio`);
+        } else if (conceitosVistos.has(faixa.conceito)) {
+          // Dois "B" com minimos diferentes: a tela de resultado mostraria o
+          // mesmo conceito com creditos diferentes e ninguem entenderia.
+          erros.push(`${c}: conceito duplicado "${faixa.conceito}"`);
+        } else {
+          conceitosVistos.add(faixa.conceito);
         }
         if (exigeNumero(faixa.minimo, `${c}.minimo`, { min: 0 })) {
           if (faixa.minimo >= anterior) {
@@ -874,13 +947,77 @@ export function validarConteudo(conteudo = CONTEUDO) {
           }
           anterior = faixa.minimo;
         }
+        exigeNumero(faixa.creditosFator, `${c}.creditosFator`, { min: 0 });
       });
       const ultima = conteudo.nota.faixas[conteudo.nota.faixas.length - 1];
       if (ultima && ultima.minimo !== 0) {
         erros.push('nota.faixas: a ultima faixa precisa ter minimo 0 para cobrir toda nota');
       }
       if (conteudo.nota.pesoKill === 0 && conteudo.nota.pesoHp === 0) {
-        avisos.push('nota: pesos zerados (fase 06 ainda nao chegou)');
+        erros.push('nota: pesoKill e pesoHp zerados — toda avaliacao daria a mesma nota');
+      }
+      // A faixa mais exigente precisa ser alcancavel: com o teto de kills que
+      // o grampo de `maxima` permite, o maximo teorico e HP cheio + ileso +
+      // kills ate o grampo. Se nem isso chega no minimo da primeira faixa, o
+      // conceito A e decoracao — e so o check pode perceber, porque na tela
+      // ele simplesmente nunca aparece.
+      const primeira = conteudo.nota.faixas[0];
+      const tetoAlcancavel = conteudo.nota.maxima;
+      if (primeira && typeof primeira.minimo === 'number' && primeira.minimo > tetoAlcancavel) {
+        erros.push(
+          `nota.faixas[0]: o conceito "${primeira.conceito}" pede ${primeira.minimo} e a nota e grampeada ` +
+            `em ${tetoAlcancavel} — ele nunca sairia`
+        );
+      }
+      // Sem kill nenhum e com HP cheio (o jogador que se esconde no canto os
+      // 60s inteiros) a nota nao pode ja cair na faixa de cima: e o criterio
+      // de aceite "sobreviver parado no canto nao deveria funcionar".
+      const notaDoCovarde = conteudo.nota.pesoHp + conteudo.nota.bonusIleso;
+      if (primeira && typeof primeira.minimo === 'number' && notaDoCovarde >= primeira.minimo) {
+        erros.push(
+          `nota: HP cheio + ileso somam ${notaDoCovarde} e a melhor faixa pede ${primeira.minimo} — ` +
+            'quem se esconder no canto sem matar nada tira o conceito maximo'
+        );
+      }
+    }
+  }
+
+  // HUD.
+  if (exigeObjeto(conteudo.hud, 'hud')) {
+    const maiorDuracao = Array.isArray(conteudo.periodos)
+      ? conteudo.periodos.reduce(
+          (maior, p) =>
+            (Array.isArray(p && p.avaliacoes) ? p.avaliacoes : []).reduce(
+              (m, av) => (av && typeof av.duracao === 'number' && av.duracao > m ? av.duracao : m),
+              maior
+            ),
+          0
+        )
+      : 0;
+    // Urgencia que comeca antes da avaliacao inteira deixaria o cronometro
+    // vermelho do primeiro segundo ao ultimo, e o alerta vira ruido.
+    if (exigeNumero(conteudo.hud.timerUrgente, 'hud.timerUrgente', { min: 0 }) && maiorDuracao > 0) {
+      if (conteudo.hud.timerUrgente >= maiorDuracao) {
+        erros.push(
+          `hud.timerUrgente: ${conteudo.hud.timerUrgente}s cobre a avaliacao mais longa inteira ` +
+            `(${maiorDuracao}s) — o alerta ficaria ligado o tempo todo`
+        );
+      }
+    }
+  }
+
+  // Textos que a UI monta com numeros. Faltar um deles nao quebra nada: sai
+  // "undefined" na tela de resultado, que e pior.
+  if (exigeObjeto(conteudo.textos, 'textos')) {
+    if (exigeObjeto(conteudo.textos.resultado, 'textos.resultado')) {
+      const campos = [
+        'conceito', 'mortos', 'hp', 'ileso', 'feriu',
+        'separador', 'creditos', 'simboloCredito', 'sobreviveu', 'de',
+      ];
+      for (const campo of campos) {
+        if (typeof conteudo.textos.resultado[campo] !== 'string' || conteudo.textos.resultado[campo] === '') {
+          erros.push(`textos.resultado.${campo}: ausente ou vazio`);
+        }
       }
     }
   }

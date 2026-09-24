@@ -13,6 +13,8 @@ export const TELAS = {
   AVALIACAO: 'avaliacao',
   PAUSA: 'pausa',
   CARTA: 'carta',
+  RESULTADO: 'resultado', // sobreviveu ao cronometro: nota, conceito, creditos
+  JUBILADO: 'jubilado', // o HP zerou
 };
 
 export function novoEstado(seed = 1) {
@@ -111,6 +113,36 @@ export function novaRun() {
     conceito: null,
     jubilado: false,
     avaliacao: novaAvaliacao(0, 0),
+    resultado: novoResultado(),
+  };
+}
+
+// O boletim da ultima avaliacao encerrada. Nasce com a run e e PREENCHIDO por
+// fecharAvaliacao() (run.js), nunca substituido: a tela de resultado le daqui
+// todo frame e nada e alocado no fim da avaliacao. Tudo numero, string ou
+// booleano — o estado continua serializavel.
+export function novoResultado() {
+  return {
+    id: '',
+    nome: '',
+    periodo: '',
+    motivo: '', // 'tempo' (aprovado) ou 'jubilado'
+    aprovado: false,
+    kills: 0,
+    danoTomado: 0,
+    ileso: false,
+    nivel: 1,
+    hp: 0,
+    hpMax: 0,
+    hpFracao: 0,
+    tempo: 0, // segundos sobrevividos
+    duracao: 0,
+    nota: 0,
+    conceito: '',
+    // De onde cada ponto da nota veio. E o que a tela decompoe para o jogador.
+    parcelas: { kills: 0, hp: 0, ileso: 0 },
+    creditos: 0, // ganhos nesta avaliacao
+    creditosTotal: 0, // o que a run tem depois de somar
   };
 }
 
