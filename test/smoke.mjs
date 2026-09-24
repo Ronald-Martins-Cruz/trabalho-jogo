@@ -22,7 +22,7 @@ import {
 // ui.js nao toca no DOM no topo do modulo (criarUi recebe o `document`), entao
 // os formatadores puros da tela de resultado podem ser testados aqui — e a
 // primeira cobertura automatica que ui.js tem.
-import { decomposicaoDaNota, formatarNota, resumoDoJubilado } from '../src/ui.js';
+import { armasDoBoletim, decomposicaoDaNota, formatarNota, resumoDoJubilado } from '../src/ui.js';
 import { spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
 import {
   atualizarArmas,
@@ -1749,6 +1749,8 @@ function checarTelaDeResultado() {
     falhar(0, `a decomposicao "${linha}" nao diz se o jogador terminou ileso`);
   }
 
+  checarLinhaDeArmas(estado, 'tela de resultado');
+
   // Congelamento: e AQUI que a pendencia 9 do ESTADO.md aparece. Enquanto o
   // fim da avaliacao ia para o menu, atualizarPlayer acima do guard de
   // `concluida` era inalcancavel; com um overlay por cima da arena, o jogador
@@ -1763,6 +1765,45 @@ function checarTelaDeResultado() {
   if (estado.tela !== TELAS.MENU) falhar(0, `sairDoResultado deixou a tela em "${estado.tela}"`);
   if (sairDoResultado(estado)) falhar(0, 'sairDoResultado() agiu fora das telas de fim — ESC deixaria de pausar');
   if (!player.vivo) falhar(0, 'o jogador terminou morto numa avaliacao que acabou por tempo');
+}
+
+// Linha de debug do boletim (ajuste pos-checkpoint 1): com
+// CONTEUDO.debug.boletimArmas ligada ela mostra o nivel do jogador e cada arma
+// com o nivel; desligada ela sai vazia, e vazia e o que a UI esconde. A chave
+// e trocada no proprio CONTEUDO (e nao so passada como argumento) para provar
+// que o valor padrao da funcao le a chave viva — e o que a fase 15 vai
+// desligar.
+function checarLinhaDeArmas(estado, onde) {
+  // Duas armas em niveis diferentes: com uma so, trocar o nivel de uma pelo
+  // de outra passaria despercebido.
+  if (!equiparArma(estado, CONTEUDO.arma.inicial)) falhar(0, `${onde}: equiparArma da arma inicial falhou`);
+  const outra = CONTEUDO.armas.find((a) => a.id !== CONTEUDO.arma.inicial);
+  equiparArma(estado, outra.id);
+  subirNivelArma(estado, outra.id);
+  subirNivelArma(estado, outra.id);
+
+  const r = estado.run.resultado;
+  const t = CONTEUDO.textos.resultado;
+  const original = CONTEUDO.debug.boletimArmas;
+  try {
+    CONTEUDO.debug.boletimArmas = true;
+    const ligada = armasDoBoletim(r, estado.player.armas);
+    if (!ligada.includes(`${t.nivelJogador} ${r.nivel}`)) {
+      falhar(0, `${onde}: a linha de armas "${ligada}" nao mostra o nivel ${r.nivel} do jogador`);
+    }
+    for (const arma of estado.player.armas) {
+      const dados = dadosDaArma(arma.id);
+      const esperado = `${dados.nome} ${t.nivelArma}${arma.nivel}`;
+      if (!ligada.includes(esperado)) falhar(0, `${onde}: a linha de armas "${ligada}" nao mostra "${esperado}"`);
+    }
+    CONTEUDO.debug.boletimArmas = false;
+    const desligada = armasDoBoletim(r, estado.player.armas);
+    if (desligada !== '') {
+      falhar(0, `${onde}: com debug.boletimArmas desligada a linha de armas devia sair vazia e saiu "${desligada}"`);
+    }
+  } finally {
+    CONTEUDO.debug.boletimArmas = original;
+  }
 }
 
 // O outro caminho: HP a zero leva a uma tela DIFERENTE, sem nota e sem
@@ -1791,6 +1832,7 @@ function checarTelaDeJubilado() {
   if (r.ileso) falhar(0, 'o boletim de um jubilado diz que ele terminou ileso');
   const resumo = resumoDoJubilado(r);
   if (!resumo.includes(String(r.kills))) falhar(0, `o resumo do jubilado "${resumo}" nao mostra os mortos`);
+  checarLinhaDeArmas(estado, 'tela de jubilado');
 
   exigirCongelado(estado, alvos, {
     quando: 'com a tela de jubilado aberta',
@@ -1944,6 +1986,124 @@ function checarAvaliacaoCompleta() {
   };
 }
 
+// Ajuste pos-checkpoint 1: o usuario tirou 9,3 (B) parado no canto, sem se
+// mexer, e 10,0 jogando normal. Duas corridas proprias, avaliacao inteira e
+// HP de verdade, com os dois extremos:
+//   - botCanto: prensado no canto a partida toda (o que o usuario fez);
+//   - botDesvio: foge de quem chega perto e volta para o meio. NAO e um
+//     jogador bom: nao mira, nao busca orbe, nao escolhe carta. Na tabela de
+//     antes do ajuste ele reproduzia a partida "jogando normal" do usuario
+//     (10,0, ileso, ~210 mortos), e por isso e a regua de "quem se mexe".
+// O botCircular nao serve de regua aqui: ele anda sem olhar e passa rente as
+// paredes, onde os inimigos nascem — toma tanto dano quanto o canto.
+const RAIO_DESVIO = 150; // px: inimigo mais longe que isso nao assusta o botDesvio
+const PUXAO_CENTRO = 0.8; // peso da volta ao meio (sem isso ele foge ate a parede e se encurrala)
+const IMPULSO_MINIMO = 0.05; // abaixo disso o botDesvio fica parado em vez de tremer
+
+function botCanto(estado) {
+  estado.input.eixoX = -1;
+  estado.input.eixoY = -1;
+}
+
+function botDesvio(estado) {
+  const p = estado.player;
+  const { largura, altura } = CONTEUDO.arena;
+  let fx = 0;
+  let fy = 0;
+  for (const e of estado.enemies) {
+    const dx = p.x - e.x;
+    const dy = p.y - e.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > RAIO_DESVIO * RAIO_DESVIO || d2 < EPSILON) continue;
+    const d = Math.sqrt(d2);
+    const peso = (RAIO_DESVIO - d) / RAIO_DESVIO;
+    fx += (dx / d) * peso * peso;
+    fy += (dy / d) * peso * peso;
+  }
+  fx += ((largura / 2 - p.x) / largura) * PUXAO_CENTRO;
+  fy += ((altura / 2 - p.y) / altura) * PUXAO_CENTRO;
+  const n = Math.hypot(fx, fy);
+  estado.input.eixoX = n < IMPULSO_MINIMO ? 0 : fx / n;
+  estado.input.eixoY = n < IMPULSO_MINIMO ? 0 : fy / n;
+}
+
+function correrAvaliacaoCom(bot, semente, rotulo) {
+  const estado = novoEstado(semente);
+  iniciarAvaliacao(estado);
+  let tick = 0;
+  let segundoNivel5 = null;
+  while (!telaDeFim(estado) && tick < TICKS_AVALIACAO_COMPLETA) {
+    tick += 1;
+    bot(estado, tick);
+    try {
+      atualizar(estado, PASSO);
+    } catch (e) {
+      falhar(tick, `excecao na corrida ${rotulo}: ${e && e.stack ? e.stack : e}`);
+    }
+    if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+    if (segundoNivel5 === null && estado.player.nivel >= NIVEL_DO_DESIGN) {
+      segundoNivel5 = estado.run.avaliacao.decorrido;
+    }
+    estado.eventos.length = 0;
+  }
+  if (!telaDeFim(estado)) falhar(tick, `a corrida ${rotulo} nao terminou em ${tick} ticks`);
+  const r = estado.run.resultado;
+  return {
+    jubilado: estado.tela === TELAS.JUBILADO,
+    tempo: r.tempo,
+    nota: r.nota,
+    conceito: r.conceito,
+    kills: r.kills,
+    hpFracao: r.hpFracao,
+    ileso: r.ileso,
+    nivel: estado.player.nivel,
+    segundoNivel5,
+  };
+}
+
+const NIVEL_DO_DESIGN = 5; // design §3: nivel 5 antes do fim da primeira avaliacao
+const PIOR_CONCEITO_DO_CANTO = 'D'; // "no maximo D": criterio do checkpoint humano 1
+
+function descreverCorrida(c) {
+  const fim = c.jubilado
+    ? `JUBILADO aos ${c.tempo.toFixed(1)}s`
+    : `NOTA ${formatarNota(c.nota)} ${c.conceito}${c.ileso ? ' ileso' : ''}`;
+  const n5 = c.segundoNivel5 === null ? 'nunca' : `${c.segundoNivel5.toFixed(1)}s`;
+  return `${fim} · ${c.kills} mortos · ${Math.round(c.hpFracao * 100)}% HP · nivel ${c.nivel} · nivel 5 em ${n5}`;
+}
+
+function checarCantoContraDesvio() {
+  const canto = correrAvaliacaoCom(botCanto, SEMENTE + 12, 'do canto');
+  const desvio = correrAvaliacaoCom(botDesvio, SEMENTE + 13, 'do desvio');
+
+  // Parado no canto: jubilado, ou no maximo o conceito D.
+  const faixas = CONTEUDO.nota.faixas;
+  const indicePior = faixas.findIndex((f) => f.conceito === PIOR_CONCEITO_DO_CANTO);
+  if (indicePior < 0) falhar(0, `o conceito "${PIOR_CONCEITO_DO_CANTO}" sumiu de CONTEUDO.nota.faixas`);
+  if (!canto.jubilado && faixas.indexOf(faixaDaNota(canto.nota)) < indicePior) {
+    falhar(
+      0,
+      `parado no canto o bot tirou ${formatarNota(canto.nota)} (${canto.conceito}), acima de ` +
+        `${PIOR_CONCEITO_DO_CANTO}: ficar parado nao pode pagar (${descreverCorrida(canto)})`
+    );
+  }
+  // Quem se mexe sobrevive, sobe ao nivel do design e tira mais que o canto.
+  if (desvio.jubilado) {
+    falhar(0, `o bot que desvia foi jubilado (${descreverCorrida(desvio)}): a avaliacao 1 ficou insobrevivivel`);
+  }
+  if (desvio.segundoNivel5 === null) {
+    falhar(0, `o bot que desvia nao chegou ao nivel ${NIVEL_DO_DESIGN} em 60s (${descreverCorrida(desvio)})`);
+  }
+  if (!canto.jubilado && desvio.nota <= canto.nota) {
+    falhar(
+      0,
+      `desviando o bot tirou ${formatarNota(desvio.nota)} e parado no canto ${formatarNota(canto.nota)}: ` +
+        'se mexer tem que pagar mais que ficar parado'
+    );
+  }
+  return { canto, desvio };
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -1971,6 +2131,7 @@ const corridaArma = checarArmaSozinha();
 const especializacao = checarArmasEspecializadas();
 const progressao = checarProgressao();
 const boletim = checarAvaliacaoCompleta();
+const estilos = checarCantoContraDesvio();
 
 const estado = novoEstado(SEMENTE);
 iniciarAvaliacao(estado);
@@ -2141,6 +2302,12 @@ console.log(
     `\n  boletim em 60s (corrida dedicada, semente fixa): NOTA ${formatarNota(boletim.nota)}` +
     ` · CONCEITO ${boletim.conceito} · ${boletim.creditos} creditos` +
     ` · ${boletim.decomposicao}` +
+    // Ajuste pos-checkpoint 1: os dois extremos de estilo, cada um com a
+    // sua semente (SEMENTE+12 canto, SEMENTE+13 desvio) e HP de verdade.
+    `
+  parado no canto (SEMENTE+12): ${descreverCorrida(estilos.canto)}` +
+    `
+  desviando (SEMENTE+13): ${descreverCorrida(estilos.desvio)}` +
     `\n  cartas na corrida principal=${contadores.cartas}` +
     ` · notas da corrida principal=${contadores.notas.map((n) => formatarNota(n)).join('/')}` +
     ` (${contadores.conceitos.join('/')})` +

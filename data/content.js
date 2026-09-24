@@ -26,7 +26,13 @@ export const CONTEUDO = {
   arena: {
     largura: 960,
     altura: 540,
-    margemSpawn: 40, // distancia fora da borda onde inimigos nascem
+    // Distancia fora da borda onde inimigos nascem. Era 40 ate o checkpoint
+    // humano 1: com o inimigo nascendo quase colado na parede, quem corria
+    // rente a borda trombava nele ao nascer, e o canto (que so recebe
+    // inimigo de um quadrante, em fila) ficava MAIS seguro que andar. Com 150
+    // eles levam ~1,4s para entrar na arena. Precisa ficar abaixo de
+    // spawn.margemDescarte, senao o inimigo nasce ja descartado.
+    margemSpawn: 150,
     limites: {
       enemies: 400,
       projectiles: 600,
@@ -81,9 +87,13 @@ export const CONTEUDO = {
   // nivel — indice 0 = nivel 1 -> 2. Passado o fim da tabela, o ultimo valor
   // repete (uma avaliacao nunca chega tao longe, mas o coringa errado pode).
   //
-  // Alvo do design §3: nivel 5-6 em 60s. Acumulado ate o nivel 6 = 68 XP e ate
-  // o 7 = 103; o bot do smoke coleta ~92 XP por avaliacao de 60s, o que o
-  // deixa no nivel 6 em cinco sementes de cinco. Medido junto com
+  // Alvo do design §3: nivel 5-6 em 60s. Acumulado ate o nivel 6 = 75 XP e ate
+  // o 7 = 110. Medido no ajuste pos-checkpoint 1 (corrida de progressao do
+  // smoke: bot circular, HP segurado, sementes SEMENTE+5..+9): o bot coleta
+  // de 98 a 137 XP por avaliacao de 60s e termina no nivel 7 em quatro
+  // sementes de cinco (nivel 6 na outra). O nivel 5 chega entre 36s e 43s
+  // na media de 16 sementes (canto, desvio e circular). A curva nao mudou no
+  // ajuste; quem subiu foi o numero de inimigos. Medido junto com
   // jogador.raioColeta: os dois numeros so fazem sentido em par.
   xp: {
     porNivel: [5, 9, 14, 20, 27, 35, 44, 54, 65, 77],
@@ -115,10 +125,15 @@ export const CONTEUDO = {
     // verdade e o peso nunca rodou de fato. A fase 05 acrescentou as outras
     // tres e deu a este peso a primeira chance real de fazer diferenca.
     //
-    // NAO e sobre sobrevivencia: medido nos numeros FINAIS das 4 armas (apos
-    // o balanceamento desta fase), 30 sementes, corrida principal completa
-    // (HP real, sem segurar) — nenhum dos dois pesos causa jubilado
-    // (0/30 jubilados nos dois). Uma medicao anterior deste comentario dizia
+    // Remedido no ajuste pos-checkpoint 1 (inimigo com 14 de HP, mais
+    // inimigos, feixe do Marca-texto mais largo): 30 sementes, avaliacao
+    // inteira com o bot circular e HP real — 5/3 jubila 5/30 e mata 153,0 em
+    // media (min 53, max 203); 2/5 jubila 4/30 e mata 195,4 (min 126, max
+    // 263). Com o inimigo aguentando um tiro do Café nivel 1, concentrar a
+    // build passou a pesar: +28% de mortos, contra ~5% antes do ajuste.
+    //
+    // Historico da fase 05: nos numeros de entao nenhum dos dois pesos
+    // jubilava (0/30). Uma medicao anterior deste comentario dizia
     // que 5/3 matava o jogador em 5 de 8 sementes; isso foi medido num
     // estado INTERMEDIARIO desta fase, antes de as 3 armas novas serem
     // calibradas (o Marca-texto, por exemplo, foi de 62 para 100 kills
@@ -132,11 +147,10 @@ export const CONTEUDO = {
     // ser a opcao 0 oferecida contra ~45% em 2/5 (café so concorre com as
     // OUTRAS armas ja equipadas por "arma-nivel", contra 3 candidatas de
     // "arma-nova" cada uma pesando por si). Mortos por avaliacao, mesmas 30
-    // sementes: 5/3 media 171,3 (min 159, max 207); 2/5 media 179,8 (min
-    // 156, max 219) — cerca de 5% a mais, nao 100%+ como a versao antiga
-    // deste comentario dava a entender. Mantido em 2/5 porque concentra a
-    // build sem custar sobrevivencia nem esconder arma fraca (a pior das 4,
-    // Marca-texto, fica em 49% da melhor — ver o bloco de armas abaixo).
+    // sementes, na fase 05: 5/3 media 171,3 (min 159, max 207); 2/5 media
+    // 179,8 (min 156, max 219). Mantido em 2/5 porque concentra a build sem
+    // custar sobrevivencia nem esconder arma fraca (a pior das 4, Marca-texto,
+    // fica em 45% da melhor — ver o bloco de armas abaixo).
     // Nao e balanceamento final (isso e fase 13).
     pesoArmaNova: 2,
     pesoArmaNivel: 5,
@@ -177,10 +191,13 @@ export const CONTEUDO = {
   // reduz o problema mas nao o elimina — se o numero de inimigos distintos
   // realmente atingidos dentro de uma janela de intervaloDano passar de
   // memoriaAlvos, alguem perde a protecao de qualquer jeito, e isso e limite
-  // de capacidade, nao de logica. Nao e alcancavel hoje com o unico inimigo
-  // do jogo (ele morre num toque so, nunca acumula entrada viva) — fica
-  // pronto pra quando a fase 06/10 trouxer um inimigo que aguenta mais de um
-  // toque.
+  // de capacidade, nao de logica. Desde o ajuste pos-checkpoint 1 o Prazo de
+  // Entrega tem 14 de HP e aguenta um toque da Caneta nivel 1 (12), entao o
+  // anel acumula entrada viva de verdade. Medido: Caneta no nivel maximo
+  // desde o primeiro tick, 24 avaliacoes de 60s (bot circular, canto e
+  // centro, HP segurado) — pico de 5 entradas vivas ao mesmo tempo, contra
+  // 160 slots. A janela e curta demais (intervaloDano <= 0,16s) para o
+  // enxame chegar perto do teto.
   //
   // Subiu de 48 para 160 depois de medir a margem real do teste
   // `checarCooldownComEnxameOrbital()` (N = memoriaAlvos+8): com 48, a
@@ -241,11 +258,15 @@ export const CONTEUDO = {
   // circular, numa corrida ISOLADA (nenhuma outra arma pode contribuir —
   // sem isso, bufar uma arma rouba inimigos das outras e a medida de cada
   // uma passa a depender do que as outras por acaso pegaram na carta).
-  // Resultado: Café 204 · Caneta Bic 145 (71%) · Resumo 162 (79%) ·
-  // Marca-texto 100 (49%) — todas acima do minimo de 40% do contrato. Café
-  // (fase 03) nao foi tocado; as outras tres foram calibradas para chegar
-  // ali. Nao e o balanceamento final (isso e fase 13), e o piso de "nenhuma
-  // arma obviamente inutil".
+  // Resultado depois do ajuste pos-checkpoint 1: Café 256 · Caneta Bic 168
+  // (66%) · Resumo 202 (79%) · Marca-texto 114 (45%) — todas acima do minimo
+  // de 40% do contrato. Na fase 05 eram 204 · 145 · 162 · 100 (49%); com o
+  // inimigo novo (mais HP, mais rapido, nascendo mais longe da borda) o
+  // Marca-texto caiu para 83 (32%) e so a LARGURA do feixe o trouxe de volta
+  // — dano e alcance quase nao mexiam no numero (122->150 de dano: 83->82),
+  // porque ele so pega quem esta na frente do movimento. Nao e o
+  // balanceamento final (isso e fase 13), e o piso de "nenhuma arma
+  // obviamente inutil".
   armas: [
     {
       id: 'cafe',
@@ -253,11 +274,15 @@ export const CONTEUDO = {
       descricao: 'Dispara no inimigo mais próximo. Cadência alta, dano baixo.',
       emoji: '☕',
       comportamento: 'projetilMirado',
-      // dano 12 no nivel 1 nao e generosidade: e exatamente o hp do Prazo de
-      // Entrega. Medido com o bot do smoke, a mesma dps repartida em dois
-      // acertos (dano 10, cadencia 0.34) matava 48 inimigos por avaliacao
-      // contra 113 do tiro que mata de primeira — o segundo projetil quase
-      // sempre erra um alvo que ja se mexeu, e a arma parecia quebrada.
+      // Fase 03: dano 12 era exatamente o hp do Prazo de Entrega (12). Medido
+      // na epoca, a mesma dps repartida em dois acertos (dano 10, cadencia
+      // 0.34) matava 48 inimigos por avaliacao contra 113 do tiro que mata de
+      // primeira — o segundo projetil quase sempre erra um alvo que ja se
+      // mexeu. No ajuste pos-checkpoint 1 o Prazo foi a 14 de HP e o nivel 1
+      // passou a precisar de DOIS tiros; o nivel 2 (14) volta a matar de
+      // primeira. E de proposito e medido: dar 14 ao nivel 1 devolvia a
+      // vantagem ao canto (0 jubilados em 16 sementes, contra 5/16 assim) —
+      // o aperto dos primeiros ~20s e o que pune quem para.
       niveis: [
         { dano: 12, cadencia: 0.4, velocidade: 430, alcance: 330, raio: 7, projeteis: 1, dispersao: 0, perfuracao: 0 },
         { dano: 14, cadencia: 0.36, velocidade: 450, alcance: 350, raio: 7, projeteis: 1, dispersao: 0, perfuracao: 0 },
@@ -311,11 +336,11 @@ export const CONTEUDO = {
       // dt a cada quadro), nao por acerto — atravessar mais inimigos nao
       // dilui o dano de ninguem.
       niveis: [
-        { dano: 58, alcance: 195, largura: 55 },
-        { dano: 70, alcance: 210, largura: 60 },
-        { dano: 84, alcance: 225, largura: 67 },
-        { dano: 100, alcance: 240, largura: 74 },
-        { dano: 122, alcance: 260, largura: 83 },
+        { dano: 58, alcance: 195, largura: 62 },
+        { dano: 70, alcance: 210, largura: 75 },
+        { dano: 84, alcance: 225, largura: 90 },
+        { dano: 100, alcance: 240, largura: 108 },
+        { dano: 122, alcance: 260, largura: 130 },
       ],
     },
   ],
@@ -332,9 +357,13 @@ export const CONTEUDO = {
       id: 'prazo',
       nome: 'Prazo de Entrega',
       emoji: '📕',
-      hp: 12,
-      velocidade: 105, // px/s — ~55% do teto do jogador: alcanca quem para, nao quem corre
-      dano: 7, // por encostada; os i-frames do jogador limitam a 1 encostada por segundo
+      // Ajuste pos-checkpoint 1 (era hp 12, velocidade 105, dano 7): o
+      // usuario tirou 9,3 parado no canto. 14 de HP e o que mais pune o canto
+      // — um inimigo que aguenta um tiro chega perto de quem nao foge; 12
+      // com mais inimigos e mais velocidade nao bastou (ver o handoff 06).
+      hp: 14,
+      velocidade: 115, // px/s — ~60% do teto do jogador: alcanca quem para, nao quem corre
+      dano: 8, // por encostada; os i-frames do jogador limitam a 1 encostada por segundo
       raio: 11,
       xp: 1, // valor do orbe que ele derruba ao morrer
       peso: 1,
@@ -347,16 +376,22 @@ export const CONTEUDO = {
   // `intervalo` = segundos entre ondas. `porOnda` = inimigos por onda (a parte
   // fracionaria vira chance de um a mais). O multiplicador global de
   // dificuldade divide o intervalo e multiplica o tamanho da onda.
+  //
+  // Ajuste pos-checkpoint 1: dos 30s em diante a curva sobe mais rapido (era
+  // 3 por onda aos 30s e 5 aos 60s; agora 3,5 e 6). Sem essa rampa as armas
+  // crescem mais rapido que a horda e o fim da avaliacao fica mais facil que
+  // o meio. O teto da rampa (60s em diante) so vale para as avaliacoes mais
+  // longas, que a fase 13 ainda vai medir.
   spawn: {
     curvaPadrao: 'padrao',
     curvas: {
       padrao: [
         { t: 0, intervalo: 1.6, porOnda: 1 },
-        { t: 15, intervalo: 1.15, porOnda: 2 },
-        { t: 30, intervalo: 0.85, porOnda: 3 },
-        { t: 45, intervalo: 0.65, porOnda: 4 },
-        { t: 60, intervalo: 0.5, porOnda: 5 },
-        { t: 90, intervalo: 0.38, porOnda: 6 },
+        { t: 15, intervalo: 1.1, porOnda: 2 },
+        { t: 30, intervalo: 0.8, porOnda: 3.5 },
+        { t: 45, intervalo: 0.6, porOnda: 5 },
+        { t: 60, intervalo: 0.45, porOnda: 6 },
+        { t: 90, intervalo: 0.35, porOnda: 8 },
       ],
     },
     intervaloMinimo: 0.25, // piso duro: nem o modificador mais agressivo passa daqui
@@ -421,26 +456,37 @@ export const CONTEUDO = {
   // do jogo": pesoKill paga quem cacca, pesoHp paga quem preserva, e os dois
   // estilos precisam chegar em notas parecidas por caminhos diferentes.
   //
-  // Calibrado contra o bot do smoke (60s, semente fixa, bot circular que pega
-  // sempre a primeira carta), que e o unico jogador medido que existe hoje:
-  // ele termina com 173 mortos e 93% de HP, e nao fica ileso. Com estes
-  // numeros isso da nota 9,2 = conceito B — de proposito: o bot joga bem, e o
-  // A exige o bonus de ileso ou uma cacada acima do que ele faz. As duas
-  // pontas conferidas: quem se esconde no canto (0 mortos, HP cheio, ileso)
-  // tira 5,0 = F, e a nota maxima exige 188 mortos com HP cheio (157 se
-  // terminar ileso).
+  // Recalibrado no ajuste pos-checkpoint 1. Antes (pesoKill 0,032, pesoHp 4,
+  // ileso 1) o usuario tirou 10,0 jogando normal e 9,3 PARADO NO CANTO: as
+  // armas automaticas matam tudo o que nasce, entao quem fica parado mata
+  // tanto quanto quem anda, e as mortes dominavam a nota. Agora as mortes
+  // pesam metade e o HP pesa mais; quem manda na nota e o HP que sobra.
   //
-  // Os dois estilos que o design pede chegam perto por caminhos diferentes:
-  // defensivo com 100 mortos e HP cheio da 7,2 (C); agressivo com 200 mortos
-  // e 40% de HP da 8,0 (C).
+  // Medido com tres bots do smoke (avaliacao inteira, HP real, pegando
+  // sempre a primeira carta), 16 sementes cada:
+  //   - desviando (foge de quem chega perto; reproduzia a partida "jogando
+  //     normal" do usuario antes do ajuste): media 8,4 — A1 B8 C6 D1, nenhum
+  //     jubilado. O A exige terminar ileso E cacar: 279 mortos com ileso.
+  //   - parado no canto: 5 jubilados; quem sobrevive tira 6,0 em media —
+  //     C2 D2 F7. Duas sementes em 16 ainda passam de D (7,9 e 8,1).
+  //   - circular (anda em circulo sem olhar, rente as paredes): 3 jubilados,
+  //     media 5,9 — C3 D2 F8. Ele toma tanto dano quanto o canto.
+  // Nas sementes fixas do smoke: circular 5,7 (F), canto 5,3 (F), desviando
+  // 8,2 (C).
+  //
+  // Pontas conferidas: quem se esconde sem matar nada, HP cheio e ileso,
+  // tira 5,0 = F; a nota maxima exige 310 mortos com ileso (341 sem ileso).
+  // Os dois estilos do design chegam perto por caminhos diferentes:
+  // defensivo com 150 mortos e HP cheio da 6,9 (D), 7,4 (C) se ileso;
+  // agressivo com 300 mortos e 40% de HP da 6,6 (D).
   //
   // O que estes numeros NAO cobrem, e a fase 13 precisa olhar: como kills e
   // termo absoluto, uma avaliacao de 85s (prova final) rende mais mortos e
   // portanto nota maior que uma de 60s, mesmo jogando igual.
   nota: {
-    pesoKill: 0.032, // por inimigo morto; ~5,5 pontos nos 173 mortos do bot
-    pesoHp: 4, // multiplica a fracao de HP restante: HP cheio vale 4 pontos
-    bonusIleso: 1, // so para quem terminou sem tomar UM ponto de dano
+    pesoKill: 0.016, // por inimigo morto; 250 mortos valem 4,0
+    pesoHp: 4.5, // multiplica a fracao de HP restante: HP cheio vale 4,5 pontos
+    bonusIleso: 0.5, // so para quem terminou sem tomar UM ponto de dano
     maxima: 10,
     // Casas decimais da nota. Nao e cosmetico: e a nota ARREDONDADA que
     // escolhe a faixa, senao a tela mostraria 8,5 e pagaria creditos de C.
@@ -461,6 +507,16 @@ export const CONTEUDO = {
       // sequer transformaria uma avaliacao ruim em duas.
       { conceito: 'F', minimo: 0, creditosFator: 0.5 },
     ],
+  },
+
+  // Chaves de desenvolvimento. NADA aqui muda a simulacao: so o que a tela
+  // mostra para quem esta testando. A fase 15 confere que tudo esta desligado
+  // antes da entrega.
+  debug: {
+    // Linha extra no boletim (resultado e jubilado) com o nivel do jogador e
+    // as armas equipadas com seus niveis. Pedido do checkpoint humano 1 para
+    // dar feedback de balanceamento durante o desenvolvimento.
+    boletimArmas: true,
   },
 
   // HUD. Numeros de apresentacao que o ui.js le; o que o canvas desenha fica
@@ -503,6 +559,9 @@ export const CONTEUDO = {
       simboloCredito: '◉',
       sobreviveu: 'sobreviveu',
       de: 'de',
+      // Linha de debug do boletim (debug.boletimArmas): "Nível 7 · ☕ Café nv3".
+      nivelJogador: 'Nível',
+      nivelArma: 'nv',
     },
   },
 };
@@ -817,7 +876,20 @@ export function validarConteudo(conteudo = CONTEUDO) {
   if (exigeObjeto(conteudo.spawn, 'spawn')) {
     exigeNumero(conteudo.spawn.intervaloMinimo, 'spawn.intervaloMinimo', { min: 1 / 60 });
     exigeNumero(conteudo.spawn.porOndaMaximo, 'spawn.porOndaMaximo', { min: 1 });
-    exigeNumero(conteudo.spawn.margemDescarte, 'spawn.margemDescarte', { min: 1 });
+    if (exigeNumero(conteudo.spawn.margemDescarte, 'spawn.margemDescarte', { min: 1 }) && conteudo.arena) {
+      // O inimigo nasce a margemSpawn + raio fora da borda; se isso passar do
+      // descarte, ele volta para a pool no mesmo quadro em que nasceu e o
+      // spawn parece desligado.
+      const maiorRaio = Array.isArray(conteudo.inimigos)
+        ? conteudo.inimigos.reduce((m, i) => (i && typeof i.raio === 'number' && i.raio > m ? i.raio : m), 0)
+        : 0;
+      if (conteudo.arena.margemSpawn + maiorRaio >= conteudo.spawn.margemDescarte) {
+        erros.push(
+          `arena.margemSpawn: ${conteudo.arena.margemSpawn} + raio ${maiorRaio} alcanca spawn.margemDescarte ` +
+            `(${conteudo.spawn.margemDescarte}) — o inimigo seria descartado ao nascer`
+        );
+      }
+    }
     const teto = conteudo.arena && conteudo.arena.limites ? conteudo.arena.limites.enemies : Infinity;
     if (exigeNumero(conteudo.spawn.maxSimultaneos, 'spawn.maxSimultaneos', { min: 1 })) {
       if (conteudo.spawn.maxSimultaneos > teto) {
@@ -982,6 +1054,14 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
   }
 
+  // Debug: so chaves booleanas. Um "false" em string ligaria a chave por ser
+  // truthy, e a fase 15 acharia que desligou.
+  if (exigeObjeto(conteudo.debug, 'debug')) {
+    for (const [chave, valor] of Object.entries(conteudo.debug)) {
+      if (typeof valor !== 'boolean') erros.push(`debug.${chave}: esperava true/false, veio ${JSON.stringify(valor)}`);
+    }
+  }
+
   // HUD.
   if (exigeObjeto(conteudo.hud, 'hud')) {
     const maiorDuracao = Array.isArray(conteudo.periodos)
@@ -1013,6 +1093,7 @@ export function validarConteudo(conteudo = CONTEUDO) {
       const campos = [
         'conceito', 'mortos', 'hp', 'ileso', 'feriu',
         'separador', 'creditos', 'simboloCredito', 'sobreviveu', 'de',
+        'nivelJogador', 'nivelArma',
       ];
       for (const campo of campos) {
         if (typeof conteudo.textos.resultado[campo] !== 'string' || conteudo.textos.resultado[campo] === '') {

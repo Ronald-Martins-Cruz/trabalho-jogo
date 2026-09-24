@@ -28,6 +28,8 @@ export function criarUi(doc) {
     resultadoCreditos: doc.getElementById('resultado-creditos'),
     jubilado: doc.getElementById('jubilado'),
     jubiladoResumo: doc.getElementById('jubilado-resumo'),
+    resultadoArmas: doc.getElementById('resultado-armas'),
+    jubiladoArmas: doc.getElementById('jubilado-armas'),
     botaoJogar: doc.getElementById('botao-jogar'),
     botaoContinuar: doc.getElementById('botao-continuar'),
     botaoMenu: doc.getElementById('botao-menu'),
@@ -167,10 +169,19 @@ export function criarUi(doc) {
     texto(el.resultadoConceito, `${t.conceito} ${r.conceito}`);
     texto(el.resultadoDecomposicao, decomposicaoDaNota(r));
     texto(el.resultadoCreditos, `${t.simboloCredito} ${r.creditos} ${t.creditos}`);
+    sincronizarArmas(el.resultadoArmas, estado);
   }
 
   function sincronizarJubilado(estado) {
     texto(el.jubiladoResumo, resumoDoJubilado(estado.run.resultado));
+    sincronizarArmas(el.jubiladoArmas, estado);
+  }
+
+  // Linha de debug: vazia com a chave desligada, e vazia = oculta.
+  function sincronizarArmas(no, estado) {
+    const linha = armasDoBoletim(estado.run.resultado, estado.player.armas);
+    texto(no, linha);
+    visivel(no, linha !== '');
   }
 
   function sincronizar(estado) {
@@ -243,6 +254,21 @@ export function resumoDoJubilado(resultado, textos = CONTEUDO.textos.resultado) 
     `${resultado.kills} ${textos.mortos}`,
     `${textos.sobreviveu} ${formatarTempo(resultado.tempo)} ${textos.de} ${formatarTempo(resultado.duracao)}`,
   ];
+  return partes.join(textos.separador);
+}
+
+// "Nível 7 · ☕ Café nv3 · ✏️ Caneta Bic nv2". Ferramenta de desenvolvimento
+// (debug.boletimArmas): com a chave desligada devolve '' e a tela esconde a
+// linha. Le as armas do jogador, que so sao zeradas quando a proxima
+// avaliacao comeca — no boletim ainda sao as da partida que acabou.
+export function armasDoBoletim(resultado, armas, textos = CONTEUDO.textos.resultado, debug = CONTEUDO.debug) {
+  if (!debug || debug.boletimArmas !== true) return '';
+  const partes = [`${textos.nivelJogador} ${resultado.nivel}`];
+  for (const arma of armas) {
+    const dados = CONTEUDO.armas.find((a) => a.id === arma.id);
+    const nome = dados ? `${dados.emoji} ${dados.nome}` : arma.id;
+    partes.push(`${nome} ${textos.nivelArma}${arma.nivel}`);
+  }
   return partes.join(textos.separador);
 }
 
