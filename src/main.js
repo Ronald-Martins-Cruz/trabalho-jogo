@@ -7,6 +7,8 @@ import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
 import { apontarCarta, atualizarCartas, escolherCarta, moverSelecaoCarta } from './cards.js';
 import { fecharAvaliacao, iniciarRun, MOTIVO_JUBILADO, MOTIVO_TEMPO } from './run.js';
+import { observarTick, registrarQuadro } from './telemetria.js';
+import { gerarRelatorio } from './relatorio.js';
 
 // Nada de document/window no topo deste modulo: e o que permite ao node
 // importar `atualizar` e rodar a partida inteira sem navegador.
@@ -36,6 +38,10 @@ export function atualizar(estado, dt) {
     default:
       break;
   }
+
+  // Por ultimo e em qualquer tela: o relatorio de balanceamento so observa o
+  // que este tick ja fez (debug.relatorio; desligado, retorna na hora).
+  observarTick(estado, dt);
 }
 
 function atualizarAvaliacao(estado, dt) {
@@ -148,15 +154,20 @@ export function iniciar() {
     (indice) => escolherCarta(estado, indice),
     (indice) => apontarCarta(estado, indice)
   );
+  // Botoes de relatorio (debug.relatorio): a UI pede um escopo, a montagem e
+  // pura (relatorio.js) e baixar/copiar e com a UI.
+  ui.ligarRelatorio((escopo) => arquivoDoRelatorio(estado, escopo));
 
   const passo = CONTEUDO.loop.passo;
   const relogio = criarRelogio();
   let anterior = performance.now();
 
   function frame(agora) {
-    const passos = avancarRelogio(relogio, (agora - anterior) / 1000);
+    const dtReal = (agora - anterior) / 1000;
+    const passos = avancarRelogio(relogio, dtReal);
     anterior = agora;
     for (let i = 0; i < passos; i += 1) atualizar(estado, passo);
+    registrarQuadro(estado, dtReal, passos);
 
     desenhar(estado, ctx);
     ui.sincronizar(estado);
@@ -168,6 +179,41 @@ export function iniciar() {
 
   requestAnimationFrame(frame);
   return estado;
+}
+
+// O relatorio pedido por um botao: texto pronto e nome de arquivo com a hora
+// local, que so o navegador sabe — a simulacao nunca le relogio de parede.
+function arquivoDoRelatorio(estado, escopo) {
+  const agora = new Date();
+  const relatorio = gerarRelatorio(estado, escopo, ambienteDoNavegador(agora));
+  if (!relatorio) return null;
+  const dois = (n) => String(n).padStart(2, '0');
+  const carimbo =
+    `${agora.getFullYear()}-${dois(agora.getMonth() + 1)}-${dois(agora.getDate())}` +
+    `_${dois(agora.getHours())}h${dois(agora.getMinutes())}m${dois(agora.getSeconds())}s`;
+  return { nome: `relatorio_${relatorio.nomeBase}_${carimbo}.md`, texto: relatorio.texto };
+}
+
+// Onde a partida rodou. Fps baixo muda a dificuldade sentida (o relogio
+// descarta tempo em vez de acelerar), entao isso entra no relatorio.
+function ambienteDoNavegador(agora) {
+  const tela = window.screen || {};
+  let fuso = '';
+  try {
+    fuso = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    fuso = '';
+  }
+  return {
+    geradoEm: agora.toISOString(),
+    geradoEmLocal: agora.toLocaleString('pt-BR'),
+    fusoHorario: fuso,
+    navegador: navigator.userAgent,
+    idioma: navigator.language,
+    tela: `${tela.width || 0}x${tela.height || 0}`,
+    janela: `${window.innerWidth}x${window.innerHeight}`,
+    pixelRatio: window.devicePixelRatio || 1,
+  };
 }
 
 const MAPA_TECLAS = {

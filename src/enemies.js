@@ -49,6 +49,7 @@ function fabricarInimigo() {
     xp: 0,
     empurraoX: 0,
     empurraoY: 0,
+    nascidoEm: 0, // avaliacao.decorrido do nascimento; o relatorio mede quanto cada um viveu
   };
 }
 
@@ -156,7 +157,9 @@ export function spawnInimigo(estado, tipoId = null) {
   inimigo.vy = 0;
   inimigo.empurraoX = 0;
   inimigo.empurraoY = 0;
+  inimigo.nascidoEm = estado.run.avaliacao.decorrido;
   posicionarNaBorda(inimigo, estado.rng);
+  emitir(estado, 'inimigo-nasceu', { tipo: tipo.id });
   return inimigo;
 }
 
@@ -329,7 +332,14 @@ function colidirComJogador(estado, pool) {
     if (dx * dx + dy * dy > soma * soma) continue;
     // Uma encostada por vez: com os i-frames ligados as outras nao valeriam
     // nada mesmo.
-    if (receberDano(estado, e.dano)) break;
+    const hpAntes = player.hp;
+    if (receberDano(estado, e.dano)) {
+      // Daqui, e nao de receberDano(): player.js nao importa state.js. Fonte
+      // de dano que chame receberDano() por outro caminho (chefe, modificador)
+      // emite o seu — sem isso o relatorio a registra como fonte desconhecida.
+      emitir(estado, 'jogador-dano', { fonte: e.tipo, dano: hpAntes - player.hp, hp: player.hp, x: e.x, y: e.y });
+      break;
+    }
   }
 }
 
@@ -360,6 +370,7 @@ export function aplicarDano(estado, inimigo, dano) {
     x: inimigo.x,
     y: inimigo.y,
     xp: inimigo.xp,
+    vida: estado.run.avaliacao.decorrido - inimigo.nascidoEm, // segundos entre nascer e morrer
   });
   pool.liberar(inimigo);
   return true;

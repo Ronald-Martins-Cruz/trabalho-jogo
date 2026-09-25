@@ -41,6 +41,13 @@
       <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
       <button id="botao-jogar" class="botao botao-destaque" type="button">Jogar</button>
       <p class="dica">WASD ou setas para mover · ESC pausa · o resto é sorte</p>
+      <!-- Só com CONTEUDO.debug.relatorio ligado e alguma partida já jogada. -->
+      <div class="relatorio-barra oculto" data-relatorio-barra data-relatorio-menu>
+        <span class="relatorio-rotulo">Relatório</span>
+        <button class="botao botao-relatorio" type="button" data-relatorio="partida">Última partida</button>
+        <button class="botao botao-relatorio" type="button" data-relatorio="sessao">Sessão inteira</button>
+        <span class="relatorio-status" data-relatorio-status></span>
+      </div>
     </div>
 
     <!-- Carta de nível: as opções são montadas uma vez por ui.js e só trocam
@@ -78,6 +85,13 @@
       <p id="resultado-armas" class="dica oculto"></p>
       <button id="botao-resultado" class="botao botao-destaque" type="button">Continuar</button>
       <p class="dica">Enter ou Espaço para seguir</p>
+      <!-- Só com CONTEUDO.debug.relatorio: exporta o relatório de balanceamento. -->
+      <div class="relatorio-barra oculto" data-relatorio-barra>
+        <span class="relatorio-rotulo">Relatório</span>
+        <button class="botao botao-relatorio" type="button" data-relatorio="avaliacao">Desta avaliação</button>
+        <button class="botao botao-relatorio" type="button" data-relatorio="partida">Da partida</button>
+        <span class="relatorio-status" data-relatorio-status></span>
+      </div>
     </div>
 
     <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. -->
@@ -88,6 +102,12 @@
       <p id="jubilado-armas" class="dica oculto"></p>
       <button id="botao-jubilado" class="botao" type="button">Voltar ao menu</button>
       <p class="dica">Enter ou Espaço para voltar</p>
+      <div class="relatorio-barra oculto" data-relatorio-barra>
+        <span class="relatorio-rotulo">Relatório</span>
+        <button class="botao botao-relatorio" type="button" data-relatorio="avaliacao">Desta avaliação</button>
+        <button class="botao botao-relatorio" type="button" data-relatorio="partida">Da partida</button>
+        <span class="relatorio-status" data-relatorio-status></span>
+      </div>
     </div>
   </div>
 

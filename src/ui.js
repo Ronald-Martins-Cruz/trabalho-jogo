@@ -37,6 +37,12 @@ export function criarUi(doc) {
     botaoJubilado: doc.getElementById('botao-jubilado'),
   };
 
+  // Barras de relatorio (debug.relatorio): uma em cada tela de fim e uma no
+  // menu. Achadas por atributo, e nao por id, porque sao tres copias do mesmo
+  // bloco. `data-relatorio-menu` so aparece quando ja existe partida gravada.
+  const barrasRelatorio = doc.querySelectorAll ? Array.from(doc.querySelectorAll('[data-relatorio-barra]')) : [];
+  const statusRelatorio = doc.querySelectorAll ? Array.from(doc.querySelectorAll('[data-relatorio-status]')) : [];
+
   const cache = {};
   const texto = (no, valor) => {
     if (!no) return;
@@ -156,6 +162,55 @@ export function criarUi(doc) {
     if (el.botaoJubilado && jubilado) el.botaoJubilado.addEventListener('click', jubilado);
   }
 
+  // `gerar(escopo)` devolve { nome, texto } ou null (nada gravado ainda). O
+  // arquivo e baixado E o texto vai para a area de transferencia: o destino
+  // normal e colar no chat de um agente, e o arquivo fica de copia.
+  function ligarRelatorio(gerar) {
+    for (const barra of barrasRelatorio) {
+      const status = barra.querySelector('[data-relatorio-status]');
+      for (const botao of barra.querySelectorAll('[data-relatorio]')) {
+        botao.addEventListener('click', () => {
+          if (botao.blur) botao.blur();
+          const t = CONTEUDO.textos.relatorio;
+          const arquivo = gerar(botao.getAttribute('data-relatorio'));
+          if (!arquivo) {
+            escreverStatus(status, t.vazio);
+            return;
+          }
+          // A copia sai primeiro, ainda dentro do gesto do clique: e ele que
+          // autoriza a area de transferencia, e o download pode tirar o foco.
+          const copia = copiarTexto(arquivo.texto);
+          baixarArquivo(doc, arquivo.nome, arquivo.texto);
+          escreverStatus(status, `${t.baixado} (${arquivo.nome})`);
+          copia.then((copiou) => {
+            escreverStatus(status, `${t.baixado} · ${copiou ? t.copiado : t.semCopia}`);
+          });
+        });
+      }
+    }
+  }
+
+  function escreverStatus(no, valor) {
+    if (no) no.textContent = valor;
+  }
+
+  let telaDoStatus = null;
+
+  function sincronizarRelatorio(estado) {
+    const ligado = CONTEUDO.debug && CONTEUDO.debug.relatorio === true;
+    const temPartida = Boolean(estado.telemetria && estado.telemetria.partidas.length > 0);
+    for (const barra of barrasRelatorio) {
+      const soComPartida = barra.hasAttribute('data-relatorio-menu');
+      visivel(barra, ligado && (!soComPartida || temPartida));
+    }
+    // O aviso de "baixado" e da tela em que o botao foi apertado; na proxima
+    // tela ele mentiria sobre um arquivo que nao e daquela avaliacao.
+    if (telaDoStatus !== estado.tela) {
+      telaDoStatus = estado.tela;
+      for (const no of statusRelatorio) no.textContent = '';
+    }
+  }
+
   // As duas telas de fim de avaliacao. Nada e montado aqui: os nos existem
   // desde o index.html e so trocam de texto, como as cartas. O `texto()` ja
   // pula a escrita quando o valor nao mudou, entao redesenhar todo frame e de
@@ -198,6 +253,7 @@ export function criarUi(doc) {
     if (naCarta) sincronizarCartas(estado);
     if (noResultado) sincronizarResultado(estado);
     if (noJubilado) sincronizarJubilado(estado);
+    sincronizarRelatorio(estado);
 
     const p = estado.player;
     largura(el.hpBarra, p.hpMax > 0 ? p.hp / p.hpMax : 0);
@@ -217,7 +273,35 @@ export function criarUi(doc) {
     classe(el.timer, 'parado', estado.tela !== TELAS.AVALIACAO);
   }
 
-  return { ligarBotoes, ligarCartas, sincronizar, el };
+  return { ligarBotoes, ligarCartas, ligarRelatorio, sincronizar, el };
+}
+
+// ------------------------------------------------------ exportar relatorio
+
+// Blob local + <a download>: nenhum servidor, nenhum recurso de fora.
+function baixarArquivo(doc, nome, conteudo) {
+  const blob = new Blob([conteudo], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = doc.createElement('a');
+  link.href = url;
+  link.download = nome;
+  link.style.display = 'none';
+  doc.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Revogar na hora cancela o download em alguns navegadores.
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// A API de area de transferencia so existe em contexto seguro (localhost e
+// GitHub Pages sao). Falhar aqui nao e erro: o arquivo ja foi baixado.
+function copiarTexto(conteudo) {
+  const area = typeof navigator !== 'undefined' ? navigator.clipboard : null;
+  if (!area || typeof area.writeText !== 'function') return Promise.resolve(false);
+  return area.writeText(conteudo).then(
+    () => true,
+    () => false
+  );
 }
 
 // ------------------------------------------------ formatacao do resultado

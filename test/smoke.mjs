@@ -9,7 +9,7 @@
 //   3. some seus contadores em resumo() para eles aparecerem na linha final.
 
 import { CONTEUDO } from '../data/content.js';
-import { novoEstado, iniciarAvaliacao, TELAS } from '../src/state.js';
+import { novoEstado, iniciarAvaliacao, irParaTela, TELAS } from '../src/state.js';
 import { alternarPausa, atualizar, avancarRelogio, criarRelogio, sairDoResultado } from '../src/main.js';
 import {
   calcularNota,
@@ -37,6 +37,8 @@ import {
 import { apontarCarta, escolherCarta, moverSelecaoCarta, verificarCartasDoConteudo } from '../src/cards.js';
 import { atualizarOrbes, poolOrbes, receberDano, soltarOrbeXp, xpParaSubir } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
+import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
+import { analisarAvaliacao, ESCOPOS, gerarRelatorio } from '../src/relatorio.js';
 
 const SEMENTE = 20261110;
 const TICKS = 3600; // 60s simulados a 1/60
@@ -2104,6 +2106,306 @@ function checarCantoContraDesvio() {
   return { canto, desvio };
 }
 
+// ------------------------------------------ relatorio de partida (debug)
+
+// Pedido do todo.md: um relatorio completo que o usuario exporta e manda a
+// agentes de balanceamento. Eles vao ler os numeros como fato, entao as
+// contas do relatorio precisam fechar com o boletim e com uma contagem feita
+// por fora — e a telemetria nao pode mudar a partida que observa.
+// Duas corridas do botCircular, escolhidas medindo: +23 aprova apanhando (11
+// golpes) e +19 e jubilada por inimigo. Se o balanceamento mudar e elas
+// pararem de levar golpe, a assercao de "houve dano" pede outra semente.
+const SEMENTE_RELATORIO = SEMENTE + 23;
+const SEMENTE_RELATORIO_JUBILADO = SEMENTE + 19;
+const TICKS_NA_CARTA = 20; // o bot espera isto com a carta aberta: tempo de decisao > 0
+const TIPOS_CONTADOS = ['arma-disparo', 'arma-acerto', 'inimigo-morto', 'inimigo-nasceu', 'jogador-dano', 'carta-aberta'];
+
+// Uma avaliacao inteira com o botCircular e HP de verdade: ele anda rente as
+// paredes e apanha, e sem golpe as contas de dano passariam em branco.
+// `drenarACada` imita o navegador, que so esvazia a fila uma vez por QUADRO
+// (ate loop.maxPassosPorFrame ticks). So com 1 a contagem por fora e
+// confiavel: com mais, a fila pode estourar o teto e perder evento ja
+// processado.
+function correrComTelemetria(semente, { drenarACada = 1, ligada = true } = {}) {
+  const original = CONTEUDO.debug.relatorio;
+  CONTEUDO.debug.relatorio = ligada;
+  try {
+    const estado = novoEstado(semente);
+    iniciarRun(estado);
+    const contagem = {};
+    for (const tipo of TIPOS_CONTADOS) contagem[tipo] = 0;
+    let tick = 0;
+    let naCarta = 0;
+    let escolhidas = 0;
+    const comecou = Date.now();
+    while (!telaDeFim(estado) && tick < TICKS_AVALIACAO_COMPLETA + 2000) {
+      tick += 1;
+      botCircular(estado, tick);
+      try {
+        atualizar(estado, PASSO);
+      } catch (e) {
+        falhar(tick, `excecao na corrida do relatorio: ${e && e.stack ? e.stack : e}`);
+      }
+      if (estado.tela === TELAS.CARTA) {
+        naCarta += 1;
+        // Opcoes diferentes a cada carta: sempre a primeira esconderia um
+        // indice errado no registro da escolha.
+        if (naCarta >= TICKS_NA_CARTA && escolherCarta(estado, escolhidas % CONTEUDO.cartas.quantidade)) {
+          escolhidas += 1;
+          naCarta = 0;
+        }
+      }
+      if (tick % drenarACada === 0) {
+        for (const evento of estado.eventos) if (evento.tipo in contagem) contagem[evento.tipo] += 1;
+        estado.eventos.length = 0;
+      }
+    }
+    if (!telaDeFim(estado)) falhar(tick, `a corrida do relatorio nao terminou em ${tick} ticks`);
+    return { estado, contagem, tick, ms: Date.now() - comecou };
+  } finally {
+    CONTEUDO.debug.relatorio = original;
+  }
+}
+
+// Toda conta do registro contra o boletim e contra a contagem por fora.
+// Devolve o registro da avaliacao.
+function conferirContasDoRelatorio(corrida, semente) {
+  const { estado, contagem } = corrida;
+  const tel = estado.telemetria;
+  const onde = `relatorio (semente ${semente})`;
+  if (!tel || tel.partidas.length !== 1) {
+    falhar(0, `${onde}: esperava 1 partida gravada, veio ${tel ? tel.partidas.length : 'telemetria null'}`);
+  }
+  const partida = tel.partidas[0];
+  if (partida.avaliacoes.length !== 1) falhar(0, `${onde}: esperava 1 avaliacao na partida, veio ${partida.avaliacoes.length}`);
+  const reg = partida.avaliacoes[0];
+  const r = estado.run.resultado;
+
+  const jubilou = estado.tela === TELAS.JUBILADO;
+  const esperada = jubilou ? SITUACAO.JUBILADO : SITUACAO.APROVADO;
+  if (reg.situacao !== esperada) falhar(0, `${onde}: a tela e "${estado.tela}" e o registro diz "${reg.situacao}"`);
+  // Aprovado nao encerra a partida (a loja da fase 07 vem depois); jubilado encerra na hora.
+  const partidaEsperada = jubilou ? SITUACAO.JUBILADO : SITUACAO.EM_ANDAMENTO;
+  if (partida.situacao !== partidaEsperada) {
+    falhar(0, `${onde}: partida "${partida.situacao}" depois de uma avaliacao "${reg.situacao}" (esperava "${partidaEsperada}")`);
+  }
+  if (!reg.resultado || reg.resultado.kills !== r.kills || reg.resultado.nota !== r.nota) {
+    falhar(0, `${onde}: a copia do boletim no registro nao bate com estado.run.resultado`);
+  }
+
+  // A contagem por fora precisa bater com o boletim, senao e o teste que esta errado.
+  if (contagem['inimigo-morto'] !== r.kills) {
+    falhar(0, `${onde}: o proprio teste contou ${contagem['inimigo-morto']} mortes e o boletim ${r.kills}`);
+  }
+  const soma = (lista, campo) => lista.reduce((s, x) => s + x[campo], 0);
+  const contas = [
+    ['mortos por tipo de inimigo', soma(reg.inimigos, 'mortos'), r.kills],
+    ['mortes por arma', soma(reg.armas, 'mortes'), r.kills],
+    ['disparos', soma(reg.armas, 'disparos'), contagem['arma-disparo']],
+    ['acertos', soma(reg.armas, 'acertos'), contagem['arma-acerto']],
+    ['nascimentos', soma(reg.inimigos, 'nascidos'), contagem['inimigo-nasceu']],
+    ['golpes no jogador', reg.jogador.golpes, contagem['jogador-dano']],
+    ['golpes listados', reg.golpes.length, contagem['jogador-dano']],
+    ['cartas', reg.cartas.length, contagem['carta-aberta']],
+    ['subidas de nivel', reg.niveis.length, estado.player.nivel - 1],
+    ['cartas por nivel', reg.cartas.length, estado.player.nivel - 1],
+    ['mortos nas amostras', soma(reg.amostras, 'mortos'), r.kills],
+    ['nascidos nas amostras', soma(reg.amostras, 'nascidos'), contagem['inimigo-nasceu']],
+    ['xp solto = coletado + no chao', reg.xp.solto, reg.xp.coletado + reg.xp.noChaoFim],
+    ['nivel final', reg.final.nivel, estado.player.nivel],
+  ];
+  for (const [nome, obtido, esperado] of contas) {
+    if (obtido !== esperado) falhar(0, `${onde}: ${nome} = ${obtido}, esperava ${esperado} — evento perdido ou contado duas vezes`);
+  }
+  const danos = [
+    ['dano tomado', reg.jogador.danoTomado, r.danoTomado],
+    ['soma dos golpes', soma(reg.golpes, 'dano'), r.danoTomado],
+    ['soma das fontes', soma(reg.fontesDano, 'dano'), r.danoTomado],
+    ['dano nas amostras', soma(reg.amostras, 'danoTomado'), r.danoTomado],
+    ['tempo jogado', reg.tempoJogado, r.tempo],
+  ];
+  for (const [nome, obtido, esperado] of danos) {
+    if (Math.abs(obtido - esperado) > 0.05) falhar(0, `${onde}: ${nome} = ${obtido}, o boletim diz ${esperado}`);
+  }
+  if (reg.fontesDano.some((f) => f.fonte === FONTE_DESCONHECIDA)) {
+    falhar(0, `${onde}: golpe de fonte desconhecida numa partida em que so inimigo bate — o evento jogador-dano sumiu?`);
+  }
+  for (const i of reg.inimigos) {
+    if (i.nascidos - i.mortos - i.vivosFim < 0) {
+      falhar(0, `${onde}: ${i.id} com ${i.mortos} mortos + ${i.vivosFim} vivos passando de ${i.nascidos} nascidos`);
+    }
+  }
+  for (const [k, carta] of reg.cartas.entries()) {
+    if (carta.escolhida !== k % CONTEUDO.cartas.quantidade) {
+      falhar(0, `${onde}: a carta ${k + 1} registrou a opcao ${carta.escolhida} e o bot escolheu ${k % CONTEUDO.cartas.quantidade}`);
+    }
+    if (carta.decisao < (TICKS_NA_CARTA - 1) * PASSO - EPSILON) {
+      falhar(0, `${onde}: a carta ${k + 1} ficou ${TICKS_NA_CARTA} ticks aberta e registrou ${carta.decisao}s de decisao`);
+    }
+  }
+  const amostrasEsperadas = Math.floor(reg.tempoJogado / CONTEUDO.relatorio.amostraSegundos + 1e-6);
+  if (reg.amostras.length < amostrasEsperadas || reg.amostras.length > amostrasEsperadas + 1) {
+    falhar(0, `${onde}: ${reg.amostras.length} amostras em ${reg.tempoJogado}s (esperava ${amostrasEsperadas} ou +1)`);
+  }
+  for (let i = 1; i < reg.amostras.length; i += 1) {
+    if (!(reg.amostras[i].t > reg.amostras[i - 1].t)) falhar(0, `${onde}: amostra ${i} fora de ordem no tempo`);
+  }
+  const analise = analisarAvaliacao(reg);
+  if (analise.kills !== r.kills || analise.killsBoletim !== r.kills) {
+    falhar(0, `${onde}: a analise diz ${analise.kills} mortos e o boletim ${r.kills}`);
+  }
+  if (jubilou && (!reg.morte || !CONTEUDO.inimigos.some((i) => i.id === reg.morte.fonte))) {
+    falhar(0, `${onde}: jubilado por inimigo e a morte registrou a fonte ${JSON.stringify(reg.morte && reg.morte.fonte)}`);
+  }
+  return reg;
+}
+
+function checarRelatorio() {
+  const corrida = correrComTelemetria(SEMENTE_RELATORIO);
+  const reg = conferirContasDoRelatorio(corrida, SEMENTE_RELATORIO);
+  const jubilada = correrComTelemetria(SEMENTE_RELATORIO_JUBILADO);
+  const regJubilado = conferirContasDoRelatorio(jubilada, SEMENTE_RELATORIO_JUBILADO);
+  // Sem golpe nenhum as contas de dano e a atribuicao de fonte passam em branco.
+  if (reg.jogador.golpes + regJubilado.jogador.golpes === 0) {
+    falhar(0, `relatorio: as corridas das sementes ${SEMENTE_RELATORIO} e ${SEMENTE_RELATORIO_JUBILADO} nao levaram golpe — escolha sementes em que o botCircular apanha`);
+  }
+  const { estado } = corrida;
+  const tel = estado.telemetria;
+  const r = estado.run.resultado;
+  const onde = `relatorio (semente ${SEMENTE_RELATORIO})`;
+
+  // O cursor da fila: a mesma partida com a fila esvaziada so a cada quadro
+  // de maxPassosPorFrame ticks, como no navegador, grava exatamente o mesmo.
+  const porQuadro = correrComTelemetria(SEMENTE_RELATORIO, { drenarACada: CONTEUDO.loop.maxPassosPorFrame });
+  if (JSON.stringify(porQuadro.estado.telemetria.partidas) !== JSON.stringify(tel.partidas)) {
+    falhar(0, `${onde}: esvaziar a fila a cada ${CONTEUDO.loop.maxPassosPorFrame} ticks mudou a telemetria — o cursor de eventos perde ou repete evento`);
+  }
+
+  // So observa: desligada, nada e gravado e a partida e a MESMA, tick a tick.
+  const desligada = correrComTelemetria(SEMENTE_RELATORIO, { ligada: false });
+  if (desligada.estado.telemetria !== null) falhar(0, `${onde}: com debug.relatorio desligado a telemetria foi criada`);
+  const assinatura = (c) =>
+    JSON.stringify([c.tick, c.estado.tela, c.estado.run.resultado, c.estado.player.x, c.estado.player.y, c.estado.rng.s, c.estado.enemies.length]);
+  if (assinatura(desligada) !== assinatura(corrida)) {
+    falhar(0, `${onde}: ligar a telemetria mudou a partida (${assinatura(corrida)} contra ${assinatura(desligada)}) — ela escreve em algo que a simulacao le, ou sorteia`);
+  }
+
+  // Os tres escopos saem, com JSON valido e sem numero podre no texto.
+  const tamanhos = {};
+  for (const escopo of Object.values(ESCOPOS)) {
+    const rel = gerarRelatorio(estado, escopo);
+    if (!rel || typeof rel.texto !== 'string' || rel.texto.length === 0) falhar(0, `${onde}: gerarRelatorio("${escopo}") nao devolveu texto`);
+    for (const podre of ['NaN', 'undefined', 'Infinity', '[object Object]']) {
+      if (rel.texto.includes(podre)) {
+        const i = rel.texto.indexOf(podre);
+        falhar(0, `${onde}: o relatorio "${escopo}" tem "${podre}": ...${rel.texto.slice(Math.max(0, i - 80), i + 20)}...`);
+      }
+    }
+    const bloco = rel.texto.match(/```json\n([\s\S]*)\n```\n$/);
+    if (!bloco) falhar(0, `${onde}: o relatorio "${escopo}" nao termina com o bloco JSON`);
+    let dados;
+    try {
+      dados = JSON.parse(bloco[1]);
+    } catch (e) {
+      falhar(0, `${onde}: o JSON do relatorio "${escopo}" nao e valido: ${e.message}`);
+    }
+    if (dados.escopo !== escopo) falhar(0, `${onde}: o JSON do relatorio "${escopo}" diz escopo "${dados.escopo}"`);
+    const avJson = escopo === ESCOPOS.AVALIACAO ? dados.avaliacao : escopo === ESCOPOS.PARTIDA ? dados.partida.avaliacoes[0] : dados.partidas[0].avaliacoes[0];
+    if (!avJson || avJson.analise.kills !== r.kills || avJson.amostras.linhas.length !== reg.amostras.length) {
+      falhar(0, `${onde}: o JSON do relatorio "${escopo}" perdeu mortos ou amostras`);
+    }
+    if (avJson.amostras.linhas.some((linha) => linha.length !== avJson.amostras.colunas.length)) {
+      falhar(0, `${onde}: no relatorio "${escopo}" uma linha de amostra tem numero de colunas diferente do cabecalho`);
+    }
+    // Avaliacao e partida tem a tabela de resumo por avaliacao; a sessao mostra
+    // os mortos na tabela de partidas.
+    const marca = escopo === ESCOPOS.SESSAO ? `| ${r.kills} |` : `| Mortos | ${r.kills} (`;
+    if (!rel.texto.includes(marca)) falhar(0, `${onde}: o relatorio "${escopo}" nao mostra os ${r.kills} mortos ("${marca}")`);
+    tamanhos[escopo] = rel.texto.length;
+  }
+  if (gerarRelatorio(novoEstado(SEMENTE_RELATORIO), ESCOPOS.PARTIDA) !== null) {
+    falhar(0, `${onde}: um estado que nunca jogou gerou relatorio — devia devolver null`);
+  }
+
+  return { reg, regJubilado, tamanhos, msLigada: corrida.ms, msDesligada: desligada.ms };
+}
+
+// Os outros jeitos de uma avaliacao acabar: desistir pela pausa, morrer de
+// fonte sem evento, ser atropelada por outra partida — e o teto do historico.
+function checarRelatorioFinsAlternativos() {
+  const original = CONTEUDO.debug.relatorio;
+  CONTEUDO.debug.relatorio = true;
+  try {
+    const estado = novoEstado(SEMENTE + 16);
+    iniciarRun(estado);
+    for (let i = 0; i < 120; i += 1) atualizar(estado, PASSO);
+
+    // Quadros do navegador: so contam com a avaliacao rodando.
+    registrarQuadro(estado, 0.05, 3);
+    alternarPausa(estado);
+    registrarQuadro(estado, 30, CONTEUDO.loop.maxPassosPorFrame);
+    for (let i = 0; i < 10; i += 1) atualizar(estado, PASSO);
+    // O botao "Desistir" da pausa faz exatamente isto (main.js).
+    irParaTela(estado, TELAS.MENU);
+    atualizar(estado, PASSO);
+
+    const tel = estado.telemetria;
+    const primeira = tel.partidas[0];
+    const desistida = primeira.avaliacoes[0];
+    if (desistida.situacao !== SITUACAO.DESISTIU || primeira.situacao !== SITUACAO.DESISTIU) {
+      falhar(0, `relatorio: desistir pela pausa gravou avaliacao "${desistida.situacao}" e partida "${primeira.situacao}"`);
+    }
+    if (desistida.pausas !== 1 || Math.abs((desistida.telas.pausa || 0) - 10 * PASSO) > EPSILON) {
+      falhar(0, `relatorio: 1 pausa de 10 ticks virou ${desistida.pausas} pausa(s) e ${desistida.telas.pausa}s`);
+    }
+    if (desistida.quadros.quadros !== 1 || desistida.quadros.lentos !== 1) {
+      falhar(0, `relatorio: registrarQuadro contou ${desistida.quadros.quadros} quadro(s) (esperava so o de fora da pausa)`);
+    }
+    if (Math.abs(desistida.tempoJogado - 120 * PASSO) > 1e-6) {
+      falhar(0, `relatorio: 120 ticks de avaliacao viraram ${desistida.tempoJogado}s jogados`);
+    }
+
+    // Golpe fatal sem evento jogador-dano: o dano entra como fonte
+    // desconhecida em vez de sumir, e a partida fecha no mesmo tick.
+    iniciarRun(estado);
+    atualizar(estado, PASSO);
+    receberDano(estado, estado.player.hpMax * 2);
+    atualizar(estado, PASSO);
+    const segunda = tel.partidas[tel.partidas.length - 1];
+    const morta = segunda.avaliacoes[0];
+    if (morta.situacao !== SITUACAO.JUBILADO || segunda.situacao !== SITUACAO.JUBILADO) {
+      falhar(0, `relatorio: jubilar gravou avaliacao "${morta.situacao}" e partida "${segunda.situacao}"`);
+    }
+    if (!morta.morte || morta.morte.fonte !== FONTE_DESCONHECIDA || morta.golpes.length !== 1) {
+      falhar(0, `relatorio: o golpe fatal sem evento nao virou golpe de fonte desconhecida (${JSON.stringify(morta.morte)})`);
+    }
+
+    // Uma partida atropelada por outra sem passar pelo menu fica
+    // "interrompida", e o historico guarda so as mais recentes.
+    sairDoResultado(estado);
+    const teto = CONTEUDO.relatorio.historicoPartidas;
+    for (let i = 0; i < teto + 2; i += 1) {
+      iniciarRun(estado);
+      atualizar(estado, PASSO);
+    }
+    const iniciadas = 2 + teto + 2;
+    if (tel.partidas.length !== teto || tel.sessao.partidasDescartadas !== iniciadas - teto) {
+      falhar(0, `relatorio: ${iniciadas} partidas com teto ${teto} deixaram ${tel.partidas.length} guardadas e ${tel.sessao.partidasDescartadas} descartadas`);
+    }
+    if (tel.partidas[teto - 2].situacao !== SITUACAO.INTERROMPIDA) {
+      falhar(0, `relatorio: partida atropelada por outra ficou "${tel.partidas[teto - 2].situacao}"`);
+    }
+    for (const escopo of Object.values(ESCOPOS)) {
+      const rel = gerarRelatorio(estado, escopo);
+      if (!rel || rel.texto.includes('NaN') || rel.texto.includes('undefined')) {
+        falhar(0, `relatorio: o escopo "${escopo}" quebrou com partidas desistidas, jubiladas e interrompidas`);
+      }
+    }
+  } finally {
+    CONTEUDO.debug.relatorio = original;
+  }
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -2132,6 +2434,8 @@ const especializacao = checarArmasEspecializadas();
 const progressao = checarProgressao();
 const boletim = checarAvaliacaoCompleta();
 const estilos = checarCantoContraDesvio();
+const relatorio = checarRelatorio();
+checarRelatorioFinsAlternativos();
 
 const estado = novoEstado(SEMENTE);
 iniciarAvaliacao(estado);
@@ -2314,5 +2618,12 @@ console.log(
     // Insumo do balanceamento da fase 13 (tarefa 6 do contrato): cada arma
     // sozinha, no nivel maximo, 60s, corrida propria (SEMENTE+300+indice).
     `\n  arsenal especializado (60s cada, nivel maximo, corridas proprias): ` +
-    especializacao.map((r) => `${r.nome}=${r.kills}kills/${r.acertos}acertos`).join(' · ')
+    especializacao.map((r) => `${r.nome}=${r.kills}kills/${r.acertos}acertos`).join(' · ') +
+    // O relatorio de balanceamento (debug.relatorio): as contas fecharam com o
+    // boletim, e ligar ou desligar nao mudou a partida.
+    `\n  relatorio (circular, SEMENTE+23 e +19): ${relatorio.reg.situacao} com ${relatorio.reg.golpes.length} golpes` +
+    ` e ${relatorio.regJubilado.situacao} com ${relatorio.regJubilado.golpes.length}` +
+    ` · ${relatorio.reg.amostras.length} amostras · ${relatorio.reg.cartas.length} cartas` +
+    ` · texto ${Object.entries(relatorio.tamanhos).map(([e, n]) => `${e}=${(n / 1024).toFixed(0)}KB`).join(' ')}` +
+    ` · corrida ${relatorio.msLigada}ms ligada / ${relatorio.msDesligada}ms desligada`
 );

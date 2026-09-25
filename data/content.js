@@ -517,6 +517,49 @@ export const CONTEUDO = {
     // as armas equipadas com seus niveis. Pedido do checkpoint humano 1 para
     // dar feedback de balanceamento durante o desenvolvimento.
     boletimArmas: true,
+    // Telemetria da partida (src/telemetria.js) e os botoes que exportam o
+    // relatorio de balanceamento (src/relatorio.js) nas telas de fim e no
+    // menu. Pedido do usuario (todo.md): um relatorio completo para mandar a
+    // agentes que balanceiam o jogo. So observa — desligar nao muda um numero
+    // da simulacao, e o smoke prova isso rodando a mesma semente dos dois
+    // jeitos.
+    relatorio: true,
+  },
+
+  // Parametros do INSTRUMENTO de medida (debug.relatorio), nao do jogo: nada
+  // aqui muda a partida, so como ela e observada e resumida. Moram aqui pela
+  // regra 4 — nenhum numero solto em .js de logica.
+  relatorio: {
+    amostraSegundos: 1, // resolucao da linha do tempo guardada no JSON
+    janelaTabela: 5, // a tabela em Markdown agrupa as amostras nesta janela (s)
+    raioPerto: 120, // px entre centros: inimigo "perto" do jogador (pressao)
+    margemBorda: 60, // px da parede ate o corpo do jogador: "rente a borda"
+    margemCanto: 140, // px de DUAS paredes ao mesmo tempo: "no canto"
+    velocidadeParado: 20, // px/s: abaixo disso o jogador conta como parado
+    gradeColunas: 8, // mapa de calor da posicao do jogador
+    gradeLinhas: 4,
+    marcosNivel: 15, // s: o relatorio mostra o nivel a cada tantos segundos
+    inicioSegundos: 15, // "os primeiros 15s", que o design §3 chama de indefesos
+    janelaDano: 10, // s: tamanho da janela da "pior sequencia de dano"
+    maxRegistros: 400, // teto de linhas por lista (golpes, cartas, amostras) por avaliacao
+    historicoPartidas: 12, // partidas guardadas na sessao; a mais antiga sai
+    // Alvos do design que as leituras automaticas comparam.
+    alvos: {
+      nivel: 5, // design §3: nivel 5-6...
+      ate: 60, // ...em 60s
+    },
+    // Limiares das leituras automaticas. Sao so gatilhos de "vale olhar":
+    // o relatorio mostra o numero de qualquer jeito.
+    alertas: {
+      fracaoCanto: 0.35, // tempo no canto acima disto: jogou acampado
+      fracaoBorda: 0.5, // tempo rente a borda acima disto
+      fracaoParado: 0.4, // tempo parado acima disto
+      participacaoArma: 0.1, // arma equipada ha tempo que causou menos que isto do dano
+      tempoMinimoArma: 15, // s equipada antes de a participacao contar
+      overkill: 0.3, // fracao do dano nominal desperdicada em quem ja ia morrer
+      coletaXp: 0.5, // fracao do XP solto que foi coletada, abaixo disto
+      fps: 50, // fps medio abaixo disto: a maquina pesou na dificuldade
+    },
   },
 
   // HUD. Numeros de apresentacao que o ui.js le; o que o canvas desenha fica
@@ -562,6 +605,15 @@ export const CONTEUDO = {
       // Linha de debug do boletim (debug.boletimArmas): "Nível 7 · ☕ Café nv3".
       nivelJogador: 'Nível',
       nivelArma: 'nv',
+    },
+    // Retorno dos botoes de exportar relatorio (debug.relatorio). O texto do
+    // relatorio em si e ferramenta de desenvolvimento e mora em
+    // src/relatorio.js, como a saida do smoke mora em test/.
+    relatorio: {
+      baixado: '✓ arquivo baixado',
+      copiado: 'texto copiado',
+      semCopia: 'não deu para copiar, use o arquivo',
+      vazio: 'nada registrado ainda',
     },
   },
 };
@@ -1062,6 +1114,46 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
   }
 
+  // Instrumento do relatorio. Nada aqui mexe no jogo, mas um zero no lugar
+  // errado vira divisao por zero no meio do relatorio — e o relatorio e o que
+  // os agentes de balanceamento vao ler como fato.
+  if (exigeObjeto(conteudo.relatorio, 'relatorio')) {
+    const r = conteudo.relatorio;
+    exigeNumero(r.amostraSegundos, 'relatorio.amostraSegundos', { min: 1 / 60 });
+    if (exigeNumero(r.janelaTabela, 'relatorio.janelaTabela', { min: 1 / 60 })) {
+      if (typeof r.amostraSegundos === 'number' && r.janelaTabela < r.amostraSegundos) {
+        erros.push(
+          `relatorio.janelaTabela: ${r.janelaTabela}s e menor que relatorio.amostraSegundos ` +
+            `(${r.amostraSegundos}s) — a tabela teria janelas sem amostra nenhuma`
+        );
+      }
+    }
+    exigeNumero(r.raioPerto, 'relatorio.raioPerto', { min: 1 });
+    exigeNumero(r.margemBorda, 'relatorio.margemBorda', { min: 0 });
+    exigeNumero(r.margemCanto, 'relatorio.margemCanto', { min: 0 });
+    exigeNumero(r.velocidadeParado, 'relatorio.velocidadeParado', { min: 0 });
+    exigeNumero(r.marcosNivel, 'relatorio.marcosNivel', { min: 1 });
+    exigeNumero(r.inicioSegundos, 'relatorio.inicioSegundos', { min: 1 });
+    exigeNumero(r.janelaDano, 'relatorio.janelaDano', { min: 1 });
+    for (const campo of ['gradeColunas', 'gradeLinhas', 'maxRegistros', 'historicoPartidas']) {
+      const limites = campo.startsWith('grade') ? { min: 1, max: 32 } : { min: 1 };
+      if (exigeNumero(r[campo], `relatorio.${campo}`, limites) && !Number.isInteger(r[campo])) {
+        erros.push(`relatorio.${campo}: ${r[campo]} precisa ser inteiro`);
+      }
+    }
+    if (exigeObjeto(r.alvos, 'relatorio.alvos')) {
+      exigeNumero(r.alvos.nivel, 'relatorio.alvos.nivel', { min: 2 });
+      exigeNumero(r.alvos.ate, 'relatorio.alvos.ate', { min: 1 });
+    }
+    if (exigeObjeto(r.alertas, 'relatorio.alertas')) {
+      for (const campo of ['fracaoCanto', 'fracaoBorda', 'fracaoParado', 'participacaoArma', 'overkill', 'coletaXp']) {
+        exigeNumero(r.alertas[campo], `relatorio.alertas.${campo}`, { min: 0, max: 1 });
+      }
+      exigeNumero(r.alertas.tempoMinimoArma, 'relatorio.alertas.tempoMinimoArma', { min: 0 });
+      exigeNumero(r.alertas.fps, 'relatorio.alertas.fps', { min: 1 });
+    }
+  }
+
   // HUD.
   if (exigeObjeto(conteudo.hud, 'hud')) {
     const maiorDuracao = Array.isArray(conteudo.periodos)
@@ -1098,6 +1190,13 @@ export function validarConteudo(conteudo = CONTEUDO) {
       for (const campo of campos) {
         if (typeof conteudo.textos.resultado[campo] !== 'string' || conteudo.textos.resultado[campo] === '') {
           erros.push(`textos.resultado.${campo}: ausente ou vazio`);
+        }
+      }
+    }
+    if (exigeObjeto(conteudo.textos.relatorio, 'textos.relatorio')) {
+      for (const campo of ['baixado', 'copiado', 'semCopia', 'vazio']) {
+        if (typeof conteudo.textos.relatorio[campo] !== 'string' || conteudo.textos.relatorio[campo] === '') {
+          erros.push(`textos.relatorio.${campo}: ausente ou vazio`);
         }
       }
     }

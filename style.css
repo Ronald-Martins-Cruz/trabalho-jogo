@@ -359,6 +359,45 @@ body {
   text-shadow: 0 0 0.5em rgba(255, 93, 122, 0.6);
 }
 
+/* ------------------------------------------------------------ relatorio */
+
+/* Ferramenta de desenvolvimento (debug.relatorio), nao parte do jogo: fica
+   presa no rodape da tela, fora do fluxo do boletim, com borda tracejada para
+   ninguem confundir com interface de verdade. */
+.relatorio-barra {
+  position: absolute;
+  left: 50%;
+  bottom: 0.8em;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.35em 0.8em;
+  font-size: 0.72em;
+  white-space: nowrap;
+  color: var(--tinta-fraca);
+  border: 1px dashed var(--borda);
+  border-radius: 0.35em;
+  background: rgba(6, 7, 15, 0.7);
+}
+
+.relatorio-rotulo {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.botao-relatorio {
+  font-size: 1em;
+  letter-spacing: 0.06em;
+  padding: 0.3em 0.9em;
+  text-transform: none;
+}
+
+.relatorio-status {
+  min-width: 1em;
+  color: var(--xp);
+}
+
 /* --------------------------------------------------------------- cartas */
 
 /* A tela de carta e a primeira camada de DOM por cima do canvas que o jogador

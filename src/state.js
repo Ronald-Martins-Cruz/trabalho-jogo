@@ -43,6 +43,12 @@ export function novoEstado(seed = 1) {
     cartas: novasCartas(),
 
     run: novaRun(),
+
+    // O que o relatorio de balanceamento le (debug.relatorio). Fica FORA de
+    // `run` porque atravessa as partidas da sessao inteira, e nasce preguicoso
+    // em src/telemetria.js no primeiro tick observado — criar aqui fecharia o
+    // ciclo state.js <-> telemetria.js. Nenhum sistema do jogo le daqui.
+    telemetria: null,
   };
   return estado;
 }

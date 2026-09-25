@@ -215,8 +215,9 @@ function orbital(estado, arma, dados, nivel, dt) {
       if (emCooldown(arma.golpes, e, agora)) continue;
 
       lembrarGolpe(arma.golpes, e, agora + nivel.intervaloDano, agora);
+      const efetivo = Math.min(nivel.dano, e.hp);
       const matou = aplicarDano(estado, e, nivel.dano);
-      emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, matou });
+      emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, efetivo, matou });
       atingiu = true;
     }
   }
@@ -270,6 +271,7 @@ function ondaArea(estado, arma, dados, nivel, dt) {
     const d2 = dx * dx + dy * dy;
     if (d2 > soma * soma) continue;
 
+    const efetivo = Math.min(nivel.dano, e.hp);
     const matou = aplicarDano(estado, e, nivel.dano);
     if (!matou) {
       const d = Math.sqrt(d2);
@@ -278,7 +280,7 @@ function ondaArea(estado, arma, dados, nivel, dt) {
       e.x += dirX * nivel.empurrao;
       e.y += dirY * nivel.empurrao;
     }
-    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, matou });
+    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, efetivo, matou });
   }
   // angulo:0 porque a onda nao tem direcao — e simetrica ao redor do jogador.
   emitir(estado, 'arma-disparo', { arma: dados.id, x: player.x, y: player.y, angulo: 0 });
@@ -326,8 +328,9 @@ function feixe(estado, arma, dados, nivel, dt) {
     const limite = meiaLargura + e.raio;
     if (perpX * perpX + perpY * perpY > limite * limite) continue;
 
+    const efetivo = Math.min(dano, e.hp);
     const matou = aplicarDano(estado, e, dano);
-    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano, matou });
+    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano, efetivo, matou });
     atingiu = true;
   }
   return atingiu;
@@ -454,8 +457,11 @@ function colidirProjetil(estado, p) {
     lembrarAtingido(p, e);
     const x = e.x;
     const y = e.y;
+    // O que o golpe realmente tirou de HP. A diferenca para `dano` e o
+    // desperdicio (overkill) que o relatorio mede por arma.
+    const efetivo = Math.min(p.dano, e.hp);
     const matou = aplicarDano(estado, e, p.dano);
-    emitir(estado, 'arma-acerto', { arma: p.arma, x, y, dano: p.dano, matou });
+    emitir(estado, 'arma-acerto', { arma: p.arma, x, y, dano: p.dano, efetivo, matou });
 
     if (p.perfuracao <= 0) return true;
     p.perfuracao -= 1;
