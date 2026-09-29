@@ -1,6 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { maxItensLoja, TELAS } from './state.js';
-import { dadosDoCoringa } from './jokers.js';
+import { coringasDesligados, dadosDoCoringa } from './jokers.js';
 import {
   LINHA_VITRINE,
   posicaoRerolar,
@@ -53,6 +53,18 @@ export function criarUi(doc) {
     lojaAviso: doc.getElementById('loja-aviso'),
     botaoRerolar: doc.getElementById('botao-rerolar'),
     botaoSeguir: doc.getElementById('botao-seguir'),
+    hudModificadores: doc.getElementById('hud-modificadores'),
+    anuncio: doc.getElementById('anuncio'),
+    anuncioNovoPeriodo: doc.getElementById('anuncio-novo-periodo'),
+    anuncioPeriodo: doc.getElementById('anuncio-periodo'),
+    anuncioMateria: doc.getElementById('anuncio-materia'),
+    anuncioAvaliacao: doc.getElementById('anuncio-avaliacao'),
+    anuncioDuracao: doc.getElementById('anuncio-duracao'),
+    anuncioModificadores: doc.getElementById('anuncio-modificadores'),
+    anuncioSemModificador: doc.getElementById('anuncio-sem-modificador'),
+    botaoComecar: doc.getElementById('botao-comecar'),
+    tcc: doc.getElementById('tcc'),
+    botaoTcc: doc.getElementById('botao-tcc'),
   };
 
   // Barras de relatorio (debug.relatorio): uma em cada tela de fim e uma no
@@ -322,12 +334,70 @@ export function criarUi(doc) {
     }
   }
 
-  function ligarBotoes({ jogar, continuar, menu, resultado, jubilado }) {
+  // --------------------------------------------------------------- anuncio
+  // Mesmo padrao das cartas e da loja: um slot por modificador que uma
+  // avaliacao pode sortear (o maior `modificadores` de CONTEUDO.periodos),
+  // montados uma vez e so trocando de texto.
+  const slotsModificador = [];
+
+  function montarAnuncio() {
+    if (!el.anuncioModificadores || slotsModificador.length > 0) return;
+    let maximo = 0;
+    for (const periodo of CONTEUDO.periodos) {
+      for (const av of periodo.avaliacoes) if (av.modificadores > maximo) maximo = av.modificadores;
+    }
+    for (let i = 0; i < maximo; i += 1) {
+      const caixa = doc.createElement('div');
+      caixa.className = 'anuncio-modificador';
+      const emoji = span('anuncio-mod-emoji');
+      const nome = span('anuncio-mod-nome');
+      const descricao = span('anuncio-mod-descricao');
+      caixa.append(emoji, nome, descricao);
+      el.anuncioModificadores.appendChild(caixa);
+      slotsModificador.push({ caixa, emoji, nome, descricao });
+    }
+  }
+
+  montarAnuncio();
+
+  function sincronizarAnuncio(estado) {
+    const prox = estado.run.proxima;
+    const periodo = CONTEUDO.periodos[prox.periodoIndex];
+    const dados = periodo ? periodo.avaliacoes[prox.avaliacaoIndex] : null;
+    if (!dados) return;
+    visivel(el.anuncioNovoPeriodo, prox.avaliacaoIndex === 0);
+    texto(el.anuncioPeriodo, periodo.nome);
+    texto(el.anuncioMateria, dados.materia);
+    texto(el.anuncioAvaliacao, dados.nome);
+    texto(el.anuncioDuracao, formatarTempo(dados.duracao));
+    for (let i = 0; i < slotsModificador.length; i += 1) {
+      const slot = slotsModificador[i];
+      const mod = dadosDoModificador(prox.modificadores[i]);
+      visivel(slot.caixa, Boolean(mod));
+      if (!mod) continue;
+      escrever(slot.emoji, mod.emoji);
+      escrever(slot.nome, mod.nome);
+      escrever(slot.descricao, mod.descricao);
+    }
+    const nenhum = prox.modificadores.length === 0;
+    texto(el.anuncioSemModificador, nenhum ? CONTEUDO.textos.anuncio.semModificador : '');
+    visivel(el.anuncioSemModificador, nenhum);
+  }
+
+  function ligarBotoes({ jogar, continuar, menu, resultado, jubilado, comecar, tcc }) {
     if (el.botaoJogar && jogar) el.botaoJogar.addEventListener('click', jogar);
     if (el.botaoContinuar && continuar) el.botaoContinuar.addEventListener('click', continuar);
     if (el.botaoMenu && menu) el.botaoMenu.addEventListener('click', menu);
     if (el.botaoResultado && resultado) el.botaoResultado.addEventListener('click', resultado);
     if (el.botaoJubilado && jubilado) el.botaoJubilado.addEventListener('click', jubilado);
+    // O foco sai do botao depois do clique: o Enter seguinte nao pode
+    // "clicar" de novo num botao que ja nao esta na tela.
+    const soltando = (botao, acao) => () => {
+      acao();
+      soltarFoco(botao);
+    };
+    if (el.botaoComecar && comecar) el.botaoComecar.addEventListener('click', soltando(el.botaoComecar, comecar));
+    if (el.botaoTcc && tcc) el.botaoTcc.addEventListener('click', soltando(el.botaoTcc, tcc));
   }
 
   // `gerar(escopo)` devolve { nome, texto } ou null (nada gravado ainda). O
@@ -387,7 +457,7 @@ export function criarUi(doc) {
     const r = estado.run.resultado;
     const t = CONTEUDO.textos.resultado;
     texto(el.resultadoPeriodo, r.periodo);
-    texto(el.resultadoAvaliacao, r.nome);
+    texto(el.resultadoAvaliacao, nomeDaAvaliacao(r));
     texto(el.resultadoNota, formatarNota(r.nota));
     texto(el.resultadoConceito, `${t.conceito} ${r.conceito}`);
     texto(el.resultadoDecomposicao, decomposicaoDaNota(r));
@@ -412,6 +482,7 @@ export function criarUi(doc) {
     const noResultado = estado.tela === TELAS.RESULTADO;
     const noJubilado = estado.tela === TELAS.JUBILADO;
     const naLoja = estado.tela === TELAS.LOJA;
+    const noAnuncio = estado.tela === TELAS.ANUNCIO;
     const emJogo = estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.PAUSA || naCarta;
     visivel(el.menu, estado.tela === TELAS.MENU);
     visivel(el.hud, emJogo);
@@ -420,8 +491,11 @@ export function criarUi(doc) {
     visivel(el.resultado, noResultado);
     visivel(el.jubilado, noJubilado);
     visivel(el.loja, naLoja);
+    visivel(el.anuncio, noAnuncio);
+    visivel(el.tcc, estado.tela === TELAS.TCC);
     if (naCarta) sincronizarCartas(estado);
     if (naLoja) sincronizarLoja(estado);
+    if (noAnuncio) sincronizarAnuncio(estado);
     if (noResultado) sincronizarResultado(estado);
     if (noJubilado) sincronizarJubilado(estado);
     sincronizarRelatorio(estado);
@@ -434,8 +508,12 @@ export function criarUi(doc) {
     texto(el.hudCoringas, emojisDosCoringas(estado.run.coringas));
 
     const av = estado.run.avaliacao;
+    // A regra `coringas` 0 (Prova sem Consulta) esmaece os coringas no HUD:
+    // o jogador ve que continuam dele, e que nao valem nesta prova.
+    classe(el.hudCoringas, 'desligados', coringasDesligados(estado));
+    texto(el.hudModificadores, emojisDosModificadores(av.modificadores));
     texto(el.timer, formatarTempo(av.restante));
-    texto(el.avaliacaoNome, av.nome);
+    texto(el.avaliacaoNome, nomeDaAvaliacao(av));
     texto(el.periodoNome, av.periodo);
     // O unico aviso de "esta acabando" que existe sem ficar lendo o numero.
     // Sai do ESTADO (av.restante), como o realce da carta sai de
@@ -537,6 +615,28 @@ export function rotuloDeVenda(inst, valor, textos = CONTEUDO.textos.loja, simbol
 // "Rerrolar ◉ 15", ou "Rerrolar grátis" enquanto houver reroll gratis (A).
 export function rotuloDoReroll(preco, textos = CONTEUDO.textos.loja, simbolo = CONTEUDO.textos.resultado.simboloCredito) {
   return preco > 0 ? `${textos.rerolar} ${simbolo} ${preco}` : `${textos.rerolar} ${textos.gratis}`;
+}
+
+// "Cálculo I · Avaliação 1": a materia e o nome, para o HUD e o boletim (a
+// avaliacao e o resultado tem os dois campos).
+export function nomeDaAvaliacao(av, textos = CONTEUDO.textos.resultado) {
+  return av.materia ? `${av.materia}${textos.separador}${av.nome}` : av.nome;
+}
+
+export function dadosDoModificador(id, lista = CONTEUDO.modificadores) {
+  if (!id) return null;
+  for (let i = 0; i < lista.length; i += 1) if (lista[i].id === id) return lista[i];
+  return null;
+}
+
+// "🪑 🕕": os modificadores da avaliacao, no HUD.
+export function emojisDosModificadores(ids, lista = CONTEUDO.modificadores) {
+  const partes = [];
+  for (const id of ids) {
+    const dados = dadosDoModificador(id, lista);
+    if (dados) partes.push(dados.emoji);
+  }
+  return partes.join(' ');
 }
 
 // "🔋 📚 🏥": os coringas da run, no canto do HUD.

@@ -33,8 +33,36 @@
           <span id="hp-texto" class="barra-texto">100/100</span>
         </div>
       </div>
-      <!-- Os coringas da run, em emoji. Vazio sem coringa. -->
+      <!-- Os coringas da run, em emoji. Vazio sem coringa. Esmaecidos quando a
+           avaliação os desliga (Prova sem Consulta). -->
       <div id="hud-coringas" class="hud-coringas"></div>
+      <!-- Os modificadores desta avaliação, em emoji: o lembrete do anúncio. -->
+      <div id="hud-modificadores" class="hud-modificadores"></div>
+    </div>
+
+    <!-- Anúncio: antes de cada avaliação. Os slots de modificador são montados
+         uma vez por ui.js e só trocam de conteúdo. -->
+    <div id="anuncio" class="camada anuncio oculto">
+      <p id="anuncio-novo-periodo" class="anuncio-novo-periodo">Começa o semestre</p>
+      <p id="anuncio-periodo" class="anuncio-periodo">1º Período</p>
+      <h2 id="anuncio-materia" class="titulo-anuncio">Cálculo I</h2>
+      <p class="anuncio-linha">
+        <span id="anuncio-avaliacao">Avaliação 1</span> ·
+        <span class="rotulo">duração</span> <span id="anuncio-duracao">1:00</span>
+      </p>
+      <div id="anuncio-modificadores" class="anuncio-modificadores"></div>
+      <p id="anuncio-sem-modificador" class="anuncio-sem-modificador"></p>
+      <button id="botao-comecar" class="botao botao-destaque" type="button">Começar</button>
+      <p class="dica">Enter ou Espaço para começar</p>
+    </div>
+
+    <!-- TCC: provisório até A Banca (fase 10). -->
+    <div id="tcc" class="camada tcc oculto">
+      <h2 class="titulo-tcc">TCC</h2>
+      <p class="subtitulo">Você sobreviveu aos três períodos.</p>
+      <p class="decomposicao">A Banca ainda está sendo convocada. Por enquanto, a graduação termina aqui.</p>
+      <button id="botao-tcc" class="botao botao-destaque" type="button">Voltar ao menu</button>
+      <p class="dica">Enter ou Espaço para voltar</p>
     </div>
 
     <!-- Menu -->
@@ -42,7 +70,7 @@
       <h1 class="titulo">Semana de Provas</h1>
       <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
       <button id="botao-jogar" class="botao botao-destaque" type="button">Jogar</button>
-      <p class="dica">WASD ou setas para mover · ESC pausa · o resto é sorte</p>
+      <p class="dica">3 períodos · 9 avaliações · uma loja depois de cada · WASD ou setas para mover · ESC pausa</p>
       <!-- Só com CONTEUDO.debug.relatorio ligado e alguma partida já jogada. -->
       <div class="relatorio-barra oculto" data-relatorio-barra data-relatorio-menu>
         <span class="relatorio-rotulo">Relatório</span>

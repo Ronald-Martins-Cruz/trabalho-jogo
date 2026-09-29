@@ -16,6 +16,8 @@ export const TELAS = {
   RESULTADO: 'resultado', // sobreviveu ao cronometro: nota, conceito, creditos
   JUBILADO: 'jubilado', // o HP zerou
   LOJA: 'loja', // entre avaliacoes, depois de um boletim aprovado (fase 07)
+  ANUNCIO: 'anuncio', // antes de cada avaliacao: materia, duracao, modificadores (fase 08)
+  TCC: 'tcc', // depois da loja do 3º periodo. Provisoria ate a fase 10 (A Banca)
 };
 
 export function novoEstado(seed = 1) {
@@ -101,6 +103,7 @@ export function novasCartas() {
     escolha: null, // indice escolhido; a simulacao consome e zera
     versao: 0, // muda a cada sorteio novo; e como a UI sabe que precisa redesenhar
     escolhidas: 0, // quantas cartas o jogador pegou nesta avaliacao
+    abertaEm: 0, // estado.tempo em que a carta atual abriu (cartas.atrasoEntrada)
   };
 }
 
@@ -155,6 +158,9 @@ export function novaRun() {
     nota: 0,
     conceito: null,
     jubilado: false,
+    // A avaliacao anunciada (tela ANUNCIO) e ainda nao comecada: run.js sorteia
+    // os modificadores aqui e comecarProxima() os entrega a comecarAvaliacao.
+    proxima: { periodoIndex: 0, avaliacaoIndex: 0, modificadores: [], abertaEm: 0 },
     avaliacao: novaAvaliacao(0, 0),
     resultado: novoResultado(),
   };
@@ -168,6 +174,7 @@ export function novoResultado() {
   return {
     id: '',
     nome: '',
+    materia: '',
     periodo: '',
     motivo: '', // 'tempo' (aprovado) ou 'jubilado'
     aprovado: false,
@@ -189,21 +196,35 @@ export function novoResultado() {
   };
 }
 
-export function novaAvaliacao(periodoIndex, avaliacaoIndex) {
+const SEM_MODIFICADORES = [];
+
+// Os dados de content.js de uma avaliacao da run. Degradar em silencio aqui
+// daria uma avaliacao de duracao 0: ela encerraria no primeiro tick e a run
+// viraria um moinho invisivel, com os testes verdes.
+export function dadosDaAvaliacao(periodoIndex, avaliacaoIndex) {
   const periodo = CONTEUDO.periodos[periodoIndex];
   const dados = periodo ? periodo.avaliacoes[avaliacaoIndex] : null;
-  // Degradar em silencio aqui daria uma avaliacao de duracao 0: ela encerraria
-  // no primeiro tick e a run viraria um moinho invisivel, com os testes verdes.
   if (!dados) {
     throw new Error(
-      `novaAvaliacao: nao existe periodos[${periodoIndex}].avaliacoes[${avaliacaoIndex}] em content.js ` +
+      `dadosDaAvaliacao: nao existe periodos[${periodoIndex}].avaliacoes[${avaliacaoIndex}] em content.js ` +
         `(${CONTEUDO.periodos.length} periodos). Cheque os limites antes de avancar a run.`
     );
   }
+  return dados;
+}
+
+// `modificadores` sao ids de CONTEUDO.modificadores (o sorteio e de run.js).
+// A avaliacao guarda uma copia deles e as REGRAS ja combinadas: o jogo inteiro
+// le av.regras e nenhum sistema sabe que modificador existe.
+export function novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores = SEM_MODIFICADORES) {
+  const periodo = CONTEUDO.periodos[periodoIndex];
+  const dados = dadosDaAvaliacao(periodoIndex, avaliacaoIndex);
   const { duracao } = dados;
+  const regras = regrasDaAvaliacao(dados, modificadores);
   return {
     id: dados.id,
     nome: dados.nome,
+    materia: dados.materia,
     periodo: periodo.nome,
     tipo: dados.tipo,
     duracao,
@@ -212,7 +233,34 @@ export function novaAvaliacao(periodoIndex, avaliacaoIndex) {
     kills: 0,
     danoTomado: 0,
     concluida: false,
+    modificadores: modificadores.slice(),
+    regras,
+    arena: arenaDaRegra(regras.arena),
+    relogioPerdaHp: 0, // segundos desde a ultima perda de HP (regras.perdaHp)
   };
+}
+
+// Copia das regras neutras, depois o `dificuldade` da propria avaliacao, depois
+// cada modificador: `fatores` multiplicam, `somas` somam.
+export function regrasDaAvaliacao(dados, modificadores = SEM_MODIFICADORES, lista = CONTEUDO.modificadores) {
+  const regras = { ...CONTEUDO.regras };
+  if (typeof dados.dificuldade === 'number') regras.dificuldade *= dados.dificuldade;
+  for (let i = 0; i < modificadores.length; i += 1) {
+    const mod = lista.find((m) => m.id === modificadores[i]);
+    if (!mod) throw new Error(`regrasDaAvaliacao: modificador "${modificadores[i]}" nao existe em content.js`);
+    if (mod.fatores) for (const chave of Object.keys(mod.fatores)) regras[chave] *= mod.fatores[chave];
+    if (mod.somas) for (const chave of Object.keys(mod.somas)) regras[chave] += mod.somas[chave];
+  }
+  return regras;
+}
+
+// O retangulo em que o jogador anda, centrado no canvas. Com regras.arena 1 e
+// o canvas inteiro, como sempre foi.
+function arenaDaRegra(fator) {
+  const { largura, altura } = CONTEUDO.arena;
+  const margemX = (largura * (1 - fator)) / 2;
+  const margemY = (altura * (1 - fator)) / 2;
+  return { esquerda: margemX, topo: margemY, direita: largura - margemX, base: altura - margemY };
 }
 
 // Unica porta de entrada da fila de eventos. Descarta o mais antigo ao bater
@@ -230,12 +278,18 @@ export function irParaTela(estado, tela) {
 }
 
 // Prepara uma avaliacao do zero: pools limpas, player inteiro, timer cheio.
-// run.js assume esta funcao na fase 08, quando a run passa a ter progressao.
-export function iniciarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0) {
+// Numa run, quem chama e run.js comecarAvaliacao() — por aqui direto a
+// avaliacao roda sem coringas e sem a arma inicial (os testes usam isso para
+// montar cenario com uma arma so).
+export function iniciarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0, modificadores = SEM_MODIFICADORES) {
   estado.run.periodoIndex = periodoIndex;
   estado.run.avaliacaoIndex = avaliacaoIndex;
-  estado.run.avaliacao = novaAvaliacao(periodoIndex, avaliacaoIndex);
+  estado.run.avaliacao = novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores);
   estado.player = novoPlayer();
+  // No centro da arena desta avaliacao (a Sala Lotada encolhe em volta dele).
+  const arena = estado.run.avaliacao.arena;
+  estado.player.x = (arena.esquerda + arena.direita) / 2;
+  estado.player.y = (arena.topo + arena.base) / 2;
   estado.cartas = novasCartas();
   // Nunca esvazie essas colecoes na mao: elas sao as listas de ativos das
   // pools, e `length = 0` tira os objetos de `ativos` sem devolve-los a

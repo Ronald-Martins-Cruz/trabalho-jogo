@@ -60,8 +60,17 @@ function abrirCarta(estado) {
   // `versao` muda a cada sorteio: e como a UI percebe que a carta seguinte da
   // fila entrou, ja que a tela continua sendo a mesma.
   estado.cartas.versao += 1;
+  estado.cartas.abertaEm = estado.tempo;
   irParaTela(estado, TELAS.CARTA);
   emitir(estado, 'carta-aberta', estado.player.nivel);
+}
+
+// O atraso de abertura da carta (cartas.atrasoEntrada), igual ao da loja:
+// vale para cada carta da fila, porque a seguinte abre no lugar da anterior
+// sem trocar de tela. Quem checa e main.js, antes de escolherCarta — o smoke
+// escolhe direto, sem relogio.
+export function cartaLiberada(estado) {
+  return estado.tela === TELAS.CARTA && estado.tempo - estado.cartas.abertaEm >= CONTEUDO.cartas.atrasoEntrada;
 }
 
 function resolverEscolha(estado) {

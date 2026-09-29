@@ -69,6 +69,10 @@ function contextoInimigos(estado) {
   return scratch.inimigos;
 }
 
+// Cobre o canvas inteiro, uma vez so: a arena de uma avaliacao (av.arena) e
+// sempre um retangulo dentro dele, e quem esta fora cai na celula da borda
+// pelo grampo de colunaDe/linhaDe. Por isso a Sala Lotada nao precisa de
+// grade nova — so usa menos celulas.
 function criarGrade() {
   const { largura, altura } = CONTEUDO.arena;
   const passo = CONTEUDO.separacao.gradePasso;
@@ -96,7 +100,10 @@ function atualizarSpawn(estado, pool, scratchInimigos, dt) {
 
   const cfg = CONTEUDO.spawn;
   const curva = cfg.curvas[cfg.curvaPadrao];
-  const dificuldade = CONTEUDO.ajuste.dificuldade;
+  // A global (Mestrado/Doutorado um dia) vezes a da avaliacao: a regra
+  // `dificuldade` ja traz o numero da avaliacao em content.js e o de qualquer
+  // modificador que mexa nela (state.js, regrasDaAvaliacao).
+  const dificuldade = CONTEUDO.ajuste.dificuldade * av.regras.dificuldade;
 
   scratchInimigos.relogio += dt;
   const intervalo = Math.max(
@@ -145,12 +152,15 @@ export function spawnInimigo(estado, tipoId = null) {
   const tipo = tipoId === null ? sortearTipo(estado.rng) : acharTipo(tipoId);
   if (!tipo) return null;
 
+  // As regras da avaliacao (Professor Rigido, Sexta as 18h) multiplicam os
+  // numeros do tipo na hora do nascimento — e so aqui que eles entram.
+  const av = estado.run.avaliacao;
   const inimigo = pool.obter();
   inimigo.tipo = tipo.id;
   inimigo.emoji = tipo.emoji;
-  inimigo.hpMax = tipo.hp;
-  inimigo.hp = tipo.hp;
-  inimigo.velocidade = tipo.velocidade;
+  inimigo.hpMax = tipo.hp * av.regras.hpInimigo;
+  inimigo.hp = inimigo.hpMax;
+  inimigo.velocidade = tipo.velocidade * av.regras.velocidadeInimigo;
   inimigo.dano = tipo.dano;
   inimigo.raio = tipo.raio;
   inimigo.xp = tipo.xp;
@@ -158,8 +168,8 @@ export function spawnInimigo(estado, tipoId = null) {
   inimigo.vy = 0;
   inimigo.empurraoX = 0;
   inimigo.empurraoY = 0;
-  inimigo.nascidoEm = estado.run.avaliacao.decorrido;
-  posicionarNaBorda(inimigo, estado.rng);
+  inimigo.nascidoEm = av.decorrido;
+  posicionarNaBorda(inimigo, estado.rng, av.arena);
   emitir(estado, 'inimigo-nasceu', { tipo: tipo.id });
   return inimigo;
 }
@@ -183,25 +193,29 @@ function acharTipo(id) {
   return null;
 }
 
-function posicionarNaBorda(inimigo, rng) {
-  const { largura, altura, margemSpawn } = CONTEUDO.arena;
+// Em volta da arena DA AVALIACAO: com a Sala Lotada eles nascem a mesma
+// distancia da parede de sempre, e o tempo ate chegar no jogador nao muda —
+// muda o espaco que ele tem para desviar.
+function posicionarNaBorda(inimigo, rng, arena) {
+  const { margemSpawn } = CONTEUDO.arena;
   const fora = margemSpawn + inimigo.raio;
+  const { esquerda, topo, direita, base } = arena;
   switch (rng.int(0, 3)) {
     case 0: // topo
-      inimigo.x = rng.range(-fora, largura + fora);
-      inimigo.y = -fora;
+      inimigo.x = rng.range(esquerda - fora, direita + fora);
+      inimigo.y = topo - fora;
       break;
     case 1: // direita
-      inimigo.x = largura + fora;
-      inimigo.y = rng.range(-fora, altura + fora);
+      inimigo.x = direita + fora;
+      inimigo.y = rng.range(topo - fora, base + fora);
       break;
     case 2: // base
-      inimigo.x = rng.range(-fora, largura + fora);
-      inimigo.y = altura + fora;
+      inimigo.x = rng.range(esquerda - fora, direita + fora);
+      inimigo.y = base + fora;
       break;
     default: // esquerda
-      inimigo.x = -fora;
-      inimigo.y = rng.range(-fora, altura + fora);
+      inimigo.x = esquerda - fora;
+      inimigo.y = rng.range(topo - fora, base + fora);
       break;
   }
 }
@@ -218,7 +232,7 @@ function moverInimigos(estado, pool, scratchInimigos, dt) {
   const player = estado.player;
   const forca = CONTEUDO.separacao.forca;
   const descarte = CONTEUDO.spawn.margemDescarte;
-  const { largura, altura } = CONTEUDO.arena;
+  const { esquerda, topo, direita, base } = estado.run.avaliacao.arena;
 
   // De tras para frente: liberar() troca o ultimo elemento para o buraco, e
   // de tras para frente esse elemento ja foi visitado.
@@ -241,7 +255,7 @@ function moverInimigos(estado, pool, scratchInimigos, dt) {
     e.x += e.vx * dt;
     e.y += e.vy * dt;
 
-    if (e.x < -descarte || e.x > largura + descarte || e.y < -descarte || e.y > altura + descarte) {
+    if (e.x < esquerda - descarte || e.x > direita + descarte || e.y < topo - descarte || e.y > base + descarte) {
       pool.liberar(e);
     }
   }

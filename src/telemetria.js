@@ -328,9 +328,16 @@ function abrirAvaliacao(estado, sc) {
     indice: sc.partida.avaliacoes.length + 1,
     id: av.id,
     nome: av.nome,
+    materia: av.materia,
     periodo: av.periodo,
     tipo: av.tipo,
     duracao: av.duracao,
+    // Fase 08: o que o anuncio sorteou e as regras que sairam disso. Sem isto
+    // duas avaliacoes com o mesmo id seriam incomparaveis no relatorio.
+    modificadores: av.modificadores.slice(),
+    regras: { ...av.regras },
+    // A referencia da parede, do canto e da grade (o relatorio rotula por ela).
+    arena: { ...av.arena },
     periodoIndex: estado.run.periodoIndex,
     avaliacaoIndex: estado.run.avaliacaoIndex,
     situacao: SITUACAO.EM_ANDAMENTO,
@@ -488,7 +495,11 @@ function copiarCoringas(lista) {
 
 function acumularTick(estado, reg, sc, dt) {
   const cfg = CONTEUDO.relatorio;
-  const { largura, altura } = CONTEUDO.arena;
+  // A arena da avaliacao (menor com a Sala Lotada): parede, canto e mapa de
+  // calor sao relativos a ela, nao ao canvas.
+  const { esquerda, topo, direita, base } = estado.run.avaliacao.arena;
+  const largura = direita - esquerda;
+  const altura = base - topo;
   const p = estado.player;
   const j = reg.jogador;
 
@@ -504,12 +515,12 @@ function acumularTick(estado, reg, sc, dt) {
   if (Math.hypot(p.vx, p.vy) < cfg.velocidadeParado) j.tempoParado += dt;
   if ((estado.input.eixoX || 0) !== 0 || (estado.input.eixoY || 0) !== 0) j.tempoComInput += dt;
 
-  const paredeX = Math.min(p.x, largura - p.x);
-  const paredeY = Math.min(p.y, altura - p.y);
+  const paredeX = Math.min(p.x - esquerda, direita - p.x);
+  const paredeY = Math.min(p.y - topo, base - p.y);
   if (Math.min(paredeX, paredeY) - p.raio <= cfg.margemBorda) j.tempoBorda += dt;
   if (paredeX <= cfg.margemCanto && paredeY <= cfg.margemCanto) j.tempoCanto += dt;
-  const coluna = Math.min(cfg.gradeColunas - 1, Math.max(0, Math.floor((p.x / largura) * cfg.gradeColunas)));
-  const linha = Math.min(cfg.gradeLinhas - 1, Math.max(0, Math.floor((p.y / altura) * cfg.gradeLinhas)));
+  const coluna = Math.min(cfg.gradeColunas - 1, Math.max(0, Math.floor(((p.x - esquerda) / largura) * cfg.gradeColunas)));
+  const linha = Math.min(cfg.gradeLinhas - 1, Math.max(0, Math.floor(((p.y - topo) / altura) * cfg.gradeLinhas)));
   j.grade[linha * cfg.gradeColunas + coluna] += dt;
   if (p.hp < j.hpMin) j.hpMin = p.hp;
 
@@ -524,7 +535,7 @@ function acumularTick(estado, reg, sc, dt) {
     const dy = e.y - p.y;
     const d2 = dx * dx + dy * dy;
     if (d2 <= raioPerto2) perto += 1;
-    if (e.x >= 0 && e.x <= largura && e.y >= 0 && e.y <= altura) naArena += 1;
+    if (e.x >= esquerda && e.x <= direita && e.y >= topo && e.y <= base) naArena += 1;
     const f = Math.sqrt(d2) - e.raio - p.raio;
     if (f < folga) folga = f;
   }
@@ -658,13 +669,13 @@ function processarEvento(estado, sc, ev) {
       break;
 
     case 'inimigo-morto': {
-      const { largura, altura } = CONTEUDO.arena;
+      const { esquerda, topo, direita, base } = estado.run.avaliacao.arena;
       const r = registroDoInimigo(reg, d.tipo);
       const p = estado.player;
       r.mortos += 1;
       if (Number.isFinite(d.vida)) r.somaVida += d.vida;
       r.somaDistanciaMorte += Math.hypot(d.x - p.x, d.y - p.y);
-      if (d.x < 0 || d.x > largura || d.y < 0 || d.y > altura) r.mortosForaDaArena += 1;
+      if (d.x < esquerda || d.x > direita || d.y < topo || d.y > base) r.mortosForaDaArena += 1;
       if (Number.isFinite(d.xp)) reg.xp.solto += d.xp;
       sc.janela.mortos += 1;
       break;

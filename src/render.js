@@ -20,7 +20,7 @@ export function desenhar(estado, ctx) {
     estado.tela === TELAS.PAUSA ||
     estado.tela === TELAS.CARTA
   ) {
-    desenharArena(ctx, largura, altura, v);
+    desenharArena(ctx, estado.run.avaliacao.arena, largura, altura, v);
     desenharOrbes(ctx, estado.xpOrbs, v);
     desenharInimigos(ctx, estado.enemies, v);
     desenharProjeteis(ctx, estado.projectiles, v);
@@ -55,10 +55,21 @@ function desenharGrade(ctx, largura, altura, v) {
   ctx.stroke();
 }
 
-function desenharArena(ctx, largura, altura, v) {
+// A arena da avaliacao (av.arena). Com a Sala Lotada ela e menor que o
+// canvas: o lado de fora escurece e a borda marca a parede de verdade — sem
+// isso o jogador bateria numa parede invisivel.
+function desenharArena(ctx, arena, largura, altura, v) {
+  const { esquerda, topo, direita, base } = arena;
+  if (esquerda > 0 || topo > 0 || direita < largura || base < altura) {
+    ctx.fillStyle = v.corForaArena;
+    ctx.fillRect(0, 0, largura, topo);
+    ctx.fillRect(0, base, largura, altura - base);
+    ctx.fillRect(0, topo, esquerda, base - topo);
+    ctx.fillRect(direita, topo, largura - direita, base - topo);
+  }
   ctx.strokeStyle = v.corBorda;
   ctx.lineWidth = 2;
-  ctx.strokeRect(1, 1, largura - 2, altura - 2);
+  ctx.strokeRect(esquerda + 1, topo + 1, direita - esquerda - 2, base - topo - 2);
 }
 
 // estado.enemies guarda so os inimigos ativos da pool — o que nao esta em uso

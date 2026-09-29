@@ -14,13 +14,26 @@ export function atualizarPlayer(estado, dt) {
   const player = estado.player;
   if (!player.vivo) return;
 
-  moverPlayer(player, estado.input, dt);
-  limitarNaArena(player);
+  const av = estado.run.avaliacao;
+  moverPlayer(player, estado.input, dt, fatorDeVelocidade(av.regras, av.decorrido));
+  limitarNaArena(player, av.arena);
   atualizarInvulnerabilidade(player, dt);
   registrarRastro(player);
 }
 
-function moverPlayer(player, input, dt) {
+// A regra velocidadeInicial (Aula das 7h): a velocidade maxima comeca
+// multiplicada por ela e volta a x1 em linha reta em recuperacaoVelocidade
+// segundos. Sem modificador, 1 do primeiro ao ultimo segundo.
+export function fatorDeVelocidade(regras, decorrido) {
+  const inicial = regras.velocidadeInicial;
+  if (inicial === 1) return 1;
+  const duracao = regras.recuperacaoVelocidade;
+  if (!(duracao > 0)) return inicial;
+  const k = Math.min(1, Math.max(0, decorrido / duracao));
+  return inicial + (1 - inicial) * k;
+}
+
+function moverPlayer(player, input, dt, fatorVelocidade) {
   const cfg = CONTEUDO.jogador;
   let dirX = input.eixoX || 0;
   let dirY = input.eixoY || 0;
@@ -38,10 +51,12 @@ function moverPlayer(player, input, dt) {
   }
 
   // player.velocidade, e nao cfg.velocidade: e o atributo ja modificado
-  // pelos coringas (jokers.js, modificarAtributo).
+  // pelos coringas (jokers.js, modificarAtributo). O fator e o da regra da
+  // avaliacao (fatorDeVelocidade).
+  const maxima = player.velocidade * fatorVelocidade;
   const velocidadeAtual = Math.hypot(player.vx, player.vy);
-  if (velocidadeAtual > player.velocidade) {
-    const fator = player.velocidade / velocidadeAtual;
+  if (velocidadeAtual > maxima) {
+    const fator = maxima / velocidadeAtual;
     player.vx *= fator;
     player.vy *= fator;
   }
@@ -59,26 +74,25 @@ function aplicarAtrito(player, atrito, dt) {
   player.vy *= fator;
 }
 
-// A arena e um retangulo com origem em (0,0); o jogador para na borda, nao
-// atravessa. Largura/altura vem de content.js porque o modificador "Sala
-// Lotada" (fase 08/09) vai encolhe-las durante a run.
-function limitarNaArena(player) {
-  const { largura, altura } = CONTEUDO.arena;
+// A arena e o retangulo da avaliacao (av.arena, centrado no canvas); o
+// jogador para na borda, nao atravessa. Com a regra `arena` < 1 (Sala Lotada)
+// ele encolhe em volta do centro.
+function limitarNaArena(player, arena) {
   const r = player.raio;
 
-  if (player.x < r) {
-    player.x = r;
+  if (player.x < arena.esquerda + r) {
+    player.x = arena.esquerda + r;
     if (player.vx < 0) player.vx = 0;
-  } else if (player.x > largura - r) {
-    player.x = largura - r;
+  } else if (player.x > arena.direita - r) {
+    player.x = arena.direita - r;
     if (player.vx > 0) player.vx = 0;
   }
 
-  if (player.y < r) {
-    player.y = r;
+  if (player.y < arena.topo + r) {
+    player.y = arena.topo + r;
     if (player.vy < 0) player.vy = 0;
-  } else if (player.y > altura - r) {
-    player.y = altura - r;
+  } else if (player.y > arena.base - r) {
+    player.y = arena.base - r;
     if (player.vy > 0) player.vy = 0;
   }
 }
@@ -111,17 +125,20 @@ export function criarRastro() {
   return { pontos, indice: 0 };
 }
 
-// Toda fonte de dano passa por aqui — inimigo encostando (fase 02), e depois
-// modificador e chefe. Ninguem mexe em hp/invulneravel direto. Respeita os
-// i-frames sozinho e devolve se o dano realmente foi aplicado.
+// Toda fonte de dano passa por aqui — inimigo encostando (fase 02), a regra
+// perdaHp (fase 08) e depois o chefe. Ninguem mexe em hp/invulneravel direto.
+// Respeita os i-frames sozinho e devolve se o dano realmente foi aplicado.
+// `semIframes`: dano que nao para nos i-frames e nao os liga (a perda de HP
+// por tempo). Quem chamar emite o proprio 'jogador-dano' com a fonte.
 //
 // A morte NAO emite evento nem troca de tela daqui: quem observa `vivo` e o
 // atualizarAvaliacao() de main.js, no mesmo quadro. Assim qualquer fonte de
 // dano futura ganha o jubilamento de graca, sem player.js precisar importar
 // state.js (o que fecharia um ciclo com a importacao de criarRastro).
-export function receberDano(estado, dano) {
+export function receberDano(estado, dano, semIframes = false) {
   const player = estado.player;
-  if (!player.vivo || player.invulneravel > 0 || !(dano > 0)) return false;
+  if (!player.vivo || !(dano > 0)) return false;
+  if (player.invulneravel > 0 && !semIframes) return false;
 
   let aplicado = Math.min(player.hp, dano);
   // Golpe fatal: um coringa (Atestado) pode segurar o jogador com algum HP.
@@ -141,7 +158,7 @@ export function receberDano(estado, dano) {
     player.invulneravel = 0;
     player.vx = 0;
     player.vy = 0;
-  } else {
+  } else if (!semIframes) {
     player.invulneravel = CONTEUDO.jogador.iframesDuracao;
   }
   return true;
@@ -199,9 +216,12 @@ export function soltarOrbeXp(estado, x, y, valor) {
   // Grampeado na arena: inimigo morto do lado de fora (eles nascem fora da
   // borda) deixaria um orbe inalcancavel, e XP que nao da para pegar e pior
   // do que XP que nao existe.
+  // A arena da avaliacao, e nao o canvas: com a Sala Lotada o orbe no canvas
+  // fora da arena tambem seria inalcancavel.
   const margem = cfg.raio;
-  orbe.x = Math.min(Math.max(x, margem), CONTEUDO.arena.largura - margem);
-  orbe.y = Math.min(Math.max(y, margem), CONTEUDO.arena.altura - margem);
+  const arena = estado.run.avaliacao.arena;
+  orbe.x = Math.min(Math.max(x, arena.esquerda + margem), arena.direita - margem);
+  orbe.y = Math.min(Math.max(y, arena.topo + margem), arena.base - margem);
   orbe.vx = Math.cos(angulo) * cfg.impulso;
   orbe.vy = Math.sin(angulo) * cfg.impulso;
   orbe.valor = valor;

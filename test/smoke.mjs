@@ -8,24 +8,38 @@
 //      CONTEUDO.arena.limites — a verificacao de pool le de la sozinha;
 //   3. some seus contadores em resumo() para eles aparecerem na linha final.
 
-import { CONTEUDO } from '../data/content.js';
-import { novoEstado, iniciarAvaliacao, irParaTela, TELAS } from '../src/state.js';
+import { CONTEUDO, validarConteudo } from '../data/content.js';
+import {
+  dadosDaAvaliacao,
+  emitir,
+  iniciarAvaliacao,
+  irParaTela,
+  novoEstado,
+  TELAS,
+} from '../src/state.js';
 import { alternarPausa, atualizar, avancarRelogio, criarRelogio, sairDoResultado } from '../src/main.js';
 import {
+  anuncioLiberado,
   avancarRun,
   calcularNota,
   comecarAvaliacao,
+  comecarProxima,
   creditosDaFaixa,
   faixaDaNota,
+  FONTE_PERDA_HP,
   iniciarRun,
   MOTIVO_JUBILADO,
   MOTIVO_TEMPO,
   proximaAvaliacao,
+  sairDoTcc,
+  sortearModificadores,
 } from '../src/run.js';
 import {
   aoCalcularDano,
   ATRIBUTOS,
+  coringasDesligados,
   HOOKS,
+  modificarAtributo,
   novaInstancia,
   verificarCoringasDoConteudo,
 } from '../src/jokers.js';
@@ -54,8 +68,16 @@ import {
 // ui.js nao toca no DOM no topo do modulo (criarUi recebe o `document`), entao
 // os formatadores puros da tela de resultado podem ser testados aqui — e a
 // primeira cobertura automatica que ui.js tem.
-import { armasDoBoletim, decomposicaoDaNota, formatarNota, resumoDoJubilado, rotuloDoReroll } from '../src/ui.js';
-import { aplicarDano, spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
+import {
+  armasDoBoletim,
+  decomposicaoDaNota,
+  emojisDosCoringas,
+  formatarNota,
+  resumoDoJubilado,
+  rotuloDoReroll,
+} from '../src/ui.js';
+import { readdirSync, readFileSync } from 'node:fs';
+import { aplicarDano, atualizarInimigos, spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
 import {
   atualizarArmas,
   dadosDaArma,
@@ -66,8 +88,15 @@ import {
   subirNivelArma,
   verificarArmasDoConteudo,
 } from '../src/weapons.js';
-import { apontarCarta, escolherCarta, moverSelecaoCarta, verificarCartasDoConteudo } from '../src/cards.js';
-import { atualizarOrbes, atualizarPlayer, poolOrbes, receberDano, soltarOrbeXp, xpParaSubir } from '../src/player.js';
+import { apontarCarta, cartaLiberada, escolherCarta, moverSelecaoCarta, verificarCartasDoConteudo } from '../src/cards.js';
+import {
+  atualizarOrbes,
+  atualizarPlayer,
+  poolOrbes,
+  receberDano,
+  soltarOrbeXp,
+  xpParaSubir,
+} from '../src/player.js';
 import { criarPool } from '../src/pool.js';
 import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
 import { analisarAvaliacao, ESCOPOS, gerarRelatorio } from '../src/relatorio.js';
@@ -110,6 +139,16 @@ function telaDeFim(estado) {
 // Antes da fase 07 as duas saidas eram o menu.
 function foraDaAvaliacao(estado) {
   return estado.tela === TELAS.MENU || estado.tela === TELAS.LOJA;
+}
+
+// "Jogar" e depois "Começar" no anuncio da 1ª avaliacao (fase 08): desde que
+// a run passa pelo anuncio, iniciarRun sozinho deixa a partida parada na tela
+// de anuncio. A 1ª avaliacao nao sorteia modificador, entao nenhum rng e
+// gasto no anuncio e a partida e a mesma de antes do anuncio existir.
+function comecarRun(estado) {
+  iniciarRun(estado);
+  if (estado.tela !== TELAS.ANUNCIO) falhar(0, `iniciarRun foi a "${estado.tela}", esperava o anuncio`);
+  if (!comecarProxima(estado)) falhar(0, 'comecarProxima recusou o anuncio da 1a avaliacao');
 }
 
 // Teste de carga: `npm run smoke -- --carga` enche a arena ate o teto da pool
@@ -437,7 +476,7 @@ function tetoDeProjeteisVivos(nivel) {
 
 function checarArmaSozinha() {
   const estado = novoEstado(SEMENTE + 1);
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado);
 
   let pico = 0;
   let mortos = 0;
@@ -1091,7 +1130,7 @@ function checarCartasDoConteudo() {
 // congela igual e reusa isto.
 function montarCenarioCongelavel(semente) {
   const estado = novoEstado(semente);
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado);
   limparInimigos(estado);
 
   const player = estado.player;
@@ -1405,7 +1444,7 @@ const SEMENTES_SORTEIO = 12;
 
 function opcoesDoPrimeiroNivel(semente) {
   const estado = novoEstado(semente);
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado);
   limparInimigos(estado);
   estado.player.xp = xpParaSubir(1);
   atualizar(estado, PASSO);
@@ -1605,7 +1644,7 @@ function checarArmasEspecializadas() {
 // reiniciaria no meio da medida.
 function checarProgressao() {
   const estado = novoEstado(SEMENTE + 5);
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado);
 
   let cartas = 0;
   let orbesPico = 0;
@@ -1901,7 +1940,10 @@ function checarNovaRunZeraCreditos() {
     falhar(0, `uma run nova comecou com ${estado.run.creditos} creditos: vazaram da partida anterior`);
   }
   if (estado.run.jubilado) falhar(0, 'uma run nova comecou marcada como jubilada');
-  if (estado.tela !== TELAS.AVALIACAO) falhar(0, `iniciarRun deixou a tela em "${estado.tela}"`);
+  // Fase 08: a run nova abre no anuncio da 1a avaliacao, e o "Começar" poe
+  // a avaliacao de pe.
+  if (estado.tela !== TELAS.ANUNCIO) falhar(0, `iniciarRun deixou a tela em "${estado.tela}", esperava o anuncio`);
+  if (!comecarProxima(estado) || estado.tela !== TELAS.AVALIACAO) falhar(0, `o anuncio da run nova levou a "${estado.tela}"`);
   if (!estado.player.vivo) falhar(0, 'iniciarRun comecou a avaliacao com o jogador morto');
 }
 
@@ -1910,9 +1952,9 @@ function checarNovaRunZeraCreditos() {
 // o jogo travado para sempre.
 function checarPausa() {
   const { estado, player, alvos } = montarCenarioCongelavel(SEMENTE + 10);
-  // Um tick de avaliacao de verdade antes de pausar: e ele que equipa a arma
-  // inicial (garantirArmaInicial roda dentro de atualizarArmas) e enche o
-  // cenario com cooldown e projeteis para o congelamento ter o que medir.
+  // Um tick de avaliacao de verdade antes de pausar: a arma inicial (equipada
+  // por comecarAvaliacao) dispara e enche o cenario com cooldown e projeteis
+  // para o congelamento ter o que medir.
   atualizar(estado, PASSO);
 
   alternarPausa(estado);
@@ -1981,7 +2023,7 @@ function checarPausa() {
 // nao valeria nada. Corrida propria com semente propria, como a de progressao.
 function checarAvaliacaoCompleta() {
   const estado = novoEstado(SEMENTE + 11);
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado);
 
   let cartas = 0;
   let tick = 0;
@@ -2070,7 +2112,7 @@ function botDesvio(estado) {
 
 function correrAvaliacaoCom(bot, semente, rotulo) {
   const estado = novoEstado(semente);
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado);
   let tick = 0;
   let segundoNivel5 = null;
   while (!telaDeFim(estado) && tick < TICKS_AVALIACAO_COMPLETA) {
@@ -2170,7 +2212,7 @@ function correrComTelemetria(semente, { drenarACada = 1, ligada = true } = {}) {
   CONTEUDO.debug.relatorio = ligada;
   try {
     const estado = novoEstado(semente);
-    iniciarRun(estado);
+    comecarRun(estado);
     const contagem = {};
     for (const tipo of TIPOS_CONTADOS) contagem[tipo] = 0;
     let tick = 0;
@@ -2376,7 +2418,7 @@ function checarRelatorioFinsAlternativos() {
   CONTEUDO.debug.relatorio = true;
   try {
     const estado = novoEstado(SEMENTE + 16);
-    iniciarRun(estado);
+    comecarRun(estado);
     for (let i = 0; i < 120; i += 1) atualizar(estado, PASSO);
 
     // Quadros do navegador: so contam com a avaliacao rodando.
@@ -2406,7 +2448,7 @@ function checarRelatorioFinsAlternativos() {
 
     // Golpe fatal sem evento jogador-dano: o dano entra como fonte
     // desconhecida em vez de sumir, e a partida fecha no mesmo tick.
-    iniciarRun(estado);
+    comecarRun(estado);
     atualizar(estado, PASSO);
     receberDano(estado, estado.player.hpMax * 2);
     atualizar(estado, PASSO);
@@ -2424,7 +2466,7 @@ function checarRelatorioFinsAlternativos() {
     sairDoResultado(estado);
     const teto = CONTEUDO.relatorio.historicoPartidas;
     for (let i = 0; i < teto + 2; i += 1) {
-      iniciarRun(estado);
+      comecarRun(estado);
       atualizar(estado, PASSO);
     }
     const iniciadas = 2 + teto + 2;
@@ -2466,7 +2508,7 @@ function checarCoringasDoConteudo() {
 function checarAtestado() {
   const atestado = coringaComEfeito('sobreviverFatal');
   const estado = novoEstado(SEMENTE + 40);
-  iniciarRun(estado);
+  comecarRun(estado);
   estado.run.coringas.push(novaInstancia(atestado.id));
   const player = estado.player;
   const hpMax = player.hpMax;
@@ -2505,7 +2547,7 @@ function checarAtestado() {
   }
 
   // Run nova: o Atestado volta a valer.
-  iniciarRun(estado);
+  comecarRun(estado);
   estado.run.coringas.push(novaInstancia(atestado.id));
   receberDano(estado, estado.player.hpMax * 3);
   if (!estado.player.vivo) falhar(0, 'Atestado: uma run nova herdou o Atestado gasto da anterior');
@@ -2516,7 +2558,7 @@ function checarEfeitosDosCoringas() {
   // Vespera: dano x fator so nos ultimos N segundos.
   const vespera = coringaComEfeito('danoNoFim');
   const estado = novoEstado(SEMENTE + 41);
-  iniciarRun(estado);
+  comecarRun(estado);
   estado.run.coringas.push(novaInstancia(vespera.id));
   const av = estado.run.avaliacao;
   av.restante = vespera.params.segundos + 1;
@@ -2809,7 +2851,14 @@ function checarLoja() {
   estado.run.coringas.push(novaInstancia(energetico.id));
   const indiceAntes = estado.run.avaliacaoIndex;
   if (!apontarLoja(estado, LINHA_VITRINE, posicaoSeguir(loja)) || !confirmarLoja(estado)) falhar(0, 'loja: Enter no seguir nao saiu da loja');
-  if (estado.tela !== TELAS.AVALIACAO) falhar(0, `loja: seguir levou a "${estado.tela}"`);
+  // Fase 08: o seguir anuncia a proxima; o "Começar" do anuncio a poe de pe.
+  if (estado.tela !== TELAS.ANUNCIO) falhar(0, `loja: seguir levou a "${estado.tela}", esperava o anuncio`);
+  if (estado.run.proxima.avaliacaoIndex !== indiceAntes + 1) falhar(0, 'loja: seguir nao anunciou a avaliacao seguinte');
+  // O que se prova aqui e a ligacao loja -> avaliacao seguinte. O sorteio
+  // desta semente pode trazer a Prova sem Consulta, que desliga o coringa de
+  // proposito (e tem teste proprio): o anuncio vai sem modificador.
+  estado.run.proxima.modificadores.length = 0;
+  if (!comecarProxima(estado) || estado.tela !== TELAS.AVALIACAO) falhar(0, `loja: o anuncio levou a "${estado.tela}"`);
   if (estado.run.avaliacaoIndex !== indiceAntes + 1) falhar(0, 'loja: seguir nao avancou para a avaliacao seguinte');
   const atr = energetico.params.atributo;
   if (Math.abs(estado.player[atr] - CONTEUDO.jogador[atr] * energetico.params.fator) > EPSILON) {
@@ -2817,14 +2866,17 @@ function checarLoja() {
   }
   if (seguirDaLoja(estado) || comprarItem(estado, 0) || rerolar(estado)) falhar(0, 'loja: acao da loja funcionou fora da loja');
 
-  // Fim da lista de avaliacoes: o seguir volta ao menu (a fase 08 poe o TCC).
+  // Fim da lista de avaliacoes: o seguir vai ao TCC (fase 08; provisorio ate
+  // a fase 10), e dali ao menu.
   const ultimoP = CONTEUDO.periodos.length - 1;
   const ultimoA = CONTEUDO.periodos[ultimoP].avaliacoes.length - 1;
   if (proximaAvaliacao(ultimoP, ultimoA) !== null) falhar(0, 'proximaAvaliacao: existe avaliacao depois da ultima');
   const virada = proximaAvaliacao(0, CONTEUDO.periodos[0].avaliacoes.length - 1);
   if (!virada || virada.periodoIndex !== 1 || virada.avaliacaoIndex !== 0) falhar(0, 'proximaAvaliacao: nao virou o periodo');
   comecarAvaliacao(estado, ultimoP, ultimoA);
-  if (avancarRun(estado) || estado.tela !== TELAS.MENU) falhar(0, `avancarRun depois da ultima avaliacao foi a "${estado.tela}"`);
+  if (avancarRun(estado) || estado.tela !== TELAS.TCC) falhar(0, `avancarRun depois da ultima avaliacao foi a "${estado.tela}"`);
+  if (!sairDoTcc(estado) || estado.tela !== TELAS.MENU) falhar(0, `a saida do TCC foi a "${estado.tela}"`);
+  if (sairDoTcc(estado)) falhar(0, 'sairDoTcc agiu fora da tela do TCC');
 }
 
 // Reroll gratis do conceito A (design §4) e a recusa de um reroll que nao
@@ -2910,7 +2962,7 @@ function checarGuardarDinheiro(desvio) {
 // — um aoCalcularDano desligado passaria despercebido por ele.
 function correrComCoringas(forcar) {
   const estado = novoEstado(SEMENTE + 47);
-  iniciarRun(estado);
+  comecarRun(estado);
   if (forcar) {
     for (const c of CONTEUDO.coringas) estado.run.coringas.push(novaInstancia(c.id));
     comecarAvaliacao(estado, 0, 0);
@@ -2962,6 +3014,771 @@ function descreverComCoringas(c) {
   return `dano ${c.dano.toFixed(0)} (efetivo ${c.efetivo.toFixed(0)}) · ${c.kills} mortos · ${fim} · ${Math.round(c.hp * 100)}% HP · nivel ${c.nivel}`;
 }
 
+// ------------------------------------------------ fase 08: modificadores
+
+// Os 6 do design §9. Estao aqui so para o smoke exigir que nenhum suma de
+// content.js: os testes abaixo percorrem CONTEUDO.modificadores e provam cada
+// um pelo que ele MEXE (as regras), nao pelo nome — um modificador novo feito
+// so de dado ganha teste sem ninguem escrever teste.
+const MODIFICADORES_DO_DESIGN = ['aula7h', 'salaLotada', 'semConsulta', 'professorRigido', 'sexta18h', 'frequencia'];
+const TICKS_ATE_VELOCIDADE = 60; // 1s de input constante: o jogador ja bateu na velocidade maxima
+const TICKS_NA_ARENA_PEQUENA = 600; // 10s de partida de verdade na arena encolhida
+const SPAWNS_NA_BORDA = 40;
+const DIST_INIMIGO_MEDIDO = 400; // px entre o jogador e o inimigo cuja passada e medida
+const TICKS_PASSADA = 10;
+const PERDAS_CONTADAS = 3; // perdas de HP contadas no teste da regra perdaHp
+const SEGUNDOS_NASCIMENTO = 20; // janela em que se contam nascimentos por dificuldade
+
+// Uma avaliacao da 1ª posicao (dificuldade 1) com os modificadores e coringas
+// pedidos, pela porta de sempre, e sem inimigo nenhum na arena.
+function avaliacaoCom(semente, mods, coringas = [], p = 0, a = 0) {
+  const estado = novoEstado(semente);
+  iniciarRun(estado);
+  for (const id of coringas) estado.run.coringas.push(novaInstancia(id));
+  comecarAvaliacao(estado, p, a, mods);
+  limparInimigos(estado);
+  return estado;
+}
+
+// A conta das regras, refeita aqui por fora: regras neutras, x dificuldade da
+// avaliacao, x fatores, + somas. Se regrasDaAvaliacao (state.js) errar a
+// combinacao, o teste de cada regra usaria o numero errado sem perceber.
+function regrasEsperadas(dados, ids) {
+  const r = { ...CONTEUDO.regras };
+  r.dificuldade *= dados.dificuldade;
+  for (const id of ids) {
+    const mod = CONTEUDO.modificadores.find((m) => m.id === id);
+    for (const [k, v] of Object.entries(mod.fatores || {})) r[k] *= v;
+    for (const [k, v] of Object.entries(mod.somas || {})) r[k] += v;
+  }
+  return r;
+}
+
+function conferirRegras(estado, dados, ids, onde) {
+  const esperado = regrasEsperadas(dados, ids);
+  const regras = estado.run.avaliacao.regras;
+  for (const k of Object.keys(esperado)) {
+    if (Math.abs(regras[k] - esperado[k]) > 1e-9) falhar(0, `${onde}: regra ${k} = ${regras[k]}, esperava ${esperado[k]}`);
+  }
+}
+
+function velocidadeMedida(estado, decorrido) {
+  const av = estado.run.avaliacao;
+  const p = estado.player;
+  av.decorrido = decorrido;
+  p.x = (av.arena.esquerda + av.arena.direita) / 2;
+  p.y = (av.arena.topo + av.arena.base) / 2;
+  p.vx = 0;
+  p.vy = 0;
+  estado.input.eixoX = 1;
+  estado.input.eixoY = 0;
+  for (let i = 0; i < TICKS_ATE_VELOCIDADE; i += 1) atualizarPlayer(estado, PASSO);
+  estado.input.eixoX = 0;
+  return Math.hypot(p.vx, p.vy);
+}
+
+// velocidadeInicial / recuperacaoVelocidade (🌅 Aula das 7h): o jogador ANDA
+// mais devagar no comeco e volta ao normal em linha reta.
+function provarVelocidadeInicial(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const e = avaliacaoCom(SEMENTE + 70, [mod.id]);
+  const r = e.run.avaliacao.regras;
+  const base = e.player.velocidade;
+  const v0 = velocidadeMedida(e, 0);
+  if (Math.abs(v0 - base * r.velocidadeInicial) > 1e-6) {
+    falhar(0, `${onde}: no segundo 0 o jogador anda a ${v0.toFixed(2)} px/s, esperava ${(base * r.velocidadeInicial).toFixed(2)}`);
+  }
+  if (r.velocidadeInicial !== 1 && Math.abs(v0 - base) < 1e-6) falhar(0, `${onde}: a velocidade do comeco nao mudou`);
+  const neutro = avaliacaoCom(SEMENTE + 70, []);
+  const vNeutro = velocidadeMedida(neutro, 0);
+  if (Math.abs(vNeutro - base) > 1e-6) falhar(0, `${onde}: SEM o modificador o jogador anda a ${vNeutro.toFixed(2)}, esperava ${base}`);
+  let texto = `${v0.toFixed(0)} px/s no 0s`;
+  if (r.recuperacaoVelocidade > 0) {
+    const meio = velocidadeMedida(e, r.recuperacaoVelocidade / 2);
+    const esperadoMeio = base * (r.velocidadeInicial + (1 - r.velocidadeInicial) * 0.5);
+    if (Math.abs(meio - esperadoMeio) > 1e-6) {
+      falhar(0, `${onde}: na metade da recuperacao anda a ${meio.toFixed(2)}, esperava ${esperadoMeio.toFixed(2)}`);
+    }
+    const fim = velocidadeMedida(e, r.recuperacaoVelocidade);
+    if (Math.abs(fim - base) > 1e-6) falhar(0, `${onde}: depois de ${r.recuperacaoVelocidade}s anda a ${fim.toFixed(2)}, esperava ${base}`);
+    texto += `, ${meio.toFixed(0)} no ${r.recuperacaoVelocidade / 2}s, ${fim.toFixed(0)} no ${r.recuperacaoVelocidade}s (sem ele: ${vNeutro.toFixed(0)})`;
+  }
+  return texto;
+}
+
+// arena (🪑 Sala Lotada): a parede muda de lugar para o jogador, para os
+// inimigos que nascem, para o orbe que cai, e a partida roda nela.
+function provarArena(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const e = avaliacaoCom(SEMENTE + 71, [mod.id]);
+  const av = e.run.avaliacao;
+  const f = av.regras.arena;
+  const { largura, altura, margemSpawn } = CONTEUDO.arena;
+  const a = av.arena;
+  const w = a.direita - a.esquerda;
+  const h = a.base - a.topo;
+  if (Math.abs(w - largura * f) > 1e-6 || Math.abs(h - altura * f) > 1e-6) {
+    falhar(0, `${onde}: arena ${w}x${h}, esperava ${largura * f}x${altura * f}`);
+  }
+  if (Math.abs(a.esquerda - (largura - a.direita)) > 1e-6 || Math.abs(a.topo - (altura - a.base)) > 1e-6) {
+    falhar(0, `${onde}: a arena encolhida nao esta centrada`);
+  }
+  const p = e.player;
+  if (Math.abs(p.x - (a.esquerda + a.direita) / 2) > 1e-6 || Math.abs(p.y - (a.topo + a.base) / 2) > 1e-6) {
+    falhar(0, `${onde}: o jogador nao nasceu no centro da arena`);
+  }
+  // Andando para o canto de cima, a esquerda, ate parar.
+  e.input.eixoX = -1;
+  e.input.eixoY = -1;
+  for (let i = 0; i < 5 * TICKS_ATE_VELOCIDADE; i += 1) atualizarPlayer(e, PASSO);
+  e.input.eixoX = 0;
+  e.input.eixoY = 0;
+  if (Math.abs(p.x - (a.esquerda + p.raio)) > 1e-6 || Math.abs(p.y - (a.topo + p.raio)) > 1e-6) {
+    falhar(0, `${onde}: o jogador parou em (${p.x.toFixed(1)}, ${p.y.toFixed(1)}), a parede e (${a.esquerda + p.raio}, ${a.topo + p.raio})`);
+  }
+  // Inimigos nascem a margem de sempre da parede NOVA, nao da do canvas.
+  for (let i = 0; i < SPAWNS_NA_BORDA; i += 1) {
+    const inimigo = spawnInimigo(e);
+    const fora = margemSpawn + inimigo.raio;
+    const dentroDaFaixa =
+      inimigo.x >= a.esquerda - fora - 1e-6 && inimigo.x <= a.direita + fora + 1e-6 &&
+      inimigo.y >= a.topo - fora - 1e-6 && inimigo.y <= a.base + fora + 1e-6;
+    const naBorda =
+      Math.abs(inimigo.x - (a.esquerda - fora)) < 1e-6 || Math.abs(inimigo.x - (a.direita + fora)) < 1e-6 ||
+      Math.abs(inimigo.y - (a.topo - fora)) < 1e-6 || Math.abs(inimigo.y - (a.base + fora)) < 1e-6;
+    if (!dentroDaFaixa || !naBorda) {
+      falhar(0, `${onde}: inimigo nasceu em (${inimigo.x.toFixed(1)}, ${inimigo.y.toFixed(1)}), fora da faixa de ${fora}px em volta da arena`);
+    }
+  }
+  limparInimigos(e);
+  // Orbe de um inimigo morto fora da arena cai dentro dela (senao seria XP inalcancavel).
+  soltarOrbeXp(e, 0, 0, 1);
+  const orbe = e.xpOrbs[e.xpOrbs.length - 1];
+  if (orbe.x < a.esquerda || orbe.x > a.direita || orbe.y < a.topo || orbe.y > a.base) {
+    falhar(0, `${onde}: o orbe solto em (0,0) ficou em (${orbe.x.toFixed(1)}, ${orbe.y.toFixed(1)}), fora da arena`);
+  }
+  // 10s de partida de verdade na arena pequena (pendencia 15: a grade de
+  // separacao e do canvas inteiro e continua certa, por clamp).
+  const e2 = avaliacaoCom(SEMENTE + 72, [mod.id]);
+  let naArena = 0;
+  for (let tick = 1; tick <= TICKS_NA_ARENA_PEQUENA; tick += 1) {
+    botDesvio(e2);
+    atualizar(e2, PASSO);
+    if (e2.tela === TELAS.CARTA) escolherCarta(e2, 0);
+    e2.eventos.length = 0;
+    if (tick % INTERVALO_VARREDURA === 0) {
+      const ruim = procurarNumeroInvalido(e2, 'estado', new Set(), 0);
+      if (ruim) falhar(tick, `${onde}: numero invalido na arena encolhida: ${ruim}`);
+    }
+    const pl = e2.player;
+    if (pl.x < a.esquerda + pl.raio - 1e-6 || pl.x > a.direita - pl.raio + 1e-6 || pl.y < a.topo + pl.raio - 1e-6 || pl.y > a.base - pl.raio + 1e-6) {
+      falhar(tick, `${onde}: o jogador saiu da arena encolhida (${pl.x.toFixed(1)}, ${pl.y.toFixed(1)})`);
+    }
+  }
+  for (const inimigo of e2.enemies) {
+    if (inimigo.x >= a.esquerda && inimigo.x <= a.direita && inimigo.y >= a.topo && inimigo.y <= a.base) naArena += 1;
+  }
+  if (e2.tela !== TELAS.AVALIACAO && e2.tela !== TELAS.CARTA) falhar(0, `${onde}: 10s na arena pequena acabaram em "${e2.tela}"`);
+  if (naArena === 0) falhar(0, `${onde}: depois de 10s nenhum inimigo entrou na arena encolhida`);
+  return `arena ${w.toFixed(0)}x${h.toFixed(0)} de ${largura}x${altura}; parede, nascimento e orbe nela; ${naArena} inimigos dentro aos 10s`;
+}
+
+// coringas (🚫 Prova sem Consulta): a mao inteira para de agir durante a
+// prova — atributo, dano e o Atestado — e volta depois dela, na loja.
+function provarCoringas(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const energetico = CONTEUDO.coringas.find((c) => c.efeito === 'atributo' && c.params.atributo === 'velocidade');
+  if (!energetico) falhar(0, `${onde}: nenhum coringa de velocidade para testar`);
+  const vespera = coringaComEfeito('danoNoFim');
+  const atestado = coringaComEfeito('sobreviverFatal');
+  const mao = [energetico.id, vespera.id, atestado.id];
+  const com = avaliacaoCom(SEMENTE + 73, [], mao);
+  const sem = avaliacaoCom(SEMENTE + 73, [mod.id], mao);
+  const desligados = !(sem.run.avaliacao.regras.coringas > 0);
+  const base = CONTEUDO.jogador.velocidade;
+  const esperadoComMao = base * energetico.params.fator;
+
+  if (Math.abs(com.player.velocidade - esperadoComMao) > 1e-9) falhar(0, `${onde}: a referencia (sem o modificador) nao aplicou o Energetico`);
+  const velSem = sem.player.velocidade;
+  if (Math.abs(velSem - (desligados ? base : esperadoComMao)) > 1e-9) {
+    falhar(0, `${onde}: velocidade ${velSem} com o Energetico na mao, esperava ${desligados ? base : esperadoComMao}`);
+  }
+  com.run.avaliacao.restante = vespera.params.segundos;
+  sem.run.avaliacao.restante = vespera.params.segundos;
+  const danoCom = aoCalcularDano(com, 10);
+  const danoSem = aoCalcularDano(sem, 10);
+  if (Math.abs(danoCom - 10 * vespera.params.fator) > 1e-9) falhar(0, `${onde}: a referencia nao aplicou a Vespera`);
+  if (Math.abs(danoSem - (desligados ? 10 : 10 * vespera.params.fator)) > 1e-9) {
+    falhar(0, `${onde}: dano ${danoSem} com a Vespera na janela final, esperava ${desligados ? 10 : 10 * vespera.params.fator}`);
+  }
+  receberDano(com, com.player.hpMax * 3);
+  receberDano(sem, sem.player.hpMax * 3);
+  if (!com.player.vivo) falhar(0, `${onde}: a referencia nao foi salva pelo Atestado`);
+  if (sem.player.vivo === desligados) {
+    falhar(0, `${onde}: o Atestado ${sem.player.vivo ? 'salvou' : 'nao salvou'} com os coringas ${desligados ? 'desligados' : 'ligados'}`);
+  }
+  // Continuam na run e voltam a valer quando a prova acaba (a loja pergunta
+  // itensLoja com a avaliacao ja concluida).
+  if (sem.run.coringas.length !== mao.length) falhar(0, `${onde}: os coringas sairam da run`);
+  // O HUD esmaece a mao perguntando a jokers.js, com a mesma semantica dos hooks.
+  if (coringasDesligados(sem) !== desligados) falhar(0, `${onde}: o HUD ${desligados ? 'nao ' : ''}esmaeceria os coringas durante a prova`);
+  if (coringasDesligados(com)) falhar(0, `${onde}: o HUD esmaeceria os coringas sem o modificador`);
+  sem.run.avaliacao.concluida = true;
+  const depois = modificarAtributo(sem, 'velocidade', base);
+  if (Math.abs(depois - esperadoComMao) > 1e-9) falhar(0, `${onde}: depois da prova os coringas nao voltaram (velocidade ${depois})`);
+  if (coringasDesligados(sem)) falhar(0, `${onde}: o HUD continuaria esmaecendo os coringas depois da prova`);
+  return `com ${emojisDosCoringas(sem.run.coringas)} na mao: velocidade ${velSem.toFixed(1)} (normal ${esperadoComMao.toFixed(1)}), ` +
+    `dano ${danoSem} (normal ${danoCom}), Atestado ${sem.player.vivo ? 'salvou' : 'nao salvou'}; na loja voltam`;
+}
+
+// hpInimigo (👨‍🏫 Professor Rigido): todo tipo nasce com mais HP, e o golpe
+// que mata o inimigo normal deixa este de pe.
+function provarHpInimigo(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const e = avaliacaoCom(SEMENTE + 74, [mod.id]);
+  const neutro = avaliacaoCom(SEMENTE + 74, []);
+  const f = e.run.avaliacao.regras.hpInimigo;
+  for (const tipo of CONTEUDO.inimigos) {
+    const i = spawnInimigo(e, tipo.id);
+    const n = spawnInimigo(neutro, tipo.id);
+    if (Math.abs(i.hpMax - tipo.hp * f) > 1e-9 || i.hp !== i.hpMax) {
+      falhar(0, `${onde}: ${tipo.id} nasceu com ${i.hp}/${i.hpMax} de HP, esperava ${tipo.hp * f}`);
+    }
+    const morreu = aplicarDano(e, i, tipo.hp);
+    if (!aplicarDano(neutro, n, tipo.hp)) falhar(0, `${onde}: a referencia nao morreu com ${tipo.hp} de dano`);
+    if (morreu !== !(f > 1)) falhar(0, `${onde}: ${tipo.id} ${morreu ? 'morreu' : 'sobreviveu'} a um golpe de ${tipo.hp} com HP x${f}`);
+  }
+  return `HP ${CONTEUDO.inimigos.map((t) => `${t.emoji}${t.hp}→${+(t.hp * f).toFixed(1)}`).join(' ')}; o golpe que mata o normal nao mata este`;
+}
+
+function passadaDoInimigo(mods) {
+  const e = avaliacaoCom(SEMENTE + 75, mods);
+  const tipo = CONTEUDO.inimigos[0];
+  const i = spawnInimigo(e, tipo.id);
+  i.x = e.player.x + DIST_INIMIGO_MEDIDO;
+  i.y = e.player.y;
+  const x0 = i.x;
+  for (let t = 0; t < TICKS_PASSADA; t += 1) atualizarInimigos(e, PASSO);
+  return { estado: e, tipo, andou: x0 - i.x };
+}
+
+// velocidadeInimigo (🕕 Sexta as 18h): todo tipo nasce mais rapido, e o
+// inimigo CHEGA mais rapido, nao so guarda o numero.
+function provarVelocidadeInimigo(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const com = passadaDoInimigo([mod.id]);
+  const sem = passadaDoInimigo([]);
+  const f = com.estado.run.avaliacao.regras.velocidadeInimigo;
+  for (const tipo of CONTEUDO.inimigos) {
+    const i = spawnInimigo(com.estado, tipo.id);
+    if (Math.abs(i.velocidade - tipo.velocidade * f) > 1e-9) {
+      falhar(0, `${onde}: ${tipo.id} nasceu a ${i.velocidade} px/s, esperava ${tipo.velocidade * f}`);
+    }
+  }
+  if (!(sem.andou > 0) || Math.abs(com.andou / sem.andou - f) > 1e-6) {
+    falhar(0, `${onde}: em ${TICKS_PASSADA} ticks o inimigo andou ${com.andou.toFixed(2)}px contra ${sem.andou.toFixed(2)} sem o modificador (esperava x${f})`);
+  }
+  return `velocidade ${CONTEUDO.inimigos.map((t) => `${t.emoji}${t.velocidade}→${+(t.velocidade * f).toFixed(1)}`).join(' ')}; ` +
+    `${com.tipo.emoji} anda ${com.andou.toFixed(1)}px em ${TICKS_PASSADA} ticks (sem: ${sem.andou.toFixed(1)})`;
+}
+
+// Roda a avaliacao sem inimigo nenhum ate `segundos`, contando os golpes por
+// fonte. O que tirar HP aqui so pode ser regra.
+function correrSemInimigos(estado, segundos, contagem) {
+  const av = estado.run.avaliacao;
+  let tick = 0;
+  while (av.decorrido < segundos && (estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.CARTA)) {
+    tick += 1;
+    atualizar(estado, PASSO);
+    limparInimigos(estado);
+    if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+    for (const ev of estado.eventos) {
+      if (ev.tipo === 'jogador-dano') contagem[ev.dados.fonte] = (contagem[ev.dados.fonte] || 0) + 1;
+    }
+    estado.eventos.length = 0;
+    if (estado.player.invulneravel > 0) falhar(tick, 'a perda de HP por regra deu i-frames ao jogador');
+  }
+}
+
+// perdaHp / intervaloPerdaHp (📉 Controle de Frequencia): o HP cai sozinho,
+// no ritmo prometido, atravessa i-frames, sai no relatorio com a fonte certa
+// (pendencia 49) e mata.
+function provarPerdaHp(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const original = CONTEUDO.debug.relatorio;
+  CONTEUDO.debug.relatorio = true;
+  try {
+    const e = avaliacaoCom(SEMENTE + 76, [mod.id]);
+    const av = e.run.avaliacao;
+    const r = av.regras;
+    const n = Math.max(1, Math.min(PERDAS_CONTADAS, Math.floor((av.duracao - 1) / r.intervaloPerdaHp)));
+    const hp0 = e.player.hp;
+    const contagem = {};
+    correrSemInimigos(e, r.intervaloPerdaHp * n + 0.5, contagem);
+    const perdido = hp0 - e.player.hp;
+    if ((contagem[FONTE_PERDA_HP] || 0) !== n || Math.abs(perdido - n * r.perdaHp) > 1e-9) {
+      falhar(0, `${onde}: em ${(r.intervaloPerdaHp * n + 0.5).toFixed(1)}s perdeu ${perdido} de HP em ${contagem[FONTE_PERDA_HP] || 0} golpes, esperava ${n * r.perdaHp} em ${n}`);
+    }
+    const outras = Object.keys(contagem).filter((f) => f !== FONTE_PERDA_HP);
+    if (outras.length > 0) falhar(0, `${onde}: golpes de outra fonte sem inimigo na arena: ${outras.join(', ')}`);
+
+    // Atravessa i-frames: a proxima perda cai mesmo com o jogador intocavel.
+    const antes = e.player.hp;
+    e.player.invulneravel = r.intervaloPerdaHp * 2;
+    av.relogioPerdaHp = r.intervaloPerdaHp - PASSO / 2;
+    atualizar(e, PASSO);
+    if (Math.abs(antes - e.player.hp - r.perdaHp) > 1e-9) falhar(0, `${onde}: a perda de HP parou nos i-frames`);
+    e.player.invulneravel = 0;
+
+    // Mata, e o jubilamento sai no relatorio com a fonte da regra.
+    e.player.hp = r.perdaHp;
+    av.relogioPerdaHp = r.intervaloPerdaHp - PASSO / 2;
+    atualizar(e, PASSO);
+    if (e.tela !== TELAS.JUBILADO) falhar(0, `${onde}: a perda de HP zerou o jogador e a tela ficou "${e.tela}"`);
+    const partida = e.telemetria.partidas[e.telemetria.partidas.length - 1];
+    const reg = partida.avaliacoes[partida.avaliacoes.length - 1];
+    if (!reg.morte || reg.morte.fonte !== FONTE_PERDA_HP) {
+      falhar(0, `${onde}: o relatorio registrou a morte por "${reg.morte && reg.morte.fonte}", esperava "${FONTE_PERDA_HP}"`);
+    }
+    if (reg.fontesDano.some((f) => f.fonte === FONTE_DESCONHECIDA)) falhar(0, `${onde}: o relatorio tem dano de fonte desconhecida`);
+
+    // Sem o modificador, o mesmo tempo sem inimigo nao tira HP nenhum.
+    const neutro = avaliacaoCom(SEMENTE + 76, []);
+    const contagemNeutra = {};
+    correrSemInimigos(neutro, r.intervaloPerdaHp * n + 0.5, contagemNeutra);
+    if (neutro.player.hp !== neutro.player.hpMax) falhar(0, `${onde}: SEM o modificador o jogador perdeu HP sem inimigo nenhum`);
+    return `-${n * r.perdaHp} HP em ${(r.intervaloPerdaHp * n + 0.5).toFixed(1)}s sem inimigo (sem ele: 0), atravessa i-frames, mata, fonte "${FONTE_PERDA_HP}" no relatorio`;
+  } finally {
+    CONTEUDO.debug.relatorio = original;
+  }
+}
+
+function nascimentosEm(p, a, mods, semente) {
+  const e = avaliacaoCom(semente, mods, [], p, a);
+  let nascidos = 0;
+  while (e.run.avaliacao.decorrido < SEGUNDOS_NASCIMENTO && e.tela === TELAS.AVALIACAO) {
+    e.player.hp = e.player.hpMax;
+    atualizar(e, PASSO);
+    for (const ev of e.eventos) if (ev.tipo === 'inimigo-nasceu') nascidos += 1;
+    e.eventos.length = 0;
+    limparInimigos(e);
+    if (e.tela === TELAS.CARTA) escolherCarta(e, 0);
+  }
+  return nascidos;
+}
+
+// dificuldade: nenhum dos 6 mexe nela (quem mexe e a propria avaliacao, em
+// periodos), mas um modificador de dado que mexesse ganharia este teste.
+function provarDificuldade(mod) {
+  const onde = `${mod.emoji} ${mod.id}`;
+  const f = regrasEsperadas(dadosDaAvaliacao(0, 0), [mod.id]).dificuldade;
+  const com = nascimentosEm(0, 0, [mod.id], SEMENTE + 77);
+  const sem = nascimentosEm(0, 0, [], SEMENTE + 77);
+  if (f > 1 && !(com > sem)) falhar(0, `${onde}: dificuldade x${f} e nasceram ${com} contra ${sem}`);
+  if (f < 1 && !(com < sem)) falhar(0, `${onde}: dificuldade x${f} e nasceram ${com} contra ${sem}`);
+  return `${com} nascimentos em ${SEGUNDOS_NASCIMENTO}s (sem: ${sem})`;
+}
+
+// Toda regra de content.js tem prova. Regra nova sem entrada aqui derruba o
+// smoke: um modificador que a usasse passaria sem teste.
+const PROVA_DA_REGRA = {
+  velocidadeInicial: provarVelocidadeInicial,
+  recuperacaoVelocidade: provarVelocidadeInicial,
+  arena: provarArena,
+  coringas: provarCoringas,
+  hpInimigo: provarHpInimigo,
+  velocidadeInimigo: provarVelocidadeInimigo,
+  perdaHp: provarPerdaHp,
+  intervaloPerdaHp: provarPerdaHp,
+  dificuldade: provarDificuldade,
+};
+
+function provarModificador(mod) {
+  const regras = [...Object.keys(mod.fatores || {}), ...Object.keys(mod.somas || {})];
+  const provas = [];
+  for (const regra of regras) {
+    const prova = PROVA_DA_REGRA[regra];
+    if (!prova) falhar(0, `modificador ${mod.id}: a regra "${regra}" nao tem prova no smoke (PROVA_DA_REGRA)`);
+    if (!provas.includes(prova)) provas.push(prova);
+  }
+  const e = avaliacaoCom(SEMENTE + 69, [mod.id]);
+  conferirRegras(e, dadosDaAvaliacao(0, 0), [mod.id], `${mod.emoji} ${mod.id}`);
+  if (e.run.avaliacao.modificadores.join() !== mod.id) falhar(0, `${mod.id}: a avaliacao nao guardou o modificador`);
+  return provas.map((prova) => prova(mod)).join(' · ');
+}
+
+// Tarefa 3 e criterio de aceite: cada modificador, forcado, altera o que
+// promete — medido no comportamento, contra a mesma semente sem ele.
+function checarModificadores() {
+  const ids = CONTEUDO.modificadores.map((m) => m.id);
+  for (const id of MODIFICADORES_DO_DESIGN) if (!ids.includes(id)) falhar(0, `o modificador "${id}" do design §9 sumiu de content.js`);
+  for (const regra of Object.keys(CONTEUDO.regras)) {
+    if (!PROVA_DA_REGRA[regra]) falhar(0, `a regra "${regra}" de content.js nao tem prova no smoke (PROVA_DA_REGRA)`);
+  }
+  const linhas = CONTEUDO.modificadores.map((mod) => `${mod.emoji} ${mod.nome}: ${provarModificador(mod)}`);
+
+  // Dois juntos combinam: fatores multiplicam, somas somam.
+  const dois = ids.slice(0, 2);
+  conferirRegras(avaliacaoCom(SEMENTE + 69, dois), dadosDaAvaliacao(0, 0), dois, `combinacao ${dois.join('+')}`);
+
+  // Modificador novo so por content.js: um de mentira que so mexe em regras
+  // que ja existem age sem uma linha de codigo; um com a regra digitada errado
+  // e recusado pelo validador.
+  const original = CONTEUDO.modificadores.slice();
+  try {
+    const novo = { id: 'teste-mod', nome: 'Teste', emoji: '🧪', descricao: 'x', fatores: { hpInimigo: 2, velocidadeInimigo: 0.5 } };
+    CONTEUDO.modificadores.push(novo);
+    const { erros } = validarConteudo();
+    if (erros.length > 0) falhar(0, `modificador novo de mentira recusado pelo validador: ${erros.join(' | ')}`);
+    provarModificador(novo);
+    CONTEUDO.modificadores.pop();
+    CONTEUDO.modificadores.push({ ...novo, fatores: { hpInimgo: 2 } });
+    const errosTypo = validarConteudo().erros;
+    if (!errosTypo.some((m) => m.includes('hpInimgo'))) falhar(0, 'o validador aceitou um modificador com a regra "hpInimgo" (erro de digitacao)');
+  } finally {
+    CONTEUDO.modificadores.length = 0;
+    for (const m of original) CONTEUDO.modificadores.push(m);
+  }
+  return linhas;
+}
+
+// O sorteio do anuncio: N distintos, nenhum da avaliacao anterior, e 0 nao
+// gasta rng (a 1ª avaliacao da run joga com a semente de antes do sorteio).
+function checarSorteioDeModificadores() {
+  const estado = novoEstado(SEMENTE + 81);
+  const rng = estado.rng;
+  const ids = CONTEUDO.modificadores.map((m) => m.id);
+  const vistos = new Set();
+  let anteriores = [];
+  const destino = [];
+  for (let i = 0; i < 600; i += 1) {
+    const quantos = 1 + (i % 2);
+    sortearModificadores(rng, quantos, anteriores, destino);
+    if (destino.length !== quantos) falhar(0, `sorteio: pediu ${quantos} modificadores e veio ${destino.length}`);
+    if (new Set(destino).size !== destino.length) falhar(0, `sorteio: repetiu modificador na mesma avaliacao (${destino.join(', ')})`);
+    for (const id of destino) {
+      if (anteriores.includes(id)) falhar(0, `sorteio: "${id}" caiu em duas avaliacoes seguidas`);
+      if (!ids.includes(id)) falhar(0, `sorteio: "${id}" nao existe em content.js`);
+      vistos.add(id);
+    }
+    anteriores = destino.slice();
+  }
+  if (vistos.size !== ids.length) falhar(0, `sorteio: em 600 sorteios so ${vistos.size} de ${ids.length} modificadores apareceram`);
+  const s = JSON.stringify(rng);
+  sortearModificadores(rng, 0, anteriores, destino);
+  if (destino.length !== 0 || JSON.stringify(rng) !== s) falhar(0, 'sorteio: pedir 0 modificadores gastou rng ou devolveu algum');
+}
+
+// Tarefa 4 e pendencia 53: o anuncio e a carta tem atraso de abertura, e o
+// anuncio e uma tela parada (a avaliacao so nasce no "Comecar").
+function ticksAteLiberar(estado, liberado) {
+  let t = 0;
+  while (!liberado(estado) && t < 1000) {
+    atualizar(estado, PASSO);
+    t += 1;
+  }
+  return t;
+}
+
+function checarAnuncioECarta() {
+  const e = novoEstado(SEMENTE + 80);
+  iniciarRun(e);
+  const dados = dadosDaAvaliacao(0, 0);
+  if (e.tela !== TELAS.ANUNCIO) falhar(0, `iniciarRun foi a "${e.tela}", esperava o anuncio`);
+  if (e.run.proxima.periodoIndex !== 0 || e.run.proxima.avaliacaoIndex !== 0) falhar(0, 'o anuncio da run nova nao e o da 1a avaliacao');
+  if (e.run.proxima.modificadores.length !== dados.modificadores) falhar(0, 'o anuncio da 1a avaliacao sorteou modificadores de mais ou de menos');
+  if (anuncioLiberado(e)) falhar(0, 'anuncio: o "Comecar" ja vale no instante em que a tela abre');
+  const esperadoAnuncio = Math.ceil(CONTEUDO.anuncio.atrasoEntrada / PASSO - 1e-9);
+  // Com o direcional pressionado: se a simulacao rodasse no anuncio, o
+  // cronometro andaria e o jogador sairia do lugar ja no 1o tick (os inimigos
+  // so nasceriam depois do 1o intervalo de spawn, tarde demais para o teste).
+  const antes = { x: e.player.x, y: e.player.y, decorrido: e.run.avaliacao.decorrido };
+  e.input.eixoX = 1;
+  const tAnuncio = ticksAteLiberar(e, anuncioLiberado);
+  e.input.eixoX = 0;
+  if (Math.abs(tAnuncio - esperadoAnuncio) > 1) falhar(0, `anuncio: liberou em ${tAnuncio} ticks, esperava ~${esperadoAnuncio}`);
+  if (e.tela !== TELAS.ANUNCIO) falhar(0, `anuncio: a tela virou "${e.tela}" sozinha`);
+  if (e.run.avaliacao.decorrido !== antes.decorrido) {
+    falhar(0, `anuncio: o cronometro andou por tras da tela (${antes.decorrido} -> ${e.run.avaliacao.decorrido}s em ${tAnuncio} ticks)`);
+  }
+  if (e.player.x !== antes.x || e.player.y !== antes.y) {
+    falhar(0, `anuncio: o jogador andou por tras da tela (${antes.x},${antes.y} -> ${e.player.x},${e.player.y})`);
+  }
+  if (e.enemies.length > 0) falhar(0, 'anuncio: nasceram inimigos por tras da tela de anuncio');
+  if (!comecarProxima(e) || e.tela !== TELAS.AVALIACAO) falhar(0, `anuncio: o "Comecar" levou a "${e.tela}"`);
+  if (comecarProxima(e)) falhar(0, 'anuncio: comecarProxima agiu fora da tela de anuncio');
+  const armas = e.player.armas;
+  if (armas.length !== 1 || armas[0].id !== CONTEUDO.arma.inicial || armas[0].nivel !== 1) {
+    falhar(0, `a avaliacao comecou com as armas [${armas.map((x) => `${x.id}:${x.nivel}`).join(', ')}], esperava so a inicial no nivel 1`);
+  }
+  // A arma inicial nao volta sozinha (pendencia 21): sem arma, sem arma.
+  armas.length = 0;
+  atualizar(e, PASSO);
+  if (e.player.armas.length !== 0) falhar(0, 'a arma inicial foi reequipada no meio da avaliacao (garantirArmaInicial por tick)');
+
+  // Carta: duas de uma vez na fila, cada uma com o seu atraso.
+  limparInimigos(e);
+  e.player.xp = xpParaSubir(1) + xpParaSubir(2);
+  atualizar(e, PASSO);
+  if (e.tela !== TELAS.CARTA || e.cartas.fila < 1) falhar(0, `carta: dois niveis de XP e a tela ficou "${e.tela}" com fila ${e.cartas.fila}`);
+  if (cartaLiberada(e)) falhar(0, 'carta: a escolha ja vale no tick em que a carta abre');
+  const esperadoCarta = Math.ceil(CONTEUDO.cartas.atrasoEntrada / PASSO - 1e-9);
+  const tCarta = ticksAteLiberar(e, cartaLiberada);
+  if (Math.abs(tCarta - esperadoCarta) > 1) falhar(0, `carta: liberou em ${tCarta} ticks, esperava ~${esperadoCarta}`);
+  escolherCarta(e, 0);
+  atualizar(e, PASSO);
+  if (e.tela !== TELAS.CARTA) falhar(0, 'carta: a segunda carta da fila nao abriu');
+  if (cartaLiberada(e)) falhar(0, 'carta: a segunda carta da fila abriu ja liberada — o Enter da primeira escolheria a segunda');
+}
+
+// Criterio de aceite: nenhuma logica especial de "prova final" (nem de um
+// modificador especifico) em src/. Nenhum .js de logica pode ter como string
+// o id ou o tipo de uma avaliacao, nem o id de um modificador.
+function checarProvaFinalSoDado() {
+  const proibidos = new Set();
+  for (const periodo of CONTEUDO.periodos) {
+    for (const av of periodo.avaliacoes) {
+      proibidos.add(av.id);
+      proibidos.add(av.tipo);
+    }
+  }
+  for (const mod of CONTEUDO.modificadores) proibidos.add(mod.id);
+  const pasta = new URL('../src/', import.meta.url);
+  for (const nome of readdirSync(pasta)) {
+    if (!nome.endsWith('.js')) continue;
+    const texto = readFileSync(new URL(nome, pasta), 'utf8');
+    for (const m of texto.matchAll(/(['"])([^'"\\\n]*)\1/g)) {
+      if (proibidos.has(m[2])) {
+        falhar(0, `src/${nome} tem a string "${m[2]}" — logica especial de avaliacao ou modificador; isso mora em content.js`);
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------ fase 08: a run
+
+// Compra o que der: o mais caro que couber primeiro, ate acabar o credito ou
+// a vaga. Sem reroll e sem venda — e um jogador simples, nao um otimo.
+function comprarOQueDer(estado) {
+  const loja = estado.loja;
+  const ordem = [];
+  for (let i = 0; i < loja.quantidade; i += 1) if (loja.itens[i].id !== '') ordem.push(i);
+  ordem.sort((x, y) => loja.itens[y].preco - loja.itens[x].preco);
+  const comprados = [];
+  let gasto = 0;
+  for (const i of ordem) {
+    const item = loja.itens[i];
+    if (item.preco > estado.run.creditos || estado.run.coringas.length >= CONTEUDO.loja.teto) continue;
+    const preco = item.preco;
+    if (comprarItem(estado, i)) {
+      comprados.push(item.id);
+      gasto += preco;
+    }
+  }
+  return { comprados, gasto };
+}
+
+// Tarefa 6 e criterio de aceite: a run INTEIRA pelas portas do jogo — menu,
+// anuncio, avaliacao, boletim, loja, anuncio... TCC, menu — com o botDesvio.
+// Corre de dois jeitos, com a mesma semente:
+//   - `estrutural` (HP segurado e telemetria ligada): TEM que chegar ao TCC.
+//     Prova a maquina de estados, o sorteio sem repeticao, a virada de
+//     periodo e a telemetria (pendencia 50: uma run = UMA partida com as 9
+//     avaliacoes dentro).
+//   - de balanceamento (HP de verdade): a tabela da fase 13. Nao exige
+//     sobreviver — jogo dificil demais para o bot nao e jogo quebrado —, a
+//     tabela mostra onde e como a run acabou.
+// Devolve as linhas da tabela.
+function correrRunInteira(semente, { estrutural }) {
+  const original = CONTEUDO.debug.relatorio;
+  CONTEUDO.debug.relatorio = estrutural;
+  try {
+    const estado = novoEstado(semente);
+    const ordem = CONTEUDO.periodos.flatMap((p, pi) => p.avaliacoes.map((av, ai) => ({ pi, ai, id: av.id })));
+    const linhas = [];
+    let anteriores = [];
+    let tick = 0;
+    const comecou = Date.now();
+    iniciarRun(estado);
+
+    for (let n = 0; n < ordem.length; n += 1) {
+      const alvo = ordem[n];
+      const onde = `run inteira, avaliacao ${n + 1} (${alvo.id})`;
+      const prox = estado.run.proxima;
+      const dados = dadosDaAvaliacao(alvo.pi, alvo.ai);
+      if (estado.tela !== TELAS.ANUNCIO) falhar(tick, `${onde}: esperava o anuncio e a tela e "${estado.tela}"`);
+      if (prox.periodoIndex !== alvo.pi || prox.avaliacaoIndex !== alvo.ai) {
+        falhar(tick, `${onde}: o anuncio e o de periodos[${prox.periodoIndex}].avaliacoes[${prox.avaliacaoIndex}]`);
+      }
+      if (prox.modificadores.length !== dados.modificadores) {
+        falhar(tick, `${onde}: o anuncio sorteou ${prox.modificadores.length} modificadores, o dado pede ${dados.modificadores}`);
+      }
+      for (const id of prox.modificadores) {
+        if (anteriores.includes(id)) falhar(tick, `${onde}: "${id}" repetiu da avaliacao anterior`);
+      }
+      const mods = prox.modificadores.slice();
+      // O Enter duplo que saiu da loja nao comeca a prova: o anuncio espera.
+      tick += ticksAteLiberar(estado, anuncioLiberado);
+      if (!comecarProxima(estado)) falhar(tick, `${onde}: o "Comecar" do anuncio foi recusado`);
+      const av = estado.run.avaliacao;
+      if (av.id !== alvo.id || av.modificadores.join() !== mods.join()) {
+        falhar(tick, `${onde}: comecou "${av.id}" com [${av.modificadores}], o anuncio dizia "${alvo.id}" com [${mods}]`);
+      }
+      conferirRegras(estado, dados, mods, onde);
+      if (estado.player.armas.length !== 1 || estado.player.armas[0].id !== CONTEUDO.arma.inicial) {
+        falhar(tick, `${onde}: a avaliacao nao comecou com a arma inicial`);
+      }
+      const naMao = estado.run.coringas.map((c) => c.id);
+      const creditosAntes = estado.run.creditos;
+
+      while (!telaDeFim(estado)) {
+        tick += 1;
+        botDesvio(estado);
+        if (estrutural) estado.player.hp = estado.player.hpMax;
+        try {
+          atualizar(estado, PASSO);
+        } catch (err) {
+          falhar(tick, `${onde}: excecao: ${err && err.stack ? err.stack : err}`);
+        }
+        if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+        estado.eventos.length = 0;
+        if (tick % INTERVALO_VARREDURA === 0) {
+          const ruim = procurarNumeroInvalido(estado, 'estado', new Set(), 0);
+          if (ruim) falhar(tick, `${onde}: numero invalido: ${ruim}`);
+        }
+        if (av.decorrido > av.duracao + 5) falhar(tick, `${onde}: a avaliacao passou do cronometro sem terminar`);
+      }
+
+      const r = estado.run.resultado;
+      const linha = {
+        n: n + 1,
+        id: av.id,
+        materia: av.materia,
+        duracao: av.duracao,
+        dificuldade: av.regras.dificuldade,
+        mods,
+        aprovado: r.aprovado,
+        tempo: r.tempo,
+        nota: r.nota,
+        conceito: r.conceito,
+        kills: r.kills,
+        hp: r.hpFracao,
+        nivel: estado.player.nivel,
+        ganhos: r.creditos,
+        gasto: 0,
+        saldo: estado.run.creditos,
+        naMao,
+        comprados: [],
+      };
+      linhas.push(linha);
+      if (estado.tela === TELAS.JUBILADO) {
+        if (estrutural) falhar(tick, `${onde}: jubilado com o HP segurado`);
+        if (!sairDoResultado(estado) || estado.tela !== TELAS.MENU) falhar(tick, `${onde}: o jubilado levou a "${estado.tela}"`);
+        return { linhas, ticks: tick, ms: Date.now() - comecou, semente, jubilado: true };
+      }
+      if (estado.run.creditos !== creditosAntes + r.creditos) falhar(tick, `${onde}: os creditos nao somaram o boletim`);
+      if (!sairDoResultado(estado) || estado.tela !== TELAS.LOJA) falhar(tick, `${onde}: o boletim aprovado levou a "${estado.tela}"`);
+      const compra = comprarOQueDer(estado);
+      linha.gasto = compra.gasto;
+      linha.comprados = compra.comprados;
+      linha.saldo = estado.run.creditos;
+      if (linha.saldo !== creditosAntes + r.creditos - compra.gasto) falhar(tick, `${onde}: a loja cobrou diferente do preco`);
+      if (!seguirDaLoja(estado)) falhar(tick, `${onde}: o "Seguir" da loja foi recusado`);
+      anteriores = mods;
+    }
+
+    if (estado.tela !== TELAS.TCC) falhar(tick, `depois da loja da ultima avaliacao a tela e "${estado.tela}", esperava o TCC`);
+    // Um tick parado no TCC e outro no menu: a telemetria fecha a partida ao ver o menu.
+    atualizar(estado, PASSO);
+    if (!sairDoTcc(estado) || estado.tela !== TELAS.MENU) falhar(tick, `a saida do TCC foi a "${estado.tela}"`);
+    atualizar(estado, PASSO);
+    const resumo = { linhas, ticks: tick, ms: Date.now() - comecou, semente, jubilado: false };
+    if (!estrutural) return resumo;
+
+    const tel = estado.telemetria;
+    if (tel.partidas.length !== 1) falhar(tick, `a run inteira virou ${tel.partidas.length} partidas no relatorio, esperava 1`);
+    const partida = tel.partidas[0];
+    if (partida.avaliacoes.length !== ordem.length) {
+      falhar(tick, `a partida do relatorio tem ${partida.avaliacoes.length} avaliacoes, esperava ${ordem.length}`);
+    }
+    partida.avaliacoes.forEach((reg, i) => {
+      if (reg.id !== ordem[i].id || reg.situacao !== SITUACAO.APROVADO) {
+        falhar(tick, `relatorio: a ${i + 1}a avaliacao e "${reg.id}" (${reg.situacao}), esperava "${ordem[i].id}" aprovada`);
+      }
+      if (reg.modificadores.join() !== linhas[i].mods.join()) falhar(tick, `relatorio: "${reg.id}" registrou os modificadores errados`);
+      if (reg.fontesDano.some((f) => f.fonte === FONTE_DESCONHECIDA)) falhar(tick, `relatorio: "${reg.id}" tem dano de fonte desconhecida`);
+    });
+    if (partida.situacao !== SITUACAO.ENCERRADA) falhar(tick, `relatorio: a run terminada no TCC ficou "${partida.situacao}"`);
+    if (partida.creditos !== linhas[linhas.length - 1].saldo) falhar(tick, 'relatorio: os creditos da partida nao batem com o saldo final');
+    return resumo;
+  } finally {
+    CONTEUDO.debug.relatorio = original;
+  }
+}
+
+// Jubilado no meio da run: menu, partida fechada como jubilada no relatorio, e
+// o "Jogar" seguinte comeca do zero (sem save).
+function checarJubiladoNoMeioDaRun() {
+  const original = CONTEUDO.debug.relatorio;
+  CONTEUDO.debug.relatorio = true;
+  try {
+    const e = novoEstado(SEMENTE + 82);
+    comecarRun(e);
+    atualizar(e, PASSO);
+    e.run.avaliacao.decorrido = e.run.avaliacao.duracao - PASSO / 2;
+    atualizar(e, PASSO);
+    if (e.tela !== TELAS.RESULTADO) falhar(0, `jubilado no meio: a 1a avaliacao terminou em "${e.tela}"`);
+    sairDoResultado(e);
+    e.run.coringas.push(novaInstancia(CONTEUDO.coringas[0].id));
+    seguirDaLoja(e);
+    ticksAteLiberar(e, anuncioLiberado);
+    comecarProxima(e);
+    if (e.run.avaliacaoIndex !== 1 || e.tela !== TELAS.AVALIACAO) falhar(0, 'jubilado no meio: nao chegou a 2a avaliacao');
+    atualizar(e, PASSO);
+    const hpAntes = e.player.hp;
+    receberDano(e, e.player.hpMax * 3);
+    emitir(e, 'jogador-dano', { fonte: CONTEUDO.inimigos[0].id, dano: hpAntes - e.player.hp, hp: e.player.hp, x: e.player.x, y: e.player.y });
+    atualizar(e, PASSO);
+    if (e.tela !== TELAS.JUBILADO) falhar(0, `jubilado no meio: o golpe fatal levou a "${e.tela}"`);
+    if (!sairDoResultado(e) || e.tela !== TELAS.MENU) falhar(0, `jubilado no meio: o boletim levou a "${e.tela}", esperava o menu`);
+    atualizar(e, PASSO);
+    const partida = e.telemetria.partidas[e.telemetria.partidas.length - 1];
+    if (partida.avaliacoes.length !== 2 || partida.situacao !== SITUACAO.JUBILADO) {
+      falhar(0, `jubilado no meio: o relatorio tem ${partida.avaliacoes.length} avaliacoes e situacao "${partida.situacao}"`);
+    }
+    iniciarRun(e);
+    const run = e.run;
+    if (run.creditos !== 0 || run.coringas.length !== 0 || run.proxima.periodoIndex !== 0 || run.proxima.avaliacaoIndex !== 0) {
+      falhar(0, 'jubilado no meio: o "Jogar" seguinte herdou creditos, coringas ou a posicao da run anterior');
+    }
+  } finally {
+    CONTEUDO.debug.relatorio = original;
+  }
+}
+
+// A tabela da run: o instrumento de balanceamento da fase 13. Colunas de
+// largura fixa; os emojis ficam so no fim da linha, onde nao desalinham nada.
+function tabelaDaRun(linhas) {
+  const col = (texto, largura, direita = false) => (direita ? String(texto).padStart(largura) : String(texto).padEnd(largura));
+  const cab =
+    `${col('#', 2)} ${col('avaliacao', 36)} ${col('seg', 3, true)} ${col('dif', 4, true)} ${col('modificadores', 28)} ` +
+    `${col('nota', 7, true)} ${col('', 1)} ${col('kills', 5, true)} ${col('HP', 4, true)} ${col('niv', 3, true)} ` +
+    `${col('+cred', 5, true)} ${col('-loja', 5, true)} ${col('saldo', 5, true)}  coringas na prova (+ comprados na loja depois)`;
+  const saida = [cab, '-'.repeat(cab.length + 4)];
+  for (const l of linhas) {
+    const nota = l.aprovado ? formatarNota(l.nota) : `JUB ${l.tempo.toFixed(0)}s`;
+    const mao = l.naMao.length > 0 ? emojisDosCoringas(l.naMao.map((id) => ({ id }))) : '-';
+    const compra = l.comprados.length > 0 ? `  (+ ${emojisDosCoringas(l.comprados.map((id) => ({ id })))})` : '';
+    saida.push(
+      `${col(l.n, 2)} ${col(`${l.id} ${l.materia}`, 36)} ${col(l.duracao, 3, true)} ${col(l.dificuldade.toFixed(2), 4, true)} ` +
+        `${col(l.mods.length > 0 ? l.mods.join('+') : '-', 28)} ${col(nota, 7, true)} ${col(l.conceito || '-', 1)} ` +
+        `${col(l.kills, 5, true)} ${col(`${Math.round(l.hp * 100)}%`, 4, true)} ${col(l.nivel, 3, true)} ` +
+        `${col(`+${l.ganhos}`, 5, true)} ${col(`-${l.gasto}`, 5, true)} ${col(l.saldo, 5, true)}  ${mao}${compra}`
+    );
+  }
+  return saida;
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -2991,6 +3808,16 @@ checarEfeitosDosCoringas();
 checarCoringaNovoSoPorConteudo();
 checarLoja();
 checarRerollGratisESemNovidade();
+checarSorteioDeModificadores();
+checarAnuncioECarta();
+checarProvaFinalSoDado();
+checarJubiladoNoMeioDaRun();
+const modificadores = checarModificadores();
+// A semente da run da tabela: escolhida medindo, porque sorteia os 6
+// modificadores ao longo da run (SEMENTE+60 nao sorteia a Prova sem Consulta).
+const SEMENTE_RUN = SEMENTE + 61;
+const runEstrutural = correrRunInteira(SEMENTE_RUN, { estrutural: true });
+const runInteira = correrRunInteira(SEMENTE_RUN, { estrutural: false });
 const coringas = checarSeisCoringas();
 const corridaArma = checarArmaSozinha();
 const especializacao = checarArmasEspecializadas();
@@ -3002,7 +3829,7 @@ const relatorio = checarRelatorio();
 checarRelatorioFinsAlternativos();
 
 const estado = novoEstado(SEMENTE);
-iniciarAvaliacao(estado);
+comecarAvaliacao(estado);
 
 function rodarTick(estado, tick, { reiniciarAvaliacao = true } = {}) {
   botCircular(estado, tick);
@@ -3049,7 +3876,7 @@ function rodarTick(estado, tick, { reiniciarAvaliacao = true } = {}) {
     if (!sairDoResultado(estado)) falhar(tick, 'sairDoResultado() nao fechou a tela de fim de avaliacao');
     // Aprovado cai na loja, jubilado no menu (fase 07).
     if (!foraDaAvaliacao(estado)) falhar(tick, `depois da tela de fim a tela ficou "${estado.tela}"`);
-    if (reiniciarAvaliacao) iniciarAvaliacao(estado);
+    if (reiniciarAvaliacao) comecarAvaliacao(estado);
   }
 }
 
@@ -3063,7 +3890,7 @@ for (let tick = 1; tick <= TICKS; tick += 1) rodarTick(estado, tick);
 // desalinhada. Adianta-se o cronometro para o ultimo segundo e segura-se o hp
 // para que o encerramento seja o do timer, nao o de jubilamento.
 const TOLERANCIA_FIM = 120;
-if (foraDaAvaliacao(estado)) iniciarAvaliacao(estado);
+if (foraDaAvaliacao(estado)) comecarAvaliacao(estado);
 estado.run.avaliacao.decorrido = estado.run.avaliacao.duracao - 1;
 let extras = 0;
 // rodarTick ja sai da tela de fim assim que ela aparece (aprovado vai para a
@@ -3194,5 +4021,15 @@ console.log(
     ` e ${relatorio.regJubilado.situacao} com ${relatorio.regJubilado.golpes.length}` +
     ` · ${relatorio.reg.amostras.length} amostras · ${relatorio.reg.cartas.length} cartas` +
     ` · texto ${Object.entries(relatorio.tamanhos).map(([e, n]) => `${e}=${(n / 1024).toFixed(0)}KB`).join(' ')}` +
-    ` · corrida ${relatorio.msLigada}ms ligada / ${relatorio.msDesligada}ms desligada`
+    ` · corrida ${relatorio.msLigada}ms ligada / ${relatorio.msDesligada}ms desligada` +
+    // Fase 08: cada modificador forcado contra a mesma semente sem ele, e a
+    // run inteira — a tabela que a fase 13 le para balancear.
+    `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
+    modificadores.map((l) => `\n    ${l}`).join('') +
+    `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length} avaliacoes + ` +
+    `${runEstrutural.linhas.length} lojas ate o TCC em ${(runEstrutural.ms / 1000).toFixed(2)}s · 1 partida no relatorio` +
+    `\n  run inteira, balanceamento (botDesvio, HP de verdade, 1a carta, compra o mais caro que couber; SEMENTE+${SEMENTE_RUN - SEMENTE}, ` +
+    `${runInteira.ticks} ticks em ${(runInteira.ms / 1000).toFixed(2)}s): ` +
+    (runInteira.jubilado ? `JUBILADO na ${runInteira.linhas.length}a avaliacao` : 'chegou ao TCC') +
+    tabelaDaRun(runInteira.linhas).map((l) => `\n    ${l}`).join('')
 );

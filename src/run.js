@@ -1,16 +1,30 @@
 import { CONTEUDO } from '../data/content.js';
-import { emitir, iniciarAvaliacao, irParaTela, novaRun, TELAS } from './state.js';
+import { dadosDaAvaliacao, emitir, iniciarAvaliacao, irParaTela, novaRun, TELAS } from './state.js';
 import { aoIniciarAvaliacao } from './jokers.js';
+import { equiparArma } from './weapons.js';
+import { receberDano } from './player.js';
 
-// Fim de avaliacao: nota, conceito e creditos. Tudo aqui e funcao pura sobre
-// numeros — nenhum peso, nenhuma faixa e nenhum multiplicador mora neste
-// arquivo, todos vem de CONTEUDO.nota. O design §4 chama equilibrar pesoKill
-// contra pesoHp de "a decisao de tunning mais importante do jogo": tunar isso
-// nao pode exigir abrir um .js de logica.
+// A run e o fim de cada avaliacao.
 //
-// A fase 08 herda este arquivo para a run inteira (virar periodo, ir para o
-// TCC, decidir o que um jubilamento faz com a run). Hoje ele so fecha UMA
-// avaliacao.
+// A maquina de estados da run (fase 08). Cada seta e uma funcao daqui, menos
+// as duas que moram em outros arquivos (indicadas):
+//
+//   MENU --iniciarRun--> ANUNCIO --comecarProxima--> AVALIACAO (<-> CARTA, PAUSA)
+//   AVALIACAO --fecharAvaliacao (main.js observa o cronometro e o HP)-->
+//        RESULTADO --sairDoResultado (main.js)--> LOJA --seguirDaLoja (shop.js)-->
+//        avancarRun --> ANUNCIO da proxima, ou TCC depois da ultima
+//   AVALIACAO --HP zerou--> JUBILADO --sairDoResultado--> MENU (a run acabou; sem save)
+//   TCC --sairDoTcc--> MENU   (provisorio: a fase 10 poe A Banca aqui)
+//
+// Nada aqui sabe o que e uma Prova Final nem o que um modificador faz: a
+// Prova Final e so uma entrada de CONTEUDO.periodos com numeros maiores, e um
+// modificador so mexe em av.regras (state.js), que o resto do jogo le.
+//
+// Nota, conceito e creditos sao funcoes puras sobre numeros — nenhum peso,
+// nenhuma faixa e nenhum multiplicador mora neste arquivo, todos vem de
+// CONTEUDO.nota. O design §4 chama equilibrar pesoKill contra pesoHp de "a
+// decisao de tunning mais importante do jogo": tunar isso nao pode exigir
+// abrir um .js de logica.
 
 export const MOTIVO_TEMPO = 'tempo'; // o cronometro zerou: aprovado
 export const MOTIVO_JUBILADO = 'jubilado'; // o HP zerou
@@ -104,6 +118,7 @@ export function fecharAvaliacao(estado, motivo) {
 
   r.id = av.id;
   r.nome = av.nome;
+  r.materia = av.materia;
   r.periodo = av.periodo;
   r.motivo = motivo;
   r.aprovado = aprovado;
@@ -157,21 +172,58 @@ export function fecharAvaliacao(estado, motivo) {
   return r;
 }
 
+// ------------------------------------------------------------ a run inteira
+
 // "Jogar" no menu comeca uma run NOVA: sem isto os creditos de uma partida
 // jubilada vazariam para a seguinte. Fora do loop (clique de botao), entao
-// alocar a run aqui nao fere a regra de pool. A fase 08 herda esta funcao.
+// alocar a run aqui nao fere a regra de pool. A primeira avaliacao tambem
+// passa pelo anuncio: e ali que o jogador ve o periodo e a materia.
 export function iniciarRun(estado) {
   estado.run = novaRun();
-  comecarAvaliacao(estado, 0, 0);
+  anunciarAvaliacao(estado, 0, 0);
+}
+
+// Sorteia os modificadores da avaliacao (p, a) e abre a tela de anuncio. A
+// avaliacao em si so nasce no "Comecar" (comecarProxima): ate la a tela e
+// neutra, nada roda e a telemetria nao abre registro.
+export function anunciarAvaliacao(estado, periodoIndex, avaliacaoIndex) {
+  const dados = dadosDaAvaliacao(periodoIndex, avaliacaoIndex);
+  const prox = estado.run.proxima;
+  prox.periodoIndex = periodoIndex;
+  prox.avaliacaoIndex = avaliacaoIndex;
+  // Os anteriores sao os da avaliacao que acabou de ser jogada (na 1ª da run,
+  // o marcador vazio de novaRun).
+  sortearModificadores(estado.rng, dados.modificadores, estado.run.avaliacao.modificadores, prox.modificadores);
+  prox.abertaEm = estado.tempo;
+  irParaTela(estado, TELAS.ANUNCIO);
+  emitir(estado, 'avaliacao-anunciada', { id: dados.id, modificadores: prox.modificadores.slice() });
+}
+
+// O "Comecar" do anuncio (botao e Enter). Devolve false fora da tela.
+export function comecarProxima(estado) {
+  if (estado.tela !== TELAS.ANUNCIO) return false;
+  const prox = estado.run.proxima;
+  comecarAvaliacao(estado, prox.periodoIndex, prox.avaliacaoIndex, prox.modificadores);
+  return true;
+}
+
+// O atraso de abertura do anuncio (anuncio.atrasoEntrada). Quem checa e o
+// main.js, antes de chamar comecarProxima — como na loja.
+export function anuncioLiberado(estado) {
+  return estado.tela === TELAS.ANUNCIO && estado.tempo - estado.run.proxima.abertaEm >= CONTEUDO.anuncio.atrasoEntrada;
 }
 
 // Toda avaliacao de uma run comeca por aqui: o estado da avaliacao nasce
-// (state.js) e os coringas agem sobre ele. E o UNICO chamador do hook
+// (state.js, ja com as regras dos modificadores), os coringas agem sobre ele
+// e o jogador recebe a arma inicial. E o UNICO chamador do hook
 // aoIniciarAvaliacao — que tambem recalcula os atributos do jogador, entao
 // uma avaliacao aberta por outro caminho roda sem os coringas.
-export function comecarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0) {
-  iniciarAvaliacao(estado, periodoIndex, avaliacaoIndex);
+export function comecarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0, modificadores = undefined) {
+  iniciarAvaliacao(estado, periodoIndex, avaliacaoIndex, modificadores);
   aoIniciarAvaliacao(estado);
+  // Aqui, uma vez, e nao a cada tick em weapons.js (pendencia 21): o player
+  // acabou de nascer sem arma nenhuma.
+  equiparArma(estado, CONTEUDO.arma.inicial);
 }
 
 // A avaliacao que vem depois de (periodoIndex, avaliacaoIndex), ou null
@@ -185,16 +237,70 @@ export function proximaAvaliacao(periodoIndex, avaliacaoIndex, periodos = CONTEU
   return null;
 }
 
-// "Seguir" da loja. O MINIMO que a fase 07 precisava para a loja ter saida:
-// a proxima avaliacao da lista, virando o periodo quando ele acaba, e o menu
-// depois da ultima. A fase 08 e dona disto (anuncio de periodo, virada,
-// TCC) e deve substituir esta funcao, nao remendar.
+// "Seguir" da loja: anuncia a proxima avaliacao (virando o periodo quando ele
+// acaba) ou, depois da loja da ultima Prova Final, vai ao TCC. Devolve se
+// ainda havia avaliacao.
 export function avancarRun(estado) {
   const prox = proximaAvaliacao(estado.run.periodoIndex, estado.run.avaliacaoIndex);
   if (!prox) {
-    irParaTela(estado, TELAS.MENU);
+    irParaTela(estado, TELAS.TCC);
+    emitir(estado, 'tcc', null);
     return false;
   }
-  comecarAvaliacao(estado, prox.periodoIndex, prox.avaliacaoIndex);
+  anunciarAvaliacao(estado, prox.periodoIndex, prox.avaliacaoIndex);
   return true;
+}
+
+// A saida da tela provisoria do TCC (botao e Enter). A fase 10 substitui.
+export function sairDoTcc(estado) {
+  if (estado.tela !== TELAS.TCC) return false;
+  irParaTela(estado, TELAS.MENU);
+  return true;
+}
+
+// Sorteia `quantos` ids de modificador distintos, sem nenhum de `anteriores`
+// (design: o mesmo modificador nao cai em duas avaliacoes seguidas), e os
+// escreve em `destino`. Se sobrar menos candidato do que o pedido — o check
+// impede isso com os dados do jogo —, sai com o que houver. Nao gasta rng
+// quando `quantos` e 0, e por isso a 1ª avaliacao da run joga com a mesma
+// semente que jogava antes de existir sorteio.
+export function sortearModificadores(rng, quantos, anteriores, destino, lista = CONTEUDO.modificadores) {
+  destino.length = 0;
+  if (!(quantos > 0)) return destino;
+  const candidatos = [];
+  for (const mod of lista) if (!anteriores.includes(mod.id)) candidatos.push(mod.id);
+  while (destino.length < quantos && candidatos.length > 0) {
+    const i = rng.int(0, candidatos.length - 1);
+    destino.push(candidatos[i]);
+    candidatos.splice(i, 1);
+  }
+  return destino;
+}
+
+// ------------------------------------------------- regras que andam no tempo
+
+export const FONTE_PERDA_HP = 'perdaHp';
+
+// As regras da avaliacao que agem sozinhas a cada tick. Hoje so a perda de HP
+// (regras.perdaHp / intervaloPerdaHp; o Controle de Frequencia liga). Chamada
+// por main.js dentro da avaliacao, depois do cronometro andar.
+//
+// A perda ignora i-frames e nao da i-frames: com eles, cada perda deixaria o
+// jogador intocavel por um segundo a cada 12 e o modificador viraria bonus no
+// meio da horda. Pode matar (o jubilamento e o de sempre, no main.js) e o
+// Atestado pode segurar — passa por receberDano como qualquer dano.
+export function atualizarRegras(estado, dt) {
+  const av = estado.run.avaliacao;
+  const regras = av.regras;
+  if (!(regras.perdaHp > 0) || !(regras.intervaloPerdaHp > 0)) return;
+  av.relogioPerdaHp += dt;
+  if (av.relogioPerdaHp < regras.intervaloPerdaHp) return;
+  av.relogioPerdaHp -= regras.intervaloPerdaHp;
+  const player = estado.player;
+  const hpAntes = player.hp;
+  if (receberDano(estado, regras.perdaHp, true)) {
+    // Daqui, como enemies.js faz com o toque: sem o evento o relatorio
+    // chamaria esta perda de "fonte desconhecida" (pendencia 49).
+    emitir(estado, 'jogador-dano', { fonte: FONTE_PERDA_HP, dano: hpAntes - player.hp, hp: player.hp, x: player.x, y: player.y });
+  }
 }

@@ -20,6 +20,9 @@ import { xpParaSubir } from './player.js';
 // de EFEITOS) mais `params` (os numeros). Um efeito implementa um ou mais
 // hooks. Coringa novo com efeito existente entra so em content.js.
 //
+// Todo hook passa por coringasEmJogo(): e ali, e so ali, que a regra
+// `coringas` da avaliacao (🚫 Prova sem Consulta) desliga a mao inteira.
+//
 // A instancia de um coringa comprado mora em estado.run.coringas como
 // { id, contador, gasto }: tudo numero/booleano/string, o estado continua
 // serializavel. `contador` e memoria por avaliacao (Grupo de WhatsApp),
@@ -159,12 +162,29 @@ export function novaInstancia(id) {
 }
 
 // ------------------------------------------------------------------- hooks
-// Todos percorrem run.coringas (no maximo loja.teto) e saem na hora quando
-// ela esta vazia: sem coringa, o custo e uma comparacao.
+// Todos percorrem coringasEmJogo() (no maximo loja.teto) e saem na hora
+// quando ela esta vazia: sem coringa, o custo e uma comparacao.
+
+const NENHUM = [];
+
+// O UNICO lugar que le a regra `coringas` da avaliacao (0 = Prova sem
+// Consulta). Enquanto uma avaliacao com a regra desligada esta de pe, todo
+// hook ve a mao vazia; os coringas continuam na run e voltam na loja
+// seguinte (av.concluida), onde itensLoja ainda pergunta por eles.
+function coringasEmJogo(estado) {
+  const av = estado.run.avaliacao;
+  return av.regras.coringas > 0 || av.concluida ? estado.run.coringas : NENHUM;
+}
+
+// Para o HUD esmaecer a mao: a UI pergunta aqui em vez de ler a regra, e a
+// semantica (inclusive "voltam quando a avaliacao conclui") mora num lugar so.
+export function coringasDesligados(estado) {
+  return coringasEmJogo(estado) !== estado.run.coringas;
+}
 
 export function aoIniciarAvaliacao(estado) {
   aplicarAtributos(estado);
-  const lista = estado.run.coringas;
+  const lista = coringasEmJogo(estado);
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
     const dados = dadosDoCoringa(inst.id);
@@ -186,7 +206,7 @@ function aplicarAtributos(estado) {
 }
 
 export function modificarAtributo(estado, nome, valor) {
-  const lista = estado.run.coringas;
+  const lista = coringasEmJogo(estado);
   let v = valor;
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
@@ -202,7 +222,7 @@ export function modificarAtributo(estado, nome, valor) {
 // Math.max(dano, alvo.hp) — o HP exato que falta, e nao um numero enorme que
 // sairia no evento arma-acerto e no relatorio como dano.
 export function aoCalcularDano(estado, dano, alvo) {
-  const lista = estado.run.coringas;
+  const lista = coringasEmJogo(estado);
   let d = dano;
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
@@ -214,7 +234,7 @@ export function aoCalcularDano(estado, dano, alvo) {
 }
 
 export function aoMatarInimigo(estado, inimigo) {
-  const lista = estado.run.coringas;
+  const lista = coringasEmJogo(estado);
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
     const dados = dadosDoCoringa(inst.id);
@@ -224,7 +244,7 @@ export function aoMatarInimigo(estado, inimigo) {
 }
 
 export function aoGanharXp(estado, valor) {
-  const lista = estado.run.coringas;
+  const lista = coringasEmJogo(estado);
   let v = valor;
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
@@ -239,7 +259,7 @@ export function aoGanharXp(estado, valor) {
 // coringa o salvou. O primeiro que salvar encerra: dois Atestados nao gastam
 // juntos no mesmo golpe.
 export function aoReceberDanoFatal(estado, dano) {
-  const lista = estado.run.coringas;
+  const lista = coringasEmJogo(estado);
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
     const dados = dadosDoCoringa(inst.id);

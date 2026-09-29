@@ -63,6 +63,7 @@ export const CONTEUDO = {
     emojiSateliteFator: 2.2, // tamanho do emoji = raioColisao da caneta orbital x este fator
     corOndaTelegrafo: 'rgba(255, 210, 90, 0.55)', // anel do telegrafo do Resumo (comportamento ondaArea)
     corFeixe: 'rgba(255, 235, 59, 0.32)', // faixa translucida do Marca-texto (comportamento feixe)
+    corForaArena: 'rgba(0, 0, 0, 0.55)', // o que fica fora da arena encolhida (regras.arena < 1)
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -154,6 +155,11 @@ export const CONTEUDO = {
     // Nao e balanceamento final (isso e fase 13).
     pesoArmaNova: 2,
     pesoArmaNivel: 5,
+    // Segundos, depois de a carta abrir (e de cada carta seguinte da fila),
+    // em que escolher por clique ou tecla e ignorado. Com o Caderno a carta
+    // abre no 1º tick da avaliacao: sem isto, o Enter repetido ou o clique
+    // duplo no "Começar" do anuncio escolhia uma carta as cegas.
+    atrasoEntrada: 0.35,
     consolo: {
       id: 'lanche',
       nome: 'Lanche da Cantina',
@@ -509,42 +515,143 @@ export const CONTEUDO = {
     gradePasso: 48, // lado da celula da grade espacial que evita o O(n^2)
   },
 
-  // Modificadores de avaliacao (a "regra" daquela prova). Fases 06 e 09.
-  // Forma esperada: { id, nome, descricao, emoji, efeito }
-  modificadores: [],
+  // As REGRAS de uma avaliacao sem modificador nenhum. Toda avaliacao nasce
+  // com uma copia disto (state.js, novaAvaliacao) e o jogo le as regras de
+  // estado.run.avaliacao.regras — nunca daqui direto. Cada regra multiplica
+  // (ou liga) um numero que o jogo ja tinha:
+  //   dificuldade          x ajuste.dificuldade no spawn (a avaliacao multiplica
+  //                        pelo proprio `dificuldade`, e um modificador pode tambem)
+  //   arena                fracao da largura E da altura da arena, centrada
+  //   coringas             1 = coringas agem, 0 = desligados (so jokers.js le)
+  //   hpInimigo            x o `hp` de cada tipo de inimigo, no spawn
+  //   velocidadeInimigo    x a `velocidade` de cada tipo de inimigo, no spawn
+  //   velocidadeInicial    x a velocidade maxima do jogador no segundo 0...
+  //   recuperacaoVelocidade ...que volta a x1 em linha reta nestes segundos
+  //                        (0 = o fator vale a avaliacao inteira)
+  //   perdaHp              HP que o jogador perde a cada `intervaloPerdaHp` s
+  //   intervaloPerdaHp     (perdaHp 0 = nada acontece)
+  regras: {
+    dificuldade: 1,
+    arena: 1,
+    coringas: 1,
+    hpInimigo: 1,
+    velocidadeInimigo: 1,
+    velocidadeInicial: 1,
+    recuperacaoVelocidade: 0,
+    perdaHp: 0,
+    intervaloPerdaHp: 0,
+  },
 
-  // Estrutura da run: 3 periodos x (av1, av2, prova final) + TCC.
-  // Fases 06 e 08 acrescentam a cada avaliacao: modificadores, tabela de spawn
-  // e recompensa. Aqui ficam so nome e duracao, que a fase 00 ja usa no timer.
+  // Modificadores de avaliacao (design §9): a "regra" daquela prova, sorteada
+  // e anunciada antes de ela comecar. Um modificador NAO e codigo: e so dado
+  // que mexe nas `regras` acima.
+  //   { id, nome, emoji, descricao, fatores: { regra: x }, somas: { regra: +n } }
+  // `fatores` multiplicam a regra, `somas` somam a ela. Modificador novo que
+  // so mexa em regra que ja existe entra so aqui; um que precise de regra nova
+  // pede a regra em `regras` e o ponto do jogo que a le.
+  //
+  // A `descricao` repete os numeros em texto: mudou um, mude o outro (fase 13).
+  // Primeiro corte, sem medicao de balanceamento — os numeros sao os do design.
+  modificadores: [
+    {
+      id: 'aula7h',
+      nome: 'Aula das 7h',
+      emoji: '🌅',
+      descricao: 'Você começa a −40% de velocidade e só acorda de vez em 20s.',
+      fatores: { velocidadeInicial: 0.6 },
+      somas: { recuperacaoVelocidade: 20 },
+    },
+    {
+      id: 'salaLotada',
+      nome: 'Sala Lotada',
+      emoji: '🪑',
+      descricao: 'A arena encolhe para 65% da largura e da altura.',
+      fatores: { arena: 0.65 },
+    },
+    {
+      id: 'semConsulta',
+      nome: 'Prova sem Consulta',
+      emoji: '🚫',
+      descricao: 'Seus coringas ficam desativados nesta avaliação.',
+      fatores: { coringas: 0 },
+    },
+    {
+      id: 'professorRigido',
+      nome: 'Professor Rígido',
+      emoji: '👨‍🏫',
+      descricao: 'Inimigos com +40% de HP.',
+      fatores: { hpInimigo: 1.4 },
+    },
+    {
+      id: 'sexta18h',
+      nome: 'Sexta às 18h',
+      emoji: '🕕',
+      descricao: 'Inimigos com +35% de velocidade.',
+      fatores: { velocidadeInimigo: 1.35 },
+    },
+    {
+      id: 'frequencia',
+      nome: 'Controle de Frequência',
+      emoji: '📉',
+      descricao: 'Você perde 1 HP a cada 12s, aconteça o que acontecer.',
+      somas: { perdaHp: 1, intervaloPerdaHp: 12 },
+    },
+  ],
+
+  // Estrutura da run (design §2): 3 periodos x (av1, av2, prova final), com a
+  // loja depois de cada uma, e o TCC no fim. Cada avaliacao:
+  //   id, nome        identidade; `nome` e o que o HUD e o boletim mostram
+  //   materia         a disciplina: humor de graca e o jogador se localiza
+  //   tipo            so descricao (relatorio). NENHUM codigo le isto: a Prova
+  //                   Final e uma avaliacao como as outras, com numeros maiores
+  //   duracao         segundos do cronometro
+  //   dificuldade     x ajuste.dificuldade no spawn: divide o intervalo entre
+  //                   ondas E multiplica o tamanho da onda, entao o ritmo de
+  //                   nascimento cresce com o QUADRADO (1,3 da ~1,7x inimigos)
+  //   modificadores   quantos o anuncio sorteia (design §9: 1-2)
+  //
+  // A 1ª avaliacao da run nao sorteia modificador: ela ensina o jogo base, e e
+  // nela que os numeros medidos das fases 01-07 continuam valendo. A Prova
+  // Final e a "horda massiva com modificador pesado" do design so por dado:
+  // mais dificuldade, dois modificadores e mais tempo.
+  //
+  // Primeiro corte. A fase 13 mede a run inteira (tabela do smoke) e ajusta.
   periodos: [
     {
       id: 'periodo-1',
       nome: '1º Período',
       avaliacoes: [
-        { id: 'p1-av1', nome: 'Avaliação 1', tipo: 'comum', duracao: 60 },
-        { id: 'p1-av2', nome: 'Avaliação 2', tipo: 'comum', duracao: 60 },
-        { id: 'p1-final', nome: 'Prova Final', tipo: 'final', duracao: 75 },
+        { id: 'p1-av1', nome: 'Avaliação 1', materia: 'Cálculo I', tipo: 'comum', duracao: 60, dificuldade: 1, modificadores: 0 },
+        { id: 'p1-av2', nome: 'Avaliação 2', materia: 'Algoritmos', tipo: 'comum', duracao: 60, dificuldade: 1.05, modificadores: 1 },
+        { id: 'p1-final', nome: 'Prova Final', materia: 'Física Experimental', tipo: 'final', duracao: 75, dificuldade: 1.15, modificadores: 2 },
       ],
     },
     {
       id: 'periodo-2',
       nome: '2º Período',
       avaliacoes: [
-        { id: 'p2-av1', nome: 'Avaliação 1', tipo: 'comum', duracao: 65 },
-        { id: 'p2-av2', nome: 'Avaliação 2', tipo: 'comum', duracao: 65 },
-        { id: 'p2-final', nome: 'Prova Final', tipo: 'final', duracao: 80 },
+        { id: 'p2-av1', nome: 'Avaliação 1', materia: 'Estruturas de Dados', tipo: 'comum', duracao: 65, dificuldade: 1.1, modificadores: 1 },
+        { id: 'p2-av2', nome: 'Avaliação 2', materia: 'Álgebra Linear', tipo: 'comum', duracao: 65, dificuldade: 1.15, modificadores: 1 },
+        { id: 'p2-final', nome: 'Prova Final', materia: 'Cálculo II', tipo: 'final', duracao: 80, dificuldade: 1.25, modificadores: 2 },
       ],
     },
     {
       id: 'periodo-3',
       nome: '3º Período',
       avaliacoes: [
-        { id: 'p3-av1', nome: 'Avaliação 1', tipo: 'comum', duracao: 70 },
-        { id: 'p3-av2', nome: 'Avaliação 2', tipo: 'comum', duracao: 70 },
-        { id: 'p3-final', nome: 'Prova Final', tipo: 'final', duracao: 85 },
+        { id: 'p3-av1', nome: 'Avaliação 1', materia: 'Banco de Dados', tipo: 'comum', duracao: 70, dificuldade: 1.2, modificadores: 1 },
+        { id: 'p3-av2', nome: 'Avaliação 2', materia: 'Probabilidade e Estatística', tipo: 'comum', duracao: 70, dificuldade: 1.25, modificadores: 1 },
+        { id: 'p3-final', nome: 'Prova Final', materia: 'Compiladores', tipo: 'final', duracao: 85, dificuldade: 1.35, modificadores: 2 },
       ],
     },
   ],
+
+  // Tela de anuncio da avaliacao (antes de cada uma). Mesmo papel do
+  // loja.atrasoEntrada: quem saiu da loja com clique duplo, ou Enter
+  // repetido, nao comeca a prova sem ter lido os modificadores.
+  anuncio: {
+    atrasoEntrada: 0.35,
+  },
 
   // Nota, conceito e economia (design §4). A nota nao aprova nem reprova —
   // sobreviver ao cronometro ja aprova. Ela decide quantos creditos a loja
@@ -684,6 +791,13 @@ export const CONTEUDO = {
       resultado: 'Resultado',
       jubilado: 'Jubilado',
       loja: 'Loja',
+      anuncio: 'Anúncio',
+      tcc: 'TCC',
+    },
+    // A tela de anuncio monta a linha "Avaliação 1 · 1:00" e a lista de
+    // modificadores; o texto fixo (titulo, dica, botao) mora no index.html.
+    anuncio: {
+      semModificador: 'Sem modificadores: aula normal.',
     },
     // A loja: rotulos que ui.js monta com numeros do estado. O texto fixo
     // (titulo, dica de teclado) mora no index.html.
@@ -1155,9 +1269,100 @@ export function validarConteudo(conteudo = CONTEUDO) {
           idsAvaliacao.add(av.id);
         }
         exigeNumero(av.duracao, `${c}.duracao`, { min: 1 });
+        exigeNumero(av.dificuldade, `${c}.dificuldade`, { min: 0.1, max: 10 });
+        for (const campo of ['nome', 'materia']) {
+          if (typeof av[campo] !== 'string' || av[campo] === '') erros.push(`${c}.${campo}: ausente ou vazio`);
+        }
+        if (exigeNumero(av.modificadores, `${c}.modificadores`, { min: 0 }) && !Number.isInteger(av.modificadores)) {
+          erros.push(`${c}.modificadores: ${av.modificadores} precisa ser inteiro`);
+        }
       });
     });
+
+    // O sorteio nao repete um modificador da avaliacao anterior. Duas
+    // avaliacoes seguidas com N e M modificadores precisam de N + M distintos,
+    // senao a segunda sairia com menos do que o dado pede.
+    const lista = Array.isArray(conteudo.modificadores) ? conteudo.modificadores : [];
+    const seguidas = [];
+    for (const periodo of conteudo.periodos) {
+      for (const av of Array.isArray(periodo && periodo.avaliacoes) ? periodo.avaliacoes : []) {
+        if (av && typeof av.modificadores === 'number') seguidas.push(av);
+      }
+    }
+    for (let i = 0; i < seguidas.length; i += 1) {
+      const antes = i > 0 ? seguidas[i - 1].modificadores : 0;
+      if (antes + seguidas[i].modificadores > lista.length) {
+        erros.push(
+          `periodos: "${seguidas[i].id}" sorteia ${seguidas[i].modificadores} modificador(es) depois de uma ` +
+            `avaliacao com ${antes}, e so existem ${lista.length} — o sorteio sem repeticao nao fecha`
+        );
+      }
+    }
   }
+
+  // Regras neutras e modificadores. Um modificador so pode citar regra que
+  // existe: uma chave digitada errado seria um modificador que nao faz nada,
+  // anunciado na tela como se fizesse.
+  const regras = conteudo.regras;
+  if (exigeObjeto(regras, 'regras')) {
+    for (const [chave, valor] of Object.entries(regras)) exigeNumero(valor, `regras.${chave}`, { min: 0 });
+    if (regras.arena !== 1 || regras.coringas !== 1) {
+      erros.push('regras: arena e coringas neutros precisam valer 1 — sao elas que valem sem modificador');
+    }
+  }
+  if (Array.isArray(conteudo.modificadores) && regras) {
+    conteudo.modificadores.forEach((mod, i) => {
+      const c = `modificadores[${i}]`;
+      if (typeof mod !== 'object' || mod === null) return;
+      for (const campo of ['emoji', 'descricao']) {
+        if (typeof mod[campo] !== 'string' || mod[campo] === '') erros.push(`${c}.${campo}: ausente ou vazio`);
+      }
+      const efeito = { ...regras };
+      const declaradas = [];
+      for (const grupo of ['fatores', 'somas']) {
+        if (mod[grupo] === undefined) continue;
+        if (!exigeObjeto(mod[grupo], `${c}.${grupo}`)) continue;
+        for (const [chave, valor] of Object.entries(mod[grupo])) {
+          if (!(chave in regras)) {
+            erros.push(`${c}.${grupo}.${chave}: nao e uma regra (${Object.keys(regras).join(', ')})`);
+            continue;
+          }
+          if (!exigeNumero(valor, `${c}.${grupo}.${chave}`, { min: 0 })) continue;
+          const antes = efeito[chave];
+          efeito[chave] = grupo === 'fatores' ? efeito[chave] * valor : efeito[chave] + valor;
+          declaradas.push({ grupo, chave, valor, mudou: efeito[chave] !== antes });
+        }
+      }
+      // Cada chave declarada e uma promessa do anuncio ("+40% de HP"). Uma que
+      // deixa a regra no neutro (x1, +0, ou x qualquer coisa sobre neutro 0)
+      // passaria verde e o jogador leria um efeito que nao existe.
+      for (const d of declaradas) {
+        if (d.mudou && efeito[d.chave] !== regras[d.chave]) continue;
+        erros.push(
+          `${c}.${d.grupo}.${d.chave}: ${d.valor} deixa a regra no valor neutro (${regras[d.chave]}) — ` +
+            'o anuncio promete um efeito que nao existe'
+        );
+      }
+      if (declaradas.length === 0) erros.push(`${c}: nao mexe em regra nenhuma — seria anunciado e nao faria nada`);
+      if (efeito.perdaHp > 0 && !(efeito.intervaloPerdaHp > 0)) {
+        erros.push(`${c}: perdaHp ${efeito.perdaHp} sem intervaloPerdaHp — o HP sairia a cada tick`);
+      }
+      if (efeito.arena > 1) erros.push(`${c}: arena x${efeito.arena} passa da tela (o canvas e o tamanho maximo)`);
+      // Arena menor que o jogador com folga para desviar nao e modificador, e
+      // armadilha: 4 corpos de jogador e o minimo para ainda dar um passo.
+      const jogador = conteudo.jogador || {};
+      const arena = conteudo.arena || {};
+      const menor = Math.min(arena.largura || 0, arena.altura || 0) * efeito.arena;
+      if (typeof jogador.raio === 'number' && menor < jogador.raio * 8) {
+        erros.push(`${c}: arena x${efeito.arena} deixa ${menor.toFixed(0)}px no lado menor — nao cabe o jogador desviando`);
+      }
+    });
+  }
+
+  if (exigeObjeto(conteudo.anuncio, 'anuncio')) {
+    exigeNumero(conteudo.anuncio.atrasoEntrada, 'anuncio.atrasoEntrada', { min: 0, max: 2 });
+  }
+  if (conteudo.cartas) exigeNumero(conteudo.cartas.atrasoEntrada, 'cartas.atrasoEntrada', { min: 0, max: 2 });
 
   // Nota e faixas de conceito.
   if (exigeObjeto(conteudo.nota, 'nota')) {
@@ -1393,6 +1598,11 @@ export function validarConteudo(conteudo = CONTEUDO) {
             erros.push(`textos.loja.avisos.${campo}: ausente ou vazio`);
           }
         }
+      }
+    }
+    if (exigeObjeto(conteudo.textos.anuncio, 'textos.anuncio')) {
+      if (typeof conteudo.textos.anuncio.semModificador !== 'string' || conteudo.textos.anuncio.semModificador === '') {
+        erros.push('textos.anuncio.semModificador: ausente ou vazio');
       }
     }
     if (exigeObjeto(conteudo.textos.relatorio, 'textos.relatorio')) {

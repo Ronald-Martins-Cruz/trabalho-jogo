@@ -5,8 +5,17 @@ import { criarUi } from './ui.js';
 import { atualizarPlayer, atualizarOrbes } from './player.js';
 import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
-import { apontarCarta, atualizarCartas, escolherCarta, moverSelecaoCarta } from './cards.js';
-import { fecharAvaliacao, iniciarRun, MOTIVO_JUBILADO, MOTIVO_TEMPO } from './run.js';
+import { apontarCarta, atualizarCartas, cartaLiberada, escolherCarta, moverSelecaoCarta } from './cards.js';
+import {
+  anuncioLiberado,
+  atualizarRegras,
+  comecarProxima,
+  fecharAvaliacao,
+  iniciarRun,
+  MOTIVO_JUBILADO,
+  MOTIVO_TEMPO,
+  sairDoTcc,
+} from './run.js';
 import {
   abrirLoja,
   apontarLoja,
@@ -48,6 +57,8 @@ export function atualizar(estado, dt) {
     case TELAS.RESULTADO:
     case TELAS.JUBILADO:
     case TELAS.LOJA:
+    case TELAS.ANUNCIO:
+    case TELAS.TCC:
       // Nada roda: a partida inteira fica congelada por tras do overlay. Toda
       // tela nova entra aqui — o `default` congela igual, mas listar deixa
       // explicito que foi decisao, nao esquecimento.
@@ -74,6 +85,9 @@ function atualizarAvaliacao(estado, dt) {
   av.decorrido += dt;
   av.restante = Math.max(0, av.duracao - av.decorrido);
 
+  // As regras da avaliacao que agem com o tempo (perda de HP). Antes dos
+  // inimigos: a morte por ela cai no mesmo observador de sempre, logo abaixo.
+  atualizarRegras(estado, dt);
   atualizarInimigos(estado, dt);
   // Depois dos inimigos: as armas miram e os projeteis colidem com as posicoes
   // ja integradas deste quadro, nao com as do quadro anterior.
@@ -163,6 +177,9 @@ export function iniciar() {
     // a loja entra no lugar do menu.
     resultado: () => sairDoResultado(estado),
     jubilado: () => sairDoResultado(estado),
+    // Anuncio: o clique espera o atraso de abertura, como o Enter.
+    comecar: () => anuncioLiberado(estado) && comecarProxima(estado),
+    tcc: () => sairDoTcc(estado),
   });
   // Loja: como nas cartas, o mouse so aponta e confirma pelas funcoes de
   // shop.js, que escrevem no estado. Rerolar e seguir tambem apontam, para o
@@ -181,8 +198,10 @@ export function iniciar() {
   // Mouse na carta: a UI nao mexe no estado nem na classe CSS, so avisa qual
   // indice foi apontado ou escolhido. Mesmo caminho do teclado, e por isso
   // apontar com o mouse e confirmar com Enter leva a carta certa.
+  // O clique espera o atraso de abertura da carta (cartaLiberada), como a
+  // loja: o mouse parado onde a carta nasce nao escolhe as cegas.
   ui.ligarCartas(
-    (indice) => escolherCarta(estado, indice),
+    (indice) => cartaLiberada(estado) && escolherCarta(estado, indice),
     (indice) => apontarCarta(estado, indice)
   );
   // Botoes de relatorio (debug.relatorio): a UI pede um escopo, a montagem e
@@ -287,6 +306,18 @@ function ligarTeclado(estado) {
       ev.preventDefault();
       return;
     }
+    // Anuncio e TCC: as mesmas teclas. O anuncio espera o atraso de abertura
+    // e engole a tecla enquanto isso (o Enter que saiu da loja nao comeca a
+    // prova); fora dele, cai no resto.
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && estado.tela === TELAS.ANUNCIO) {
+      if (anuncioLiberado(estado)) comecarProxima(estado);
+      ev.preventDefault();
+      return;
+    }
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && sairDoTcc(estado)) {
+      ev.preventDefault();
+      return;
+    }
     if (aplicar(ev.code, true)) ev.preventDefault();
     // ev.repeat: segurar ESC repete o keydown ~30x/s e a pausa piscaria.
     if (ev.code === 'Escape' && !ev.repeat) alternarPausa(estado);
@@ -352,14 +383,16 @@ function teclaDaLoja(estado, code) {
 // Mouse pode falhar na apresentacao; teclado nao. 1/2/3 escolhe direto,
 // setas movem o cursor e Enter confirma. O indice sai do proprio nome da tecla
 // para acompanhar CONTEUDO.cartas.quantidade sem tabela para manter.
+// As teclas que escolhem esperam o atraso de abertura (cartaLiberada) e sao
+// engolidas enquanto isso; as setas nao, porque mover o cursor nao decide nada.
 function teclaDaCarta(estado, code) {
   if (/^(Digit|Numpad)[1-9]$/.test(code)) {
-    return escolherCarta(estado, Number(code.slice(-1)) - 1);
+    return !cartaLiberada(estado) || escolherCarta(estado, Number(code.slice(-1)) - 1);
   }
   if (code === 'ArrowLeft' || code === 'KeyA') return moverSelecaoCarta(estado, -1);
   if (code === 'ArrowRight' || code === 'KeyD') return moverSelecaoCarta(estado, 1);
   if (code === 'Enter' || code === 'Space' || code === 'NumpadEnter') {
-    return escolherCarta(estado, estado.cartas.selecionada);
+    return !cartaLiberada(estado) || escolherCarta(estado, estado.cartas.selecionada);
   }
   return false;
 }

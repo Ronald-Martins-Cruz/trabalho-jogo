@@ -32,7 +32,7 @@ const EPS = 1e-6;
 const CHAVES_DE_JOGO = [
   'ajuste', 'loop', 'arena', 'jogador', 'xp', 'xpOrbe', 'cartas', 'arma', 'projetil',
   'orbital', 'ondaArea', 'armas', 'coringas', 'loja', 'inimigos', 'spawn', 'separacao',
-  'modificadores', 'periodos', 'nota',
+  'modificadores', 'regras', 'periodos', 'nota',
 ];
 
 // ------------------------------------------------------------------ entrada
@@ -497,15 +497,26 @@ function sinaisDaAvaliacao(reg, a, conteudo) {
 
 // --------------------------------------------------------------- relatorios
 
+// "1º Período · Avaliação 2 · Algoritmos · modificadores: salaLotada". A
+// avaliacao de mesmo id muda de modificador a cada run (fase 08), e sem eles
+// no titulo duas avaliacoes iguais no nome seriam incomparaveis.
+function rotuloDaAvaliacao(reg) {
+  const partes = [reg.periodo, reg.nome];
+  if (reg.materia) partes.push(reg.materia);
+  const mods = Array.isArray(reg.modificadores) ? reg.modificadores : [];
+  partes.push(mods.length > 0 ? `modificadores: ${mods.join(', ')}` : 'sem modificador');
+  return partes.join(' · ');
+}
+
 function relatorioDaAvaliacao(tel, partida, reg, ambiente, config) {
   const analise = analisarAvaliacao(reg);
   const anteriores = partida.avaliacoes.filter((x) => x !== reg);
-  const titulo = `Avaliação ${reg.id} — ${reg.periodo} · ${reg.nome}`;
+  const titulo = `Avaliação ${reg.id} — ${rotuloDaAvaliacao(reg)}`;
   const partes = [
     `# Relatório de balanceamento — ${titulo}`,
     `> Semana de Provas · escopo **avaliação**: a ${ordinal(reg.indice)} avaliação da partida #${partida.numero} ` +
       `(${rotuloSituacao(partida.situacao)}). Resumo e leituras primeiro; tabelas depois; JSON completo no fim.`,
-    secaoContexto(tel, ambiente, config, `avaliação \`${reg.id}\` (${reg.periodo} · ${reg.nome}), ${ordinal(reg.indice)} da partida #${partida.numero}`),
+    secaoContexto(tel, ambiente, config, `avaliação \`${reg.id}\` (${rotuloDaAvaliacao(reg)}), ${ordinal(reg.indice)} da partida #${partida.numero}`),
     secaoSobreOJogo(),
     secaoComoLer(),
   ];
@@ -537,7 +548,7 @@ function relatorioDaPartida(tel, partida, ambiente, config) {
     tabelaDasAvaliacoes(partida.avaliacoes),
   ];
   partida.avaliacoes.forEach((reg, i) => {
-    partes.push(`## ${ordinal(reg.indice)} avaliação — ${reg.periodo} · ${reg.nome} (\`${reg.id}\`)`);
+    partes.push(`## ${ordinal(reg.indice)} avaliação — ${rotuloDaAvaliacao(reg)} (\`${reg.id}\`)`);
     partes.push(secoesDaAvaliacao(reg, analises[i], '###'));
   });
   partes.push(secaoConfiguracao(config), secaoJson());
@@ -712,7 +723,8 @@ function secaoConfiguracao(config) {
       `${v.cartas.pesoArmaNivel} · consolo +${v.cartas.consolo.valor} HP.`,
     `- **Spawn:** dificuldade global ×${v.ajuste.dificuldade} · teto de ${v.spawn.maxSimultaneos} vivos · até ` +
       `${v.spawn.porOndaMaximo} por onda · intervalo mínimo ${v.spawn.intervaloMinimo}s · nascem ${v.arena.margemSpawn}px ` +
-      `fora da arena de ${v.arena.largura}×${v.arena.altura}.`,
+      `fora da parede da arena de cada avaliação (a tela é ${v.arena.largura}×${v.arena.altura}; um modificador de ` +
+      'arena a encolhe em volta do centro).',
   ];
   if (v.coringas.length > 0) topicos.push(`- **Coringas:** ${v.coringas.map((c) => c.id).join(', ')}.`);
   if (v.modificadores.length > 0) topicos.push(`- **Modificadores:** ${v.modificadores.map((m) => m.id).join(', ')}.`);
@@ -741,8 +753,10 @@ function secaoConfiguracao(config) {
   partes.push('Armas, nível a nível:', tabela(['arma', 'nível', 'números'], linhasArmas));
   partes.push(
     tabela(
-      ['período', 'avaliação', 'id', 'tipo', 'duração (s)'],
-      v.periodos.flatMap((p) => p.avaliacoes.map((av) => [p.nome, av.nome, `\`${av.id}\``, av.tipo, av.duracao]))
+      ['período', 'avaliação', 'matéria', 'id', 'tipo', 'duração (s)', 'dificuldade', 'modificadores sorteados'],
+      v.periodos.flatMap((p) =>
+        p.avaliacoes.map((av) => [p.nome, av.nome, av.materia, `\`${av.id}\``, av.tipo, av.duracao, av.dificuldade, av.modificadores])
+      )
     )
   );
   return partes.join('\n\n');
@@ -771,9 +785,9 @@ function secoesDaAvaliacao(reg, a, h) {
     tabelaInimigos(a),
     `${h} Movimento e posição`,
     listaMovimento(a),
-    `Mapa de calor: % do tempo em cada região da arena (${CONTEUDO.arena.largura}×${CONTEUDO.arena.altura}px; ` +
-      'y cresce para baixo; o maior valor em negrito).',
-    mapaDeCalor(a),
+    `Mapa de calor: % do tempo em cada região da arena desta avaliação (${rotuloDaArena(arenaDoRegistro(reg))}; ` +
+      'rótulos em coordenadas da tela; y cresce para baixo; o maior valor em negrito).',
+    mapaDeCalor(a, arenaDoRegistro(reg)),
     `${h} Pressão`,
     listaPressao(a),
     `${h} Tempo de tela e desempenho`,
@@ -1025,17 +1039,35 @@ function listaMovimento(a) {
     .join('\n');
 }
 
-function mapaDeCalor(a) {
-  const { gradeColunas: colunas, gradeLinhas: linhas } = CONTEUDO.relatorio;
+// A telemetria mede parede, canto e grade relativos a arena da avaliacao
+// (menor com um modificador de arena). Registro sem ela: a tela inteira.
+function arenaDoRegistro(reg) {
+  if (reg && reg.arena) return reg.arena;
+  return { esquerda: 0, topo: 0, direita: CONTEUDO.arena.largura, base: CONTEUDO.arena.altura };
+}
+
+function rotuloDaArena(ar) {
   const { largura, altura } = CONTEUDO.arena;
+  const w = Math.round(ar.direita - ar.esquerda);
+  const h = Math.round(ar.base - ar.topo);
+  return w === largura && h === altura ? `${w}×${h}px, a tela inteira` : `${w}×${h}px dentro da tela de ${largura}×${altura}`;
+}
+
+function mapaDeCalor(a, arena) {
+  const { gradeColunas: colunas, gradeLinhas: linhas } = CONTEUDO.relatorio;
+  const { esquerda, topo } = arena;
+  const largura = arena.direita - esquerda;
+  const altura = arena.base - topo;
   const grade = a.movimento.grade;
   let maior = -1;
   for (const f of grade) if (Number.isFinite(f) && f > maior) maior = f;
   const cabecalho = ['y \\ x'];
-  for (let c = 0; c < colunas; c += 1) cabecalho.push(`${Math.round((c * largura) / colunas)}–${Math.round(((c + 1) * largura) / colunas)}`);
+  for (let c = 0; c < colunas; c += 1) {
+    cabecalho.push(`${Math.round(esquerda + (c * largura) / colunas)}–${Math.round(esquerda + ((c + 1) * largura) / colunas)}`);
+  }
   const corpo = [];
   for (let l = 0; l < linhas; l += 1) {
-    const linha = [`${Math.round((l * altura) / linhas)}–${Math.round(((l + 1) * altura) / linhas)}`];
+    const linha = [`${Math.round(topo + (l * altura) / linhas)}–${Math.round(topo + ((l + 1) * altura) / linhas)}`];
     for (let c = 0; c < colunas; c += 1) {
       const f = grade[l * colunas + c];
       const texto = pct(f);

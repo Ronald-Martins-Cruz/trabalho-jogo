@@ -36,8 +36,6 @@ const COMPORTAMENTOS = {
 // ------------------------------------------------------------------ armas
 
 export function atualizarArmas(estado, dt) {
-  garantirArmaInicial(estado);
-
   const player = estado.player;
   if (player.vivo) {
     for (let i = 0; i < player.armas.length; i += 1) {
@@ -73,15 +71,8 @@ function atualizarArma(estado, arma, dt) {
   comportamento(estado, arma, dados, nivel, dt);
 }
 
-// O jogador comeca toda avaliacao com a arma inicial. Fica aqui, e nao em
-// iniciarAvaliacao(), porque state.js importar weapons.js fecharia um ciclo
-// (weapons.js -> state.js, por causa de emitir). A fase 08, dona da run, deve
-// mover isto para a montagem da avaliacao junto com os coringas.
-function garantirArmaInicial(estado) {
-  if (estado.player.armas.length > 0) return;
-  equiparArma(estado, CONTEUDO.arma.inicial);
-}
-
+// A arma inicial (CONTEUDO.arma.inicial) e equipada uma vez, no comeco da
+// avaliacao, por run.js comecarAvaliacao() — nao mais a cada tick aqui.
 export function equiparArma(estado, id) {
   const dados = dadosDaArma(id);
   if (!dados) return null;
