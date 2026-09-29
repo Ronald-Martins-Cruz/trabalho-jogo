@@ -12,18 +12,50 @@ import { CONTEUDO } from '../data/content.js';
 import { novoEstado, iniciarAvaliacao, irParaTela, TELAS } from '../src/state.js';
 import { alternarPausa, atualizar, avancarRelogio, criarRelogio, sairDoResultado } from '../src/main.js';
 import {
+  avancarRun,
   calcularNota,
+  comecarAvaliacao,
   creditosDaFaixa,
   faixaDaNota,
   iniciarRun,
   MOTIVO_JUBILADO,
   MOTIVO_TEMPO,
+  proximaAvaliacao,
 } from '../src/run.js';
+import {
+  aoCalcularDano,
+  ATRIBUTOS,
+  HOOKS,
+  novaInstancia,
+  verificarCoringasDoConteudo,
+} from '../src/jokers.js';
+import {
+  abrirLoja,
+  apontarLoja,
+  AVISOS,
+  comprarItem,
+  confirmarLoja,
+  itensDaLoja,
+  LINHA_CORINGAS,
+  LINHA_VITRINE,
+  moverSelecaoLoja,
+  posicaoRerolar,
+  posicaoSeguir,
+  precoReroll,
+  rerolar,
+  rerolarTrazNovidade,
+  rerollsGratisDaLoja,
+  seguirDaLoja,
+  entradaLiberada,
+  trocarLinhaLoja,
+  valorDeVenda,
+  venderCoringa,
+} from '../src/shop.js';
 // ui.js nao toca no DOM no topo do modulo (criarUi recebe o `document`), entao
 // os formatadores puros da tela de resultado podem ser testados aqui — e a
 // primeira cobertura automatica que ui.js tem.
-import { armasDoBoletim, decomposicaoDaNota, formatarNota, resumoDoJubilado } from '../src/ui.js';
-import { spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
+import { armasDoBoletim, decomposicaoDaNota, formatarNota, resumoDoJubilado, rotuloDoReroll } from '../src/ui.js';
+import { aplicarDano, spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
 import {
   atualizarArmas,
   dadosDaArma,
@@ -35,7 +67,7 @@ import {
   verificarArmasDoConteudo,
 } from '../src/weapons.js';
 import { apontarCarta, escolherCarta, moverSelecaoCarta, verificarCartasDoConteudo } from '../src/cards.js';
-import { atualizarOrbes, poolOrbes, receberDano, soltarOrbeXp, xpParaSubir } from '../src/player.js';
+import { atualizarOrbes, atualizarPlayer, poolOrbes, receberDano, soltarOrbeXp, xpParaSubir } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
 import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
 import { analisarAvaliacao, ESCOPOS, gerarRelatorio } from '../src/relatorio.js';
@@ -72,6 +104,12 @@ const EPSILON = 1e-9;
 // menu, e todo o smoke procurava por TELAS.MENU.
 function telaDeFim(estado) {
   return estado.tela === TELAS.RESULTADO || estado.tela === TELAS.JUBILADO;
+}
+
+// Para onde sairDoResultado leva: a loja (aprovado) ou o menu (jubilado).
+// Antes da fase 07 as duas saidas eram o menu.
+function foraDaAvaliacao(estado) {
+  return estado.tela === TELAS.MENU || estado.tela === TELAS.LOJA;
 }
 
 // Teste de carga: `npm run smoke -- --carga` enche a arena ate o teto da pool
@@ -1764,7 +1802,8 @@ function checarTelaDeResultado() {
 
   // A saida: mesma funcao que o botao e o Enter chamam.
   if (!sairDoResultado(estado)) falhar(0, 'sairDoResultado() recusou a tela de resultado');
-  if (estado.tela !== TELAS.MENU) falhar(0, `sairDoResultado deixou a tela em "${estado.tela}"`);
+  // Fase 07: o aprovado vai para a loja (antes ia ao menu).
+  if (estado.tela !== TELAS.LOJA) falhar(0, `sairDoResultado deixou a tela em "${estado.tela}", esperava a loja`);
   if (sairDoResultado(estado)) falhar(0, 'sairDoResultado() agiu fora das telas de fim — ESC deixaria de pausar');
   if (!player.vivo) falhar(0, 'o jogador terminou morto numa avaliacao que acabou por tempo');
 }
@@ -2406,6 +2445,523 @@ function checarRelatorioFinsAlternativos() {
   }
 }
 
+// ------------------------------------------------------ coringas e loja (fase 07)
+
+// Os coringas sao achados pelo EFEITO, nunca pelo id: renomear um coringa em
+// content.js nao pode derrubar o teste que prova o efeito.
+function coringaComEfeito(efeito) {
+  const dados = CONTEUDO.coringas.find((c) => c.efeito === efeito);
+  if (!dados) falhar(0, `nenhum coringa em content.js usa o efeito "${efeito}"`);
+  return dados;
+}
+
+function checarCoringasDoConteudo() {
+  const problemas = verificarCoringasDoConteudo();
+  if (problemas.length > 0) falhar(0, `coringas de content.js: ${problemas.join(' | ')}`);
+  if (HOOKS.length !== 6) falhar(0, `a lista fechada de hooks tem ${HOOKS.length} entradas, o contrato define 6`);
+}
+
+// Tarefa 2: o Atestado e o coringa que mais exercita o sistema — golpe fatal,
+// memoria por run, e a loja que nao o vende de novo.
+function checarAtestado() {
+  const atestado = coringaComEfeito('sobreviverFatal');
+  const estado = novoEstado(SEMENTE + 40);
+  iniciarRun(estado);
+  estado.run.coringas.push(novaInstancia(atestado.id));
+  const player = estado.player;
+  const hpMax = player.hpMax;
+
+  // Golpe fatal: segura com params.hp, conta o dano de verdade e da i-frames.
+  if (!receberDano(estado, hpMax * 3)) falhar(0, 'Atestado: o golpe fatal nem foi aplicado');
+  if (!player.vivo) falhar(0, 'Atestado: o jogador morreu com o Atestado na mao');
+  if (player.hp !== atestado.params.hp) falhar(0, `Atestado: sobrou ${player.hp} de HP, esperava ${atestado.params.hp}`);
+  if (Math.abs(estado.run.avaliacao.danoTomado - (hpMax - atestado.params.hp)) > EPSILON) {
+    falhar(0, `Atestado: danoTomado ${estado.run.avaliacao.danoTomado}, esperava ${hpMax - atestado.params.hp}`);
+  }
+  if (!(player.invulneravel > 0)) falhar(0, 'Atestado: sobreviveu sem i-frames — o proximo inimigo mata no quadro seguinte');
+  if (!estado.eventos.some((e) => e.tipo === 'coringa-ativado')) falhar(0, 'Atestado: nenhum evento coringa-ativado');
+  if (!estado.run.coringasGastos.includes(atestado.id)) falhar(0, 'Atestado: nao entrou em run.coringasGastos');
+
+  // Segundo golpe fatal, mesma avaliacao: morre.
+  player.invulneravel = 0;
+  receberDano(estado, hpMax * 3);
+  if (player.vivo) falhar(0, 'Atestado: salvou duas vezes na mesma avaliacao');
+
+  // 1x por RUN: a avaliacao seguinte da mesma run nao ganha outro.
+  comecarAvaliacao(estado, 0, 1);
+  receberDano(estado, estado.player.hpMax * 3);
+  if (estado.player.vivo) falhar(0, 'Atestado: salvou de novo na avaliacao seguinte — era 1x por run');
+
+  // A loja nao vende um Atestado gasto, nem depois de vendido o usado.
+  estado.run.coringas.length = 0;
+  estado.run.creditos = 1e6;
+  estado.tela = TELAS.RESULTADO;
+  estado.run.conceito = CONTEUDO.nota.faixas[0].conceito;
+  abrirLoja(estado);
+  for (let i = 0; i < 40; i += 1) {
+    const ids = estado.loja.itens.slice(0, estado.loja.quantidade).map((it) => it.id);
+    if (ids.includes(atestado.id)) falhar(0, 'Atestado: a loja ofereceu de novo um coringa 1x-por-run ja gasto');
+    rerolar(estado);
+  }
+
+  // Run nova: o Atestado volta a valer.
+  iniciarRun(estado);
+  estado.run.coringas.push(novaInstancia(atestado.id));
+  receberDano(estado, estado.player.hpMax * 3);
+  if (!estado.player.vivo) falhar(0, 'Atestado: uma run nova herdou o Atestado gasto da anterior');
+}
+
+// Os efeitos de regra, cada um no hook dele, sem rodar partida.
+function checarEfeitosDosCoringas() {
+  // Vespera: dano x fator so nos ultimos N segundos.
+  const vespera = coringaComEfeito('danoNoFim');
+  const estado = novoEstado(SEMENTE + 41);
+  iniciarRun(estado);
+  estado.run.coringas.push(novaInstancia(vespera.id));
+  const av = estado.run.avaliacao;
+  av.restante = vespera.params.segundos + 1;
+  if (aoCalcularDano(estado, 10) !== 10) falhar(0, 'Vespera: mudou o dano fora da janela final');
+  av.restante = vespera.params.segundos;
+  if (Math.abs(aoCalcularDano(estado, 10) - 10 * vespera.params.fator) > EPSILON) {
+    falhar(0, `Vespera: dano ${aoCalcularDano(estado, 10)} na janela final, esperava ${10 * vespera.params.fator}`);
+  }
+
+  // Grupo de WhatsApp: soma por morte e zera na avaliacao seguinte.
+  const grupo = coringaComEfeito('danoPorMorte');
+  const e2 = novoEstado(SEMENTE + 42);
+  iniciarRun(e2);
+  const inst = novaInstancia(grupo.id);
+  e2.run.coringas.push(inst);
+  comecarAvaliacao(e2, 0, 0);
+  limparInimigos(e2);
+  const MORTES = 10;
+  // Mata pela porta de sempre: aplicarDano (enemies.js) e quem chama o hook.
+  for (let i = 0; i < MORTES; i += 1) {
+    const alvo = spawnInimigo(e2);
+    if (!alvo) falhar(0, 'Grupo de WhatsApp: spawnInimigo devolveu null');
+    if (!aplicarDano(e2, alvo, alvo.hp)) falhar(0, 'Grupo de WhatsApp: o golpe do teste nao matou');
+  }
+  if (inst.contador !== MORTES) falhar(0, `Grupo de WhatsApp: contou ${inst.contador} mortes de ${MORTES}`);
+  const esperado = 10 * (1 + grupo.params.porMorte * MORTES);
+  if (Math.abs(aoCalcularDano(e2, 10) - esperado) > EPSILON) {
+    falhar(0, `Grupo de WhatsApp: dano ${aoCalcularDano(e2, 10)} depois de ${MORTES} mortes, esperava ${esperado}`);
+  }
+  comecarAvaliacao(e2, 0, 1);
+  if (inst.contador !== 0) falhar(0, 'Grupo de WhatsApp: o bonus atravessou para a avaliacao seguinte');
+
+  // Caderno: a avaliacao abre com a carta do nivel seguinte no primeiro tick.
+  const caderno = coringaComEfeito('nivelInicial');
+  const e3 = novoEstado(SEMENTE + 43);
+  iniciarRun(e3);
+  e3.run.coringas.push(novaInstancia(caderno.id));
+  comecarAvaliacao(e3, 0, 0);
+  atualizar(e3, PASSO);
+  if (e3.tela !== TELAS.CARTA || e3.player.nivel !== 1 + caderno.params.niveis) {
+    falhar(0, `Caderno: primeiro tick em "${e3.tela}" no nivel ${e3.player.nivel}, esperava a carta no nivel ${1 + caderno.params.niveis}`);
+  }
+
+  // Atributos: Energetico e Wi-Fi mudam o player, e o player e o que o jogo le.
+  const e4 = novoEstado(SEMENTE + 44);
+  iniciarRun(e4);
+  const deAtributo = CONTEUDO.coringas.filter((c) => c.efeito === 'atributo');
+  for (const c of deAtributo) e4.run.coringas.push(novaInstancia(c.id));
+  comecarAvaliacao(e4, 0, 0);
+  for (const nome of ATRIBUTOS) {
+    let esperadoAtr = CONTEUDO.jogador[nome];
+    for (const c of deAtributo) if (c.params.atributo === nome) esperadoAtr *= c.params.fator;
+    if (Math.abs(e4.player[nome] - esperadoAtr) > EPSILON) {
+      falhar(0, `coringa de atributo: player.${nome} = ${e4.player[nome]}, esperava ${esperadoAtr}`);
+    }
+  }
+  // Velocidade: anda mesmo mais rapido, nao so guarda o numero.
+  e4.input.eixoX = 1;
+  for (let i = 0; i < 120; i += 1) atualizarPlayer(e4, PASSO);
+  const vel = Math.hypot(e4.player.vx, e4.player.vy);
+  if (Math.abs(vel - e4.player.velocidade) > 1e-6) {
+    falhar(0, `coringa de velocidade: o jogador anda a ${vel.toFixed(2)} px/s, o atributo diz ${e4.player.velocidade}`);
+  }
+}
+
+// Criterio de aceite: um coringa NOVO entra so por content.js, usando um
+// efeito que ja existe, sem tocar em jokers.js. Dois coringas de mentira sao
+// postos no proprio CONTEUDO (e tirados no finally): um de XP (hook
+// aoGanharXp, que nenhum coringa do MVP usa) e um de HP maximo.
+function checarCoringaNovoSoPorConteudo() {
+  const original = CONTEUDO.coringas.slice();
+  const xp = { id: 'teste-xp', nome: 'Teste XP', emoji: '🧪', descricao: 'x', preco: 10, raridade: 'barato', efeito: 'multiplicarXp', params: { fator: 2 } };
+  const hp = { id: 'teste-hp', nome: 'Teste HP', emoji: '🧪', descricao: 'x', preco: 10, raridade: 'barato', efeito: 'atributo', params: { atributo: 'hpMax', fator: 1.5 } };
+  try {
+    CONTEUDO.coringas.push(xp, hp);
+    const problemas = verificarCoringasDoConteudo();
+    if (problemas.length > 0) falhar(0, `coringa novo so por content.js foi recusado: ${problemas.join(' | ')}`);
+
+    const estado = novoEstado(SEMENTE + 45);
+    iniciarRun(estado);
+    estado.run.coringas.push(novaInstancia(xp.id), novaInstancia(hp.id));
+    comecarAvaliacao(estado, 0, 0);
+    const hpEsperado = CONTEUDO.jogador.hpMax * hp.params.fator;
+    if (estado.player.hpMax !== hpEsperado || estado.player.hp !== hpEsperado) {
+      falhar(0, `coringa novo de hpMax: player ${estado.player.hp}/${estado.player.hpMax}, esperava ${hpEsperado} cheio`);
+    }
+    const VALOR = 3;
+    const orbe = soltarOrbeXp(estado, estado.player.x, estado.player.y, VALOR);
+    orbe.vx = 0;
+    orbe.vy = 0;
+    const xpAntes = estado.player.xp;
+    atualizarOrbes(estado, PASSO);
+    if (estado.player.xp - xpAntes !== VALOR * xp.params.fator) {
+      falhar(0, `coringa novo de XP: o orbe de ${VALOR} rendeu ${estado.player.xp - xpAntes}, esperava ${VALOR * xp.params.fator}`);
+    }
+
+    checarCoringasNovosDaRevisao(xp);
+
+    // E o id duplicado e recusado.
+    CONTEUDO.coringas.push({ ...xp });
+    if (verificarCoringasDoConteudo().length === 0) falhar(0, 'verificarCoringasDoConteudo aceitou id de coringa repetido');
+    CONTEUDO.coringas.pop();
+    // E um efeito que nao existe tambem.
+    CONTEUDO.coringas.push({ ...xp, id: 'teste-typo', efeito: 'multiplicarXP' });
+    if (verificarCoringasDoConteudo().length === 0) falhar(0, 'verificarCoringasDoConteudo aceitou efeito inexistente');
+  } finally {
+    CONTEUDO.coringas.length = 0;
+    CONTEUDO.coringas.push(...original);
+  }
+}
+
+// Revisao da fase 07. Chamada de dentro do try de checarCoringaNovoSoPorConteudo
+// (o finally de la devolve CONTEUDO.coringas ao original). Mais coringas de
+// mentira, cada um provando uma coisa so por content.js:
+//   - dois do efeito nivelInicial SOMAM (o segundo achava a barra do primeiro
+//     ja cheia e dava 0 de XP);
+//   - hpMax com fator quebrado sai inteiro;
+//   - 'itensLoja' e 'opcoesCarta' sao consultados no ponto de uso (Monitoria
+//     e Xerox da expansao entram por eles).
+function checarCoringasNovosDaRevisao(modelo) {
+  const falso = (id, efeito, params) => ({ ...modelo, id, efeito, params });
+  const apostila = falso('teste-apostila', 'nivelInicial', { niveis: 1 });
+  const hpQuebrado = falso('teste-hp-quebrado', 'atributo', { atributo: 'hpMax', fator: 1.15 });
+  const menosItens = falso('teste-itens-loja', 'atributo', { atributo: 'itensLoja', fator: 0.5 });
+  const menosCartas = falso('teste-opcoes-carta', 'atributo', { atributo: 'opcoesCarta', fator: 0.5 });
+  CONTEUDO.coringas.push(apostila, hpQuebrado, menosItens, menosCartas);
+  const problemas = verificarCoringasDoConteudo();
+  if (problemas.length > 0) falhar(0, `coringas de teste da revisao recusados: ${problemas.join(' | ')}`);
+
+  // Caderno + outro nivelInicial: o primeiro tick sobe os niveis dos dois.
+  const caderno = coringaComEfeito('nivelInicial');
+  const e1 = novoEstado(SEMENTE + 51);
+  iniciarRun(e1);
+  e1.run.coringas.push(novaInstancia(caderno.id), novaInstancia(apostila.id));
+  comecarAvaliacao(e1, 0, 0);
+  atualizar(e1, PASSO);
+  const niveis = caderno.params.niveis + apostila.params.niveis;
+  if (e1.player.nivel !== 1 + niveis || e1.cartas.fila !== niveis) {
+    falhar(0, `dois coringas nivelInicial: nivel ${e1.player.nivel} com ${e1.cartas.fila} carta(s) na fila, esperava nivel ${1 + niveis} com ${niveis}`);
+  }
+
+  // hpMax x1,15 = 114,99999999999999 sem arredondar.
+  const e2 = novoEstado(SEMENTE + 52);
+  iniciarRun(e2);
+  e2.run.coringas.push(novaInstancia(hpQuebrado.id));
+  comecarAvaliacao(e2, 0, 0);
+  const hpEsperado = Math.round(CONTEUDO.jogador.hpMax * hpQuebrado.params.fator);
+  if (e2.player.hpMax !== hpEsperado || e2.player.hp !== hpEsperado) {
+    falhar(0, `hpMax com fator quebrado: player ${e2.player.hp}/${e2.player.hpMax}, esperava ${hpEsperado} inteiro e cheio`);
+  }
+
+  // Itens da loja: a vitrine pergunta o numero ao coringa na abertura.
+  const e3 = novoEstado(SEMENTE + 53);
+  iniciarRun(e3);
+  e3.run.coringas.push(novaInstancia(menosItens.id));
+  e3.run.conceito = CONTEUDO.nota.faixas[0].conceito;
+  e3.tela = TELAS.RESULTADO;
+  abrirLoja(e3);
+  const itensEsperados = Math.min(e3.loja.itens.length, Math.round(itensDaLoja(e3.run.conceito) * menosItens.params.fator));
+  if (e3.loja.quantidade !== itensEsperados) {
+    falhar(0, `coringa de itensLoja: a loja abriu ${e3.loja.quantidade} itens, esperava ${itensEsperados}`);
+  }
+
+  // Opcoes da carta: o sorteio pergunta o numero ao coringa; o resto dos
+  // slots fica vazio (tipo ''), que e o que ui.js esconde.
+  const e4 = novoEstado(SEMENTE + 54);
+  iniciarRun(e4);
+  e4.run.coringas.push(novaInstancia(menosCartas.id));
+  comecarAvaliacao(e4, 0, 0);
+  e4.player.xp = e4.player.xpProximo;
+  atualizar(e4, PASSO);
+  if (e4.tela !== TELAS.CARTA) falhar(0, `coringa de opcoesCarta: a carta nao abriu (tela "${e4.tela}")`);
+  const slots = e4.cartas.opcoes.length;
+  const opcoesEsperadas = Math.max(1, Math.min(slots, Math.round(CONTEUDO.cartas.quantidade * menosCartas.params.fator)));
+  const cheias = e4.cartas.opcoes.filter((o) => o.tipo !== '').length;
+  if (cheias !== opcoesEsperadas) falhar(0, `coringa de opcoesCarta: a carta mostrou ${cheias} de ${slots} opcoes, esperava ${opcoesEsperadas}`);
+}
+
+// Leva uma avaliacao ate o boletim aprovado e entra na loja pela porta de
+// sempre (sairDoResultado).
+function lojaAberta(semente, creditos) {
+  const contexto = montarCenarioCongelavel(semente);
+  correrAteOFim(contexto);
+  const { estado } = contexto;
+  if (estado.tela !== TELAS.RESULTADO) falhar(0, `cenario da loja terminou em "${estado.tela}"`);
+  estado.run.creditos = creditos;
+  if (!sairDoResultado(estado)) falhar(0, 'sairDoResultado recusou o boletim do cenario da loja');
+  if (estado.tela !== TELAS.LOJA) falhar(0, `o aprovado foi para "${estado.tela}", nao para a loja`);
+  return estado;
+}
+
+function idsNaVitrine(estado) {
+  return estado.loja.itens.slice(0, estado.loja.quantidade).map((it) => it.id);
+}
+
+// Tarefas 3 e 4: comprar, vender, rerolar, seguir, teto de 5, e o cursor que
+// mouse e teclado dividem.
+function checarLoja() {
+  const cfg = CONTEUDO.loja;
+  // Itens por conceito: 4 com B ou A, 3 no resto (design §5).
+  for (const faixa of CONTEUDO.nota.faixas) {
+    const esperado = faixa.conceito === 'A' || faixa.conceito === 'B' ? 4 : 3;
+    if (itensDaLoja(faixa.conceito) !== esperado) {
+      falhar(0, `loja: conceito ${faixa.conceito} mostra ${itensDaLoja(faixa.conceito)} itens, o design pede ${esperado}`);
+    }
+  }
+
+  const estado = lojaAberta(SEMENTE + 46, 0);
+  const loja = estado.loja;
+  if (loja.quantidade !== itensDaLoja(estado.run.conceito)) {
+    falhar(0, `loja: conceito ${estado.run.conceito} abriu ${loja.quantidade} itens, esperava ${itensDaLoja(estado.run.conceito)}`);
+  }
+  const ids = idsNaVitrine(estado);
+  if (ids.some((id) => id === '') || new Set(ids).size !== ids.length) falhar(0, `loja: vitrine com vazio ou repetido (${ids.join(', ')})`);
+
+  // Atraso de abertura (teclado E mouse): o Enter repetido ou o clique duplo
+  // do boletim nao compra.
+  if (entradaLiberada(estado)) falhar(0, 'loja: teclado/mouse ja compram no mesmo instante em que a loja abre');
+  for (let i = 0; i < Math.ceil(cfg.atrasoEntrada / PASSO) + 1; i += 1) atualizar(estado, PASSO);
+  if (!entradaLiberada(estado)) falhar(0, `loja: teclado/mouse continuam travados ${cfg.atrasoEntrada}s depois de abrir`);
+  if (estado.tela !== TELAS.LOJA) falhar(0, `loja: a tela saiu sozinha para "${estado.tela}"`);
+
+  // Sem credito: recusa, avisa, nao mexe em nada.
+  if (comprarItem(estado, 0)) falhar(0, 'loja: comprou sem credito');
+  if (loja.aviso !== AVISOS.SEM_CREDITOS || estado.run.coringas.length !== 0) falhar(0, 'loja: a recusa por credito nao avisou ou comprou assim mesmo');
+  if (rerolar(estado)) falhar(0, 'loja: rerolou sem credito');
+
+  estado.run.creditos = 10000;
+  // Mouse aponta o item 2, Enter compra o item 2 (pendencia 26): o cursor e
+  // um so, e e o estado.
+  const alvo = loja.itens[2].id;
+  if (!apontarLoja(estado, LINHA_VITRINE, 2)) falhar(0, 'loja: apontarLoja recusou o item 2');
+  const antes = estado.run.creditos;
+  if (!confirmarLoja(estado)) falhar(0, 'loja: Enter no item apontado nao comprou');
+  if (estado.run.coringas.length !== 1 || estado.run.coringas[0].id !== alvo) {
+    falhar(0, `loja: apontou "${alvo}" e comprou "${estado.run.coringas[0] && estado.run.coringas[0].id}"`);
+  }
+  if (antes - estado.run.creditos !== loja.itens[2].preco) falhar(0, 'loja: a compra nao cobrou o preco');
+  if (comprarItem(estado, 2) || loja.aviso !== AVISOS.VENDIDO) falhar(0, 'loja: vendeu o mesmo item duas vezes');
+
+  // Reroll: cobra o preco, o preco sobe, e nao oferece o que o jogador tem.
+  const preco1 = precoReroll(loja);
+  if (preco1 !== cfg.rerollBase) falhar(0, `loja: primeiro reroll custa ${preco1}, esperava ${cfg.rerollBase}`);
+  const c0 = estado.run.creditos;
+  if (!apontarLoja(estado, LINHA_VITRINE, posicaoRerolar(loja)) || !confirmarLoja(estado)) falhar(0, 'loja: Enter no rerolar nao rerolou');
+  if (c0 - estado.run.creditos !== preco1) falhar(0, 'loja: o reroll nao cobrou');
+  if (precoReroll(loja) !== cfg.rerollBase + cfg.rerollIncremento) falhar(0, 'loja: o preco do reroll nao subiu');
+  for (let i = 0; i < 30; i += 1) {
+    if (idsNaVitrine(estado).includes(alvo)) falhar(0, 'loja: o reroll ofereceu um coringa que o jogador ja tem');
+    rerolar(estado);
+  }
+
+  // Teto: enche ate loja.teto comprando de verdade.
+  let tentativas = 0;
+  while (estado.run.coringas.length < cfg.teto && tentativas < 200) {
+    tentativas += 1;
+    const i = loja.itens.findIndex((it, k) => k < loja.quantidade && it.id !== '' && !it.vendido);
+    if (i < 0 || !comprarItem(estado, i)) rerolar(estado);
+  }
+  if (estado.run.coringas.length !== cfg.teto) falhar(0, `loja: nao deu para chegar a ${cfg.teto} coringas`);
+  rerolar(estado);
+  const livre = loja.itens.findIndex((it, k) => k < loja.quantidade && it.id !== '' && !it.vendido);
+  if (livre >= 0) {
+    if (comprarItem(estado, livre)) falhar(0, `loja: comprou o ${cfg.teto + 1}º coringa — o teto nao segura`);
+    if (loja.aviso !== AVISOS.CHEIO) falhar(0, 'loja: a recusa do teto nao avisou');
+  }
+  if (estado.run.coringas.length !== cfg.teto) falhar(0, 'loja: o teto foi furado');
+
+  // Vender pelo cursor: linha de baixo, Enter.
+  if (!trocarLinhaLoja(estado) || loja.linha !== LINHA_CORINGAS) falhar(0, 'loja: nao deu para descer aos coringas do jogador');
+  moverSelecaoLoja(estado, 1);
+  const vendido = estado.run.coringas[loja.selecionada].id;
+  const c1 = estado.run.creditos;
+  if (!confirmarLoja(estado)) falhar(0, 'loja: Enter no coringa do jogador nao vendeu');
+  const devolvido = estado.run.creditos - c1;
+  const dados = CONTEUDO.coringas.find((c) => c.id === vendido);
+  if (devolvido !== Math.floor(dados.preco * cfg.fracaoVenda) || devolvido !== valorDeVenda(vendido)) {
+    falhar(0, `loja: vender "${vendido}" devolveu ${devolvido}, esperava ${Math.floor(dados.preco * cfg.fracaoVenda)}`);
+  }
+  if (estado.run.coringas.some((c) => c.id === vendido)) falhar(0, 'loja: o coringa vendido continua na run');
+  if (livre >= 0 && !comprarItem(estado, livre)) falhar(0, 'loja: depois de vender, o teto ainda nao deixou comprar');
+  // Vender tudo devolve o cursor para a vitrine.
+  apontarLoja(estado, LINHA_CORINGAS, 0);
+  while (estado.run.coringas.length > 0) venderCoringa(estado, 0);
+  if (loja.linha !== LINHA_VITRINE) falhar(0, 'loja: sem coringa nenhum o cursor ficou numa linha vazia');
+  if (trocarLinhaLoja(estado)) falhar(0, 'loja: o cursor desceu para uma linha de coringas vazia');
+
+  // Seguir: a proxima avaliacao, com os coringas da run agindo nela.
+  const energetico = coringaComEfeito('atributo');
+  estado.run.coringas.push(novaInstancia(energetico.id));
+  const indiceAntes = estado.run.avaliacaoIndex;
+  if (!apontarLoja(estado, LINHA_VITRINE, posicaoSeguir(loja)) || !confirmarLoja(estado)) falhar(0, 'loja: Enter no seguir nao saiu da loja');
+  if (estado.tela !== TELAS.AVALIACAO) falhar(0, `loja: seguir levou a "${estado.tela}"`);
+  if (estado.run.avaliacaoIndex !== indiceAntes + 1) falhar(0, 'loja: seguir nao avancou para a avaliacao seguinte');
+  const atr = energetico.params.atributo;
+  if (Math.abs(estado.player[atr] - CONTEUDO.jogador[atr] * energetico.params.fator) > EPSILON) {
+    falhar(0, `loja: a avaliacao seguinte comecou sem o coringa comprado (player.${atr} = ${estado.player[atr]})`);
+  }
+  if (seguirDaLoja(estado) || comprarItem(estado, 0) || rerolar(estado)) falhar(0, 'loja: acao da loja funcionou fora da loja');
+
+  // Fim da lista de avaliacoes: o seguir volta ao menu (a fase 08 poe o TCC).
+  const ultimoP = CONTEUDO.periodos.length - 1;
+  const ultimoA = CONTEUDO.periodos[ultimoP].avaliacoes.length - 1;
+  if (proximaAvaliacao(ultimoP, ultimoA) !== null) falhar(0, 'proximaAvaliacao: existe avaliacao depois da ultima');
+  const virada = proximaAvaliacao(0, CONTEUDO.periodos[0].avaliacoes.length - 1);
+  if (!virada || virada.periodoIndex !== 1 || virada.avaliacaoIndex !== 0) falhar(0, 'proximaAvaliacao: nao virou o periodo');
+  comecarAvaliacao(estado, ultimoP, ultimoA);
+  if (avancarRun(estado) || estado.tela !== TELAS.MENU) falhar(0, `avancarRun depois da ultima avaliacao foi a "${estado.tela}"`);
+}
+
+// Reroll gratis do conceito A (design §4) e a recusa de um reroll que nao
+// traria nada novo. Separado de checarLoja porque precisa escolher o conceito,
+// e aquele cenario sai do boletim real da semente.
+function checarRerollGratisESemNovidade() {
+  const cfg = CONTEUDO.loja;
+  const faixas = CONTEUDO.nota.faixas;
+  const comGratis = faixas.find((f) => f.rerollsGratis > 0);
+  const semGratis = faixas.find((f) => f.rerollsGratis === 0);
+  if (!comGratis) falhar(0, 'loja: nenhum conceito da reroll gratis — o design §4 da 1 ao A');
+  if (rerollsGratisDaLoja('A') !== 1) falhar(0, `loja: o A da ${rerollsGratisDaLoja('A')} rerolls gratis, o design §4 pede 1`);
+
+  const abrir = (semente, faixa, creditos) => {
+    const estado = novoEstado(semente);
+    iniciarRun(estado);
+    estado.tela = TELAS.RESULTADO;
+    estado.run.conceito = faixa.conceito;
+    estado.run.creditos = creditos;
+    abrirLoja(estado);
+    return estado;
+  };
+
+  // Com o gratis: sem credito nenhum, o reroll sai; depois o pago comeca do
+  // preco base (o gratis nao encarece o seguinte).
+  const e1 = abrir(SEMENTE + 48, comGratis, 0);
+  if (e1.loja.gratis !== comGratis.rerollsGratis) falhar(0, `loja: conceito ${comGratis.conceito} abriu com ${e1.loja.gratis} rerolls gratis`);
+  if (precoReroll(e1.loja) !== 0) falhar(0, 'loja: o reroll gratis tem preco');
+  if (rotuloDoReroll(precoReroll(e1.loja)).indexOf(CONTEUDO.textos.loja.gratis) < 0) falhar(0, 'loja: o botao nao diz que o reroll e gratis');
+  for (let i = 0; i < comGratis.rerollsGratis; i += 1) {
+    if (!rerolar(e1)) falhar(0, 'loja: o reroll gratis foi recusado por falta de credito');
+  }
+  if (e1.run.creditos !== 0) falhar(0, 'loja: o reroll gratis cobrou');
+  if (precoReroll(e1.loja) !== cfg.rerollBase) falhar(0, `loja: depois do gratis o reroll custa ${precoReroll(e1.loja)}, esperava ${cfg.rerollBase}`);
+  if (rotuloDoReroll(cfg.rerollBase).indexOf(String(cfg.rerollBase)) < 0) falhar(0, 'loja: o botao de reroll nao mostra o preco');
+  if (rerolar(e1) || e1.loja.aviso !== AVISOS.SEM_CREDITOS) falhar(0, 'loja: acabou o gratis e o reroll saiu sem credito');
+
+  // Sem o gratis: o primeiro reroll ja e pago.
+  if (semGratis) {
+    const e2 = abrir(SEMENTE + 49, semGratis, 0);
+    if (e2.loja.gratis !== 0 || precoReroll(e2.loja) !== cfg.rerollBase) falhar(0, `loja: conceito ${semGratis.conceito} ganhou reroll gratis`);
+  }
+
+  // Sem novidade: o jogador tem tudo o que nao esta na vitrine. Rerrolar so
+  // embaralharia a ordem — recusa e nao cobra.
+  const e3 = abrir(SEMENTE + 50, semGratis || comGratis, 1000);
+  const vitrine = idsNaVitrine(e3);
+  for (const c of CONTEUDO.coringas) if (!vitrine.includes(c.id)) e3.run.coringas.push(novaInstancia(c.id));
+  if (rerolarTrazNovidade(e3)) falhar(0, 'loja: rerolarTrazNovidade viu novidade com a vitrine mostrando tudo o que sobra');
+  const antes = e3.run.creditos;
+  if (rerolar(e3) || e3.loja.aviso !== AVISOS.SEM_NOVIDADE) falhar(0, 'loja: rerrolou sem nada novo para sortear');
+  if (e3.run.creditos !== antes) falhar(0, 'loja: a recusa por falta de novidade cobrou');
+  // Vendeu um que nao esta a venda: volta a haver o que sortear.
+  e3.run.coringas.pop();
+  if (!rerolarTrazNovidade(e3) || !rerolar(e3)) falhar(0, 'loja: com um coringa livre fora da vitrine o reroll continuou recusado');
+
+  // Fora da loja nada esta liberado, nem depois do atraso.
+  e3.tela = TELAS.MENU;
+  if (entradaLiberada(e3)) falhar(0, 'loja: entradaLiberada fora da tela da loja');
+}
+
+// Tarefa 5, nos numeros: um coringa caro custa mais que uma avaliacao boa
+// rende. "Boa" e o desvio (a regua de quem joga bem) — o boletim real dele.
+function checarGuardarDinheiro(desvio) {
+  const creditos = creditosDaFaixa(faixaDaNota(desvio.nota));
+  const caros = CONTEUDO.coringas.filter((c) => c.raridade === 'caro');
+  if (caros.length === 0) falhar(0, 'nenhum coringa caro: guardar dinheiro nunca e necessario');
+  for (const c of caros) {
+    if (c.preco <= creditos) {
+      falhar(0, `"${c.id}" custa ${c.preco} e uma avaliacao boa (desvio, ${desvio.conceito}) rende ${creditos}: nao ha motivo para guardar`);
+    }
+  }
+  return { creditos, caros: caros.map((c) => `${c.emoji}${c.preco}`).join(' ') };
+}
+
+// Tarefa 6: uma avaliacao inteira com os 6 coringas forcados (acima do teto,
+// de proposito) contra a mesma semente sem nenhum. Nada pode quebrar e o dano
+// causado tem que subir. E a rede de seguranca da fase 13.
+//
+// O dano comparado e o NOMINAL (o que os golpes levam depois dos hooks), nao
+// o efetivo: na avaliacao 1 o bot ja mata quase tudo o que nasce, entao o
+// efetivo e limitado pelo HP somado do que nasceu e mal se mexe (+2% medido)
+// — um aoCalcularDano desligado passaria despercebido por ele.
+function correrComCoringas(forcar) {
+  const estado = novoEstado(SEMENTE + 47);
+  iniciarRun(estado);
+  if (forcar) {
+    for (const c of CONTEUDO.coringas) estado.run.coringas.push(novaInstancia(c.id));
+    comecarAvaliacao(estado, 0, 0);
+  }
+  let dano = 0;
+  let efetivo = 0;
+  let tick = 0;
+  while (!telaDeFim(estado) && tick < TICKS_AVALIACAO_COMPLETA) {
+    tick += 1;
+    botDesvio(estado);
+    try {
+      atualizar(estado, PASSO);
+    } catch (e) {
+      falhar(tick, `excecao na avaliacao com ${forcar ? '6' : '0'} coringas: ${e && e.stack ? e.stack : e}`);
+    }
+    for (const ev of estado.eventos) {
+      if (ev.tipo !== 'arma-acerto') continue;
+      dano += ev.dados.dano;
+      efetivo += ev.dados.efetivo;
+    }
+    estado.eventos.length = 0;
+    if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+    if (tick % INTERVALO_VARREDURA === 0) {
+      const ruim = procurarNumeroInvalido(estado, 'estado', new Set(), 0);
+      if (ruim) falhar(tick, `numero invalido com ${forcar ? '6' : '0'} coringas: ${ruim}`);
+    }
+  }
+  if (!telaDeFim(estado)) falhar(tick, 'a avaliacao com coringas nao terminou');
+  const r = estado.run.resultado;
+  const grupo = estado.run.coringas.find((c) => CONTEUDO.coringas.find((d) => d.id === c.id).efeito === 'danoPorMorte');
+  return { dano, efetivo, kills: r.kills, nota: r.nota, conceito: r.conceito, jubilado: estado.tela === TELAS.JUBILADO, hp: r.hpFracao, nivel: estado.player.nivel, grupo, estado };
+}
+
+function checarSeisCoringas() {
+  const sem = correrComCoringas(false);
+  const com = correrComCoringas(true);
+  if (com.jubilado) falhar(0, 'com os 6 coringas o bot que desvia foi jubilado');
+  if (!(com.dano > sem.dano)) {
+    falhar(0, `dano com os 6 coringas (${com.dano.toFixed(0)}) nao passou do dano sem nenhum (${sem.dano.toFixed(0)})`);
+  }
+  if (com.grupo && com.grupo.contador !== com.kills) {
+    falhar(0, `Grupo de WhatsApp contou ${com.grupo.contador} mortes e o boletim tem ${com.kills}`);
+  }
+  return { sem, com };
+}
+
+function descreverComCoringas(c) {
+  const fim = c.jubilado ? 'JUBILADO' : `NOTA ${formatarNota(c.nota)} ${c.conceito}`;
+  return `dano ${c.dano.toFixed(0)} (efetivo ${c.efetivo.toFixed(0)}) · ${c.kills} mortos · ${fim} · ${Math.round(c.hp * 100)}% HP · nivel ${c.nivel}`;
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -2429,11 +2985,19 @@ checarTelaDeResultado();
 checarTelaDeJubilado();
 checarNovaRunZeraCreditos();
 checarPausa();
+checarCoringasDoConteudo();
+checarAtestado();
+checarEfeitosDosCoringas();
+checarCoringaNovoSoPorConteudo();
+checarLoja();
+checarRerollGratisESemNovidade();
+const coringas = checarSeisCoringas();
 const corridaArma = checarArmaSozinha();
 const especializacao = checarArmasEspecializadas();
 const progressao = checarProgressao();
 const boletim = checarAvaliacaoCompleta();
 const estilos = checarCantoContraDesvio();
+const economia = checarGuardarDinheiro(estilos.desvio);
 const relatorio = checarRelatorio();
 checarRelatorioFinsAlternativos();
 
@@ -2483,7 +3047,8 @@ function rodarTick(estado, tick, { reiniciarAvaliacao = true } = {}) {
     contadores.notas.push(estado.run.resultado.nota);
     contadores.conceitos.push(estado.run.resultado.conceito || '-');
     if (!sairDoResultado(estado)) falhar(tick, 'sairDoResultado() nao fechou a tela de fim de avaliacao');
-    if (estado.tela !== TELAS.MENU) falhar(tick, `depois da tela de fim a tela ficou "${estado.tela}"`);
+    // Aprovado cai na loja, jubilado no menu (fase 07).
+    if (!foraDaAvaliacao(estado)) falhar(tick, `depois da tela de fim a tela ficou "${estado.tela}"`);
     if (reiniciarAvaliacao) iniciarAvaliacao(estado);
   }
 }
@@ -2498,17 +3063,18 @@ for (let tick = 1; tick <= TICKS; tick += 1) rodarTick(estado, tick);
 // desalinhada. Adianta-se o cronometro para o ultimo segundo e segura-se o hp
 // para que o encerramento seja o do timer, nao o de jubilamento.
 const TOLERANCIA_FIM = 120;
-if (estado.tela === TELAS.MENU) iniciarAvaliacao(estado);
+if (foraDaAvaliacao(estado)) iniciarAvaliacao(estado);
 estado.run.avaliacao.decorrido = estado.run.avaliacao.duracao - 1;
 let extras = 0;
-// rodarTick ja sai da tela de fim (e vai para o menu) assim que ela aparece,
-// entao o alvo aqui e o MENU: e ele que prova que o ciclo inteiro fechou.
-while (estado.tela !== TELAS.MENU && extras < TOLERANCIA_FIM) {
+// rodarTick ja sai da tela de fim assim que ela aparece (aprovado vai para a
+// LOJA, jubilado para o MENU), entao o alvo aqui e qualquer um dos dois
+// (foraDaAvaliacao): e ele que prova que o ciclo inteiro fechou.
+while (!foraDaAvaliacao(estado) && extras < TOLERANCIA_FIM) {
   extras += 1;
   estado.player.hp = estado.player.hpMax;
   rodarTick(estado, TICKS + extras, { reiniciarAvaliacao: false });
 }
-if (estado.tela !== TELAS.MENU) {
+if (!foraDaAvaliacao(estado)) {
   falhar(TICKS + extras, `a avaliacao nao encerrou ${TOLERANCIA_FIM} ticks depois da duracao`);
 }
 if (!contadores.porTipo['avaliacao-fim']) {
@@ -2612,6 +3178,9 @@ console.log(
   parado no canto (SEMENTE+12): ${descreverCorrida(estilos.canto)}` +
     `
   desviando (SEMENTE+13): ${descreverCorrida(estilos.desvio)}` +
+    `\n  6 coringas (desvio, SEMENTE+47): SEM ${descreverComCoringas(coringas.sem)}` +
+    `\n                                 COM ${descreverComCoringas(coringas.com)}` +
+    `\n  economia: o desvio rende ${economia.creditos} creditos por avaliacao; os caros custam ${economia.caros}` +
     `\n  cartas na corrida principal=${contadores.cartas}` +
     ` · notas da corrida principal=${contadores.notas.map((n) => formatarNota(n)).join('/')}` +
     ` (${contadores.conceitos.join('/')})` +

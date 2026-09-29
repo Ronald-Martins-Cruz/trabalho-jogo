@@ -1,5 +1,14 @@
 import { CONTEUDO } from '../data/content.js';
-import { TELAS } from './state.js';
+import { maxItensLoja, TELAS } from './state.js';
+import { dadosDoCoringa } from './jokers.js';
+import {
+  LINHA_VITRINE,
+  posicaoRerolar,
+  posicaoSeguir,
+  precoReroll,
+  rerolarTrazNovidade,
+  valorDeVenda,
+} from './shop.js';
 
 // Camadas de UI em DOM por cima do canvas. Le o estado e escreve no DOM,
 // nunca o contrario. Todo texto visivel esta no index.html ou em content.js;
@@ -35,6 +44,15 @@ export function criarUi(doc) {
     botaoMenu: doc.getElementById('botao-menu'),
     botaoResultado: doc.getElementById('botao-resultado'),
     botaoJubilado: doc.getElementById('botao-jubilado'),
+    hudCoringas: doc.getElementById('hud-coringas'),
+    loja: doc.getElementById('loja'),
+    lojaCreditos: doc.getElementById('loja-creditos'),
+    lojaItens: doc.getElementById('loja-itens'),
+    lojaCoringas: doc.getElementById('loja-coringas'),
+    lojaContagem: doc.getElementById('loja-contagem'),
+    lojaAviso: doc.getElementById('loja-aviso'),
+    botaoRerolar: doc.getElementById('botao-rerolar'),
+    botaoSeguir: doc.getElementById('botao-seguir'),
   };
 
   // Barras de relatorio (debug.relatorio): uma em cada tela de fim e uma no
@@ -154,6 +172,156 @@ export function criarUi(doc) {
     }
   }
 
+  // ------------------------------------------------------------------ loja
+  // Mesmo padrao das cartas: os botoes nascem UMA vez (o maior numero de
+  // itens que uma loja pode ter e o teto de coringas), os escutadores ficam
+  // presos ao indice, e o sincronizar de cada frame so troca texto e classe
+  // a partir de estado.loja. O destaque sai de (loja.linha, loja.selecionada)
+  // e de nada mais: o mouse escreve nesse cursor via apontarLoja (shop.js).
+  // Um :hover proprio no CSS poria dois itens acesos ao mesmo tempo, e o
+  // Enter compraria o do cursor (pendencia 26).
+  const itensLoja = [];
+  const slotsCoringa = [];
+
+  // Nos gerados nao tem id, entao nao servem ao cache do texto(): o valor
+  // escrito fica guardado no proprio no.
+  const escrever = (no, valor) => {
+    if (no.__valor === valor) return;
+    no.__valor = valor;
+    no.textContent = valor;
+  };
+
+  function span(classeCss) {
+    const no = doc.createElement('span');
+    no.className = classeCss;
+    return no;
+  }
+
+  function montarLoja() {
+    if (el.lojaItens && itensLoja.length === 0) {
+      for (let i = 0; i < maxItensLoja(); i += 1) {
+        const botao = doc.createElement('button');
+        botao.type = 'button';
+        botao.className = 'carta-opcao loja-item';
+        const atalho = span('carta-atalho');
+        atalho.textContent = String(i + 1);
+        const emoji = span('carta-emoji');
+        const nome = span('carta-nome');
+        const preco = span('loja-preco');
+        const descricao = span('carta-descricao');
+        botao.append(atalho, emoji, nome, preco, descricao);
+        el.lojaItens.appendChild(botao);
+        itensLoja.push({ botao, emoji, nome, preco, descricao, raridade: '' });
+      }
+    }
+    if (el.lojaCoringas && slotsCoringa.length === 0) {
+      for (let i = 0; i < CONTEUDO.loja.teto; i += 1) {
+        const botao = doc.createElement('button');
+        botao.type = 'button';
+        botao.className = 'loja-slot';
+        const emoji = span('loja-slot-emoji');
+        const nome = span('loja-slot-nome');
+        const venda = span('loja-slot-venda');
+        botao.append(emoji, nome, venda);
+        el.lojaCoringas.appendChild(botao);
+        slotsCoringa.push({ botao, emoji, nome, venda });
+      }
+    }
+  }
+
+  montarLoja();
+
+  function soltarFoco(botao) {
+    if (botao && botao.blur) botao.blur();
+  }
+
+  // `acoes`: { comprar(i), vender(i), apontarItem(i), apontarCoringa(i),
+  // rerolar(), seguir(), apontarRerolar(), apontarSeguir() } — todas escrevem
+  // no estado pelas funcoes de shop.js.
+  function ligarLoja(acoes) {
+    itensLoja.forEach((item, i) => {
+      item.botao.addEventListener('click', () => {
+        acoes.comprar(i);
+        soltarFoco(item.botao);
+      });
+      item.botao.addEventListener('mouseenter', () => acoes.apontarItem(i));
+      item.botao.addEventListener('focus', () => acoes.apontarItem(i));
+    });
+    slotsCoringa.forEach((slot, i) => {
+      slot.botao.addEventListener('click', () => {
+        acoes.vender(i);
+        soltarFoco(slot.botao);
+      });
+      slot.botao.addEventListener('mouseenter', () => acoes.apontarCoringa(i));
+      slot.botao.addEventListener('focus', () => acoes.apontarCoringa(i));
+    });
+    const ligarAcao = (botao, agir, apontar) => {
+      if (!botao) return;
+      botao.addEventListener('click', () => {
+        agir();
+        soltarFoco(botao);
+      });
+      botao.addEventListener('mouseenter', apontar);
+      botao.addEventListener('focus', apontar);
+    };
+    ligarAcao(el.botaoRerolar, acoes.rerolar, acoes.apontarRerolar);
+    ligarAcao(el.botaoSeguir, acoes.seguir, acoes.apontarSeguir);
+  }
+
+  function sincronizarLoja(estado) {
+    const loja = estado.loja;
+    const run = estado.run;
+    const t = CONTEUDO.textos.loja;
+    const simbolo = CONTEUDO.textos.resultado.simboloCredito;
+    const naVitrine = loja.linha === LINHA_VITRINE;
+
+    texto(el.lojaCreditos, `${simbolo} ${run.creditos}`);
+    texto(el.lojaContagem, `${run.coringas.length}/${CONTEUDO.loja.teto}`);
+    texto(el.lojaAviso, loja.aviso ? t.avisos[loja.aviso] || '' : '');
+
+    for (let i = 0; i < itensLoja.length; i += 1) {
+      const no = itensLoja[i];
+      const item = loja.itens[i];
+      const existe = i < loja.quantidade;
+      visivel(no.botao, existe);
+      if (!existe) continue;
+      const dados = item.id ? dadosDoCoringa(item.id) : null;
+      escrever(no.emoji, dados ? dados.emoji : '');
+      escrever(no.nome, dados ? dados.nome : t.vazio);
+      escrever(no.descricao, dados ? dados.descricao : '');
+      escrever(no.preco, !dados ? '' : item.vendido ? t.vendido : `${simbolo} ${item.preco}`);
+      classe(no.botao, 'vendido', !dados || item.vendido);
+      classe(no.botao, 'sem-credito', Boolean(dados) && !item.vendido && run.creditos < item.preco);
+      const raridade = dados ? `raridade-${dados.raridade}` : '';
+      if (no.raridade !== raridade) {
+        if (no.raridade) no.botao.classList.remove(no.raridade);
+        if (raridade) no.botao.classList.add(raridade);
+        no.raridade = raridade;
+      }
+      classe(no.botao, 'selecionada', naVitrine && loja.selecionada === i);
+    }
+
+    const reroll = precoReroll(loja);
+    texto(el.botaoRerolar, rotuloDoReroll(reroll, t, simbolo));
+    classe(el.botaoRerolar, 'selecionada', naVitrine && loja.selecionada === posicaoRerolar(loja));
+    classe(el.botaoRerolar, 'sem-credito', run.creditos < reroll);
+    classe(el.botaoRerolar, 'inativo', !rerolarTrazNovidade(estado));
+    texto(el.botaoSeguir, t.seguir);
+    classe(el.botaoSeguir, 'selecionada', naVitrine && loja.selecionada === posicaoSeguir(loja));
+
+    for (let i = 0; i < slotsCoringa.length; i += 1) {
+      const no = slotsCoringa[i];
+      const inst = run.coringas[i];
+      const dados = inst ? dadosDoCoringa(inst.id) : null;
+      escrever(no.emoji, dados ? dados.emoji : '');
+      escrever(no.nome, dados ? dados.nome : t.semCoringa);
+      escrever(no.venda, dados ? rotuloDeVenda(inst, valorDeVenda(inst.id), t, simbolo) : '');
+      classe(no.botao, 'vazio', !dados);
+      classe(no.botao, 'gasto', Boolean(inst && inst.gasto));
+      classe(no.botao, 'selecionada', !naVitrine && loja.selecionada === i);
+    }
+  }
+
   function ligarBotoes({ jogar, continuar, menu, resultado, jubilado }) {
     if (el.botaoJogar && jogar) el.botaoJogar.addEventListener('click', jogar);
     if (el.botaoContinuar && continuar) el.botaoContinuar.addEventListener('click', continuar);
@@ -243,6 +411,7 @@ export function criarUi(doc) {
     const naCarta = estado.tela === TELAS.CARTA;
     const noResultado = estado.tela === TELAS.RESULTADO;
     const noJubilado = estado.tela === TELAS.JUBILADO;
+    const naLoja = estado.tela === TELAS.LOJA;
     const emJogo = estado.tela === TELAS.AVALIACAO || estado.tela === TELAS.PAUSA || naCarta;
     visivel(el.menu, estado.tela === TELAS.MENU);
     visivel(el.hud, emJogo);
@@ -250,7 +419,9 @@ export function criarUi(doc) {
     visivel(el.carta, naCarta);
     visivel(el.resultado, noResultado);
     visivel(el.jubilado, noJubilado);
+    visivel(el.loja, naLoja);
     if (naCarta) sincronizarCartas(estado);
+    if (naLoja) sincronizarLoja(estado);
     if (noResultado) sincronizarResultado(estado);
     if (noJubilado) sincronizarJubilado(estado);
     sincronizarRelatorio(estado);
@@ -260,6 +431,7 @@ export function criarUi(doc) {
     texto(el.hpTexto, `${Math.ceil(p.hp)}/${p.hpMax}`);
     largura(el.xpBarra, p.xpProximo > 0 ? p.xp / p.xpProximo : 0);
     texto(el.nivel, String(p.nivel));
+    texto(el.hudCoringas, emojisDosCoringas(estado.run.coringas));
 
     const av = estado.run.avaliacao;
     texto(el.timer, formatarTempo(av.restante));
@@ -273,7 +445,7 @@ export function criarUi(doc) {
     classe(el.timer, 'parado', estado.tela !== TELAS.AVALIACAO);
   }
 
-  return { ligarBotoes, ligarCartas, ligarRelatorio, sincronizar, el };
+  return { ligarBotoes, ligarCartas, ligarLoja, ligarRelatorio, sincronizar, el };
 }
 
 // ------------------------------------------------------ exportar relatorio
@@ -354,6 +526,27 @@ export function armasDoBoletim(resultado, armas, textos = CONTEUDO.textos.result
     partes.push(`${nome} ${textos.nivelArma}${arma.nivel}`);
   }
   return partes.join(textos.separador);
+}
+
+// "vender por ◉ 62", ou "já usado · vender por ◉ 62" para o Atestado gasto.
+export function rotuloDeVenda(inst, valor, textos = CONTEUDO.textos.loja, simbolo = CONTEUDO.textos.resultado.simboloCredito) {
+  const base = `${textos.vender} ${simbolo} ${valor}`;
+  return inst.gasto ? `${textos.gasto}${CONTEUDO.textos.resultado.separador}${base}` : base;
+}
+
+// "Rerrolar ◉ 15", ou "Rerrolar grátis" enquanto houver reroll gratis (A).
+export function rotuloDoReroll(preco, textos = CONTEUDO.textos.loja, simbolo = CONTEUDO.textos.resultado.simboloCredito) {
+  return preco > 0 ? `${textos.rerolar} ${simbolo} ${preco}` : `${textos.rerolar} ${textos.gratis}`;
+}
+
+// "🔋 📚 🏥": os coringas da run, no canto do HUD.
+export function emojisDosCoringas(coringas, lista = CONTEUDO.coringas) {
+  const partes = [];
+  for (const inst of coringas) {
+    const dados = dadosDoCoringa(inst.id, lista);
+    if (dados) partes.push(dados.emoji);
+  }
+  return partes.join(' ');
 }
 
 // "Nv. 2 → 3" para quem ja tem a arma, "Nova arma" para quem nao tem, "+25 de

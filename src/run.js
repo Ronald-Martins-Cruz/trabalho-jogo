@@ -1,5 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
-import { emitir, iniciarAvaliacao, novaRun } from './state.js';
+import { emitir, iniciarAvaliacao, irParaTela, novaRun, TELAS } from './state.js';
+import { aoIniciarAvaliacao } from './jokers.js';
 
 // Fim de avaliacao: nota, conceito e creditos. Tudo aqui e funcao pura sobre
 // numeros — nenhum peso, nenhuma faixa e nenhum multiplicador mora neste
@@ -161,5 +162,39 @@ export function fecharAvaliacao(estado, motivo) {
 // alocar a run aqui nao fere a regra de pool. A fase 08 herda esta funcao.
 export function iniciarRun(estado) {
   estado.run = novaRun();
-  iniciarAvaliacao(estado);
+  comecarAvaliacao(estado, 0, 0);
+}
+
+// Toda avaliacao de uma run comeca por aqui: o estado da avaliacao nasce
+// (state.js) e os coringas agem sobre ele. E o UNICO chamador do hook
+// aoIniciarAvaliacao — que tambem recalcula os atributos do jogador, entao
+// uma avaliacao aberta por outro caminho roda sem os coringas.
+export function comecarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0) {
+  iniciarAvaliacao(estado, periodoIndex, avaliacaoIndex);
+  aoIniciarAvaliacao(estado);
+}
+
+// A avaliacao que vem depois de (periodoIndex, avaliacaoIndex), ou null
+// quando a run acabou. Pura.
+export function proximaAvaliacao(periodoIndex, avaliacaoIndex, periodos = CONTEUDO.periodos) {
+  const periodo = periodos[periodoIndex];
+  if (periodo && avaliacaoIndex + 1 < periodo.avaliacoes.length) {
+    return { periodoIndex, avaliacaoIndex: avaliacaoIndex + 1 };
+  }
+  if (periodoIndex + 1 < periodos.length) return { periodoIndex: periodoIndex + 1, avaliacaoIndex: 0 };
+  return null;
+}
+
+// "Seguir" da loja. O MINIMO que a fase 07 precisava para a loja ter saida:
+// a proxima avaliacao da lista, virando o periodo quando ele acaba, e o menu
+// depois da ultima. A fase 08 e dona disto (anuncio de periodo, virada,
+// TCC) e deve substituir esta funcao, nao remendar.
+export function avancarRun(estado) {
+  const prox = proximaAvaliacao(estado.run.periodoIndex, estado.run.avaliacaoIndex);
+  if (!prox) {
+    irParaTela(estado, TELAS.MENU);
+    return false;
+  }
+  comecarAvaliacao(estado, prox.periodoIndex, prox.avaliacaoIndex);
+  return true;
 }

@@ -345,9 +345,110 @@ export const CONTEUDO = {
     },
   ],
 
-  // Coringas (modificadores passivos comprados na loja). Fase 07.
-  // Forma esperada: { id, nome, descricao, emoji, custo, raridade, hook, efeito }
-  coringas: [],
+  // Coringas (design §7): passivos comprados na loja, que DURAM A RUN INTEIRA.
+  // As armas zeram a cada avaliacao; sao os coringas que dao curva de poder a
+  // run. Cada um e so dado:
+  //   { id, nome, emoji, descricao, preco, raridade, efeito, params }
+  // `efeito` e o nome de um efeito registrado em src/jokers.js (EFEITOS), e
+  // `params` sao os numeros dele. Um coringa novo que use um efeito que ja
+  // existe entra so aqui, sem tocar em jokers.js. Os efeitos existentes e os
+  // parametros que cada um pede:
+  //   atributo       { atributo, fator }   multiplica um atributo do jogador
+  //                                         (velocidade, raioColeta, hpMax)
+  //   nivelInicial   { niveis }            comeca a avaliacao com XP para N niveis
+  //   danoNoFim      { segundos, fator }   dano x fator nos ultimos N segundos
+  //   danoPorMorte   { porMorte }          +porMorte de dano por morte, na avaliacao
+  //   sobreviverFatal{ hp }                1x por run, o golpe fatal deixa `hp`
+  //   multiplicarXp  { fator }             multiplica o XP de cada orbe
+  //
+  // Precos (a loja paga em creditos por conceito: F 30 · D 60 · C 78 · B 96 ·
+  // A 120). Guardar dinheiro precisa ser jogada valida, entao os `caro`
+  // custam MAIS que o melhor boletim possivel (o validador exige): so se
+  // compra um deles guardando de uma avaliacao para a outra. Os `barato`
+  // cabem num D.
+  //
+  // A `descricao` repete os numeros de `params` em texto: mudou um, mude o
+  // outro (fase 13).
+  coringas: [
+    {
+      id: 'energetico',
+      nome: 'Energético',
+      emoji: '🔋',
+      descricao: '+15% de velocidade de movimento.',
+      preco: 40,
+      raridade: 'barato',
+      efeito: 'atributo',
+      params: { atributo: 'velocidade', fator: 1.15 },
+    },
+    {
+      id: 'wifi',
+      nome: 'Wi-Fi da Federal',
+      emoji: '📶',
+      descricao: '+80% no raio de coleta de XP.',
+      preco: 35,
+      raridade: 'barato',
+      efeito: 'atributo',
+      params: { atributo: 'raioColeta', fator: 1.8 },
+    },
+    {
+      id: 'caderno',
+      nome: 'Caderno Emprestado',
+      emoji: '📚',
+      descricao: 'Toda avaliação começa no nível 2.',
+      preco: 70,
+      raridade: 'medio',
+      efeito: 'nivelInicial',
+      params: { niveis: 1 },
+    },
+    {
+      id: 'vespera',
+      nome: 'Véspera da Prova',
+      emoji: '🌙',
+      descricao: 'Nos últimos 15s da avaliação, dano ×2.',
+      preco: 80,
+      raridade: 'medio',
+      efeito: 'danoNoFim',
+      params: { segundos: 15, fator: 2 },
+    },
+    {
+      id: 'whatsapp',
+      nome: 'Grupo de WhatsApp',
+      emoji: '📱',
+      descricao: 'Cada morte soma +0,5% de dano, cumulativo dentro da avaliação.',
+      preco: 140,
+      raridade: 'caro',
+      efeito: 'danoPorMorte',
+      params: { porMorte: 0.005 },
+    },
+    {
+      id: 'atestado',
+      nome: 'Atestado Médico',
+      emoji: '🏥',
+      descricao: '1× por run: sobrevive a um golpe fatal com 1 HP.',
+      preco: 125,
+      raridade: 'caro',
+      efeito: 'sobreviverFatal',
+      params: { hp: 1 },
+    },
+  ],
+
+  // A loja entre avaliacoes (design §5). Quantos itens aparecem e quantos
+  // rerolls saem de graca dependem do conceito (nota.faixas[].itensLoja e
+  // .rerollsGratis).
+  loja: {
+    teto: 5, // coringas ao mesmo tempo; cheio, comprar exige vender um
+    fracaoVenda: 0.5, // vender devolve esta fracao do preco (arredondada para baixo)
+    // Preco do primeiro reroll PAGO de cada visita, e quanto cada reroll pago
+    // seguinte encarece. 10/15/20...: um reroll custa um quarto de barato, e
+    // o terceiro na mesma visita ja e metade de um coringa medio.
+    rerollBase: 10,
+    rerollIncremento: 5,
+    // Segundos, depois de a loja abrir, em que comprar, vender, rerolar e
+    // seguir sao ignorados (teclado E mouse). Quem apertou Enter duas vezes,
+    // ou deu clique duplo no "Continuar" do boletim, nao gasta credito sem ter
+    // visto a loja.
+    atrasoEntrada: 0.35,
+  },
 
   // Inimigos. Fase 02 entrega so o inimigo-base; a fase 09 acrescenta
   // Notificacao, PDF de 300 Paginas e Trabalho em Grupo (design §8).
@@ -496,16 +597,19 @@ export const CONTEUDO = {
     // entao uma avaliacao rende de meia a duas compras.
     creditosBase: 60,
     // Faixas em ordem decrescente de exigencia. A primeira cuja nota minima
-    // for atingida vence. itens/rerolls por faixa entram na fase 07.
+    // for atingida vence.
     faixas: [
-      { conceito: 'A', minimo: 9.5, creditosFator: 2 },
-      { conceito: 'B', minimo: 8.5, creditosFator: 1.6 },
-      { conceito: 'C', minimo: 7, creditosFator: 1.3 },
-      { conceito: 'D', minimo: 6, creditosFator: 1 },
+      // itensLoja: quantos coringas a loja mostra depois deste conceito
+      // (design §5: 3, ou 4 com B ou A). rerollsGratis: quantos rerolls da
+      // visita saem de graca, antes do primeiro pago (design §4: 1 com A).
+      { conceito: 'A', minimo: 9.5, creditosFator: 2, itensLoja: 4, rerollsGratis: 1 },
+      { conceito: 'B', minimo: 8.5, creditosFator: 1.6, itensLoja: 4, rerollsGratis: 0 },
+      { conceito: 'C', minimo: 7, creditosFator: 1.3, itensLoja: 3, rerollsGratis: 0 },
+      { conceito: 'D', minimo: 6, creditosFator: 1, itensLoja: 3, rerollsGratis: 0 },
       // F nao existe na tabela do design §4. Existe aqui porque a run continua
       // (a nota nao reprova) e mandar o jogador para uma loja sem um credito
       // sequer transformaria uma avaliacao ruim em duas.
-      { conceito: 'F', minimo: 0, creditosFator: 0.5 },
+      { conceito: 'F', minimo: 0, creditosFator: 0.5, itensLoja: 3, rerollsGratis: 0 },
     ],
   },
 
@@ -579,6 +683,25 @@ export const CONTEUDO = {
       carta: 'Carta',
       resultado: 'Resultado',
       jubilado: 'Jubilado',
+      loja: 'Loja',
+    },
+    // A loja: rotulos que ui.js monta com numeros do estado. O texto fixo
+    // (titulo, dica de teclado) mora no index.html.
+    loja: {
+      rerolar: 'Rerrolar',
+      gratis: 'grátis',
+      seguir: 'Seguir →',
+      vendido: 'Vendido',
+      vazio: 'Esgotado',
+      vender: 'vender por',
+      gasto: 'já usado',
+      semCoringa: 'vazio',
+      avisos: {
+        semCreditos: 'Créditos insuficientes.',
+        cheio: 'Você já tem o máximo de coringas. Venda um primeiro.',
+        vendido: 'Esse item já foi comprado.',
+        semNovidade: 'Não há outros coringas para sortear.',
+      },
     },
     // Rotulos que a carta monta com numeros vindos do estado. O texto fixo da
     // tela (titulo, dica de teclado) mora no index.html.
@@ -1072,6 +1195,12 @@ export function validarConteudo(conteudo = CONTEUDO) {
           anterior = faixa.minimo;
         }
         exigeNumero(faixa.creditosFator, `${c}.creditosFator`, { min: 0 });
+        if (exigeNumero(faixa.itensLoja, `${c}.itensLoja`, { min: 1, max: 8 }) && !Number.isInteger(faixa.itensLoja)) {
+          erros.push(`${c}.itensLoja: ${faixa.itensLoja} precisa ser inteiro`);
+        }
+        if (exigeNumero(faixa.rerollsGratis, `${c}.rerollsGratis`, { min: 0, max: 5 }) && !Number.isInteger(faixa.rerollsGratis)) {
+          erros.push(`${c}.rerollsGratis: ${faixa.rerollsGratis} precisa ser inteiro`);
+        }
       });
       const ultima = conteudo.nota.faixas[conteudo.nota.faixas.length - 1];
       if (ultima && ultima.minimo !== 0) {
@@ -1104,6 +1233,66 @@ export function validarConteudo(conteudo = CONTEUDO) {
         );
       }
     }
+  }
+
+  // Coringas e loja. Se o `efeito` existe em jokers.js e os `params` que ele
+  // pede, quem confere e test/check.mjs (content.js nao importa logica).
+  const RARIDADES = ['barato', 'medio', 'caro'];
+  if (Array.isArray(conteudo.coringas)) {
+    const idsCoringa = new Set();
+    conteudo.coringas.forEach((coringa, i) => {
+      const c = `coringas[${i}]`;
+      if (typeof coringa !== 'object' || coringa === null) return;
+      if (idsCoringa.has(coringa.id)) erros.push(`${c}: id "${coringa.id}" repetido`);
+      idsCoringa.add(coringa.id);
+      if (exigeNumero(coringa.preco, `${c}.preco`, { min: 1 }) && !Number.isInteger(coringa.preco)) {
+        erros.push(`${c}.preco: ${coringa.preco} precisa ser inteiro`);
+      }
+      for (const campo of ['id', 'nome', 'emoji', 'descricao', 'efeito']) {
+        if (typeof coringa[campo] !== 'string' || coringa[campo] === '') erros.push(`${c}.${campo}: ausente ou vazio`);
+      }
+      if (!RARIDADES.includes(coringa.raridade)) {
+        erros.push(`${c}.raridade: "${coringa.raridade}" nao e uma de ${RARIDADES.join(', ')}`);
+      }
+      exigeObjeto(coringa.params, `${c}.params`);
+    });
+
+    // Tarefa 5 da fase 07: guardar dinheiro e jogada valida. O coringa caro
+    // tem que custar mais que o MELHOR boletim paga, senao comprar na hora
+    // sempre ganha de guardar. E o barato tem que caber num boletim medio
+    // (fator 1), senao a primeira loja da run nao vende nada.
+    const nota = conteudo.nota;
+    if (nota && Array.isArray(nota.faixas) && typeof nota.creditosBase === 'number') {
+      const pagamentos = nota.faixas
+        .filter((f) => f && typeof f.creditosFator === 'number')
+        .map((f) => Math.round(nota.creditosBase * f.creditosFator));
+      const melhor = pagamentos.length > 0 ? Math.max(...pagamentos) : 0;
+      for (const coringa of conteudo.coringas) {
+        if (!coringa || typeof coringa.preco !== 'number') continue;
+        if (coringa.raridade === 'caro' && coringa.preco <= melhor) {
+          erros.push(
+            `coringas "${coringa.id}": caro por ${coringa.preco} e o melhor boletim paga ${melhor} — ` +
+              'comprar na hora sempre ganharia de guardar dinheiro'
+          );
+        }
+        if (coringa.raridade === 'barato' && coringa.preco > nota.creditosBase) {
+          erros.push(
+            `coringas "${coringa.id}": barato por ${coringa.preco} nao cabe num boletim D (${nota.creditosBase})`
+          );
+        }
+      }
+    }
+  }
+
+  if (exigeObjeto(conteudo.loja, 'loja')) {
+    const l = conteudo.loja;
+    if (exigeNumero(l.teto, 'loja.teto', { min: 1, max: 10 }) && !Number.isInteger(l.teto)) {
+      erros.push(`loja.teto: ${l.teto} precisa ser inteiro`);
+    }
+    exigeNumero(l.fracaoVenda, 'loja.fracaoVenda', { min: 0, max: 1 });
+    exigeNumero(l.rerollBase, 'loja.rerollBase', { min: 0 });
+    exigeNumero(l.rerollIncremento, 'loja.rerollIncremento', { min: 0 });
+    exigeNumero(l.atrasoEntrada, 'loja.atrasoEntrada', { min: 0, max: 2 });
   }
 
   // Debug: so chaves booleanas. Um "false" em string ligaria a chave por ser
@@ -1190,6 +1379,19 @@ export function validarConteudo(conteudo = CONTEUDO) {
       for (const campo of campos) {
         if (typeof conteudo.textos.resultado[campo] !== 'string' || conteudo.textos.resultado[campo] === '') {
           erros.push(`textos.resultado.${campo}: ausente ou vazio`);
+        }
+      }
+    }
+    if (exigeObjeto(conteudo.textos.loja, 'textos.loja')) {
+      const t = conteudo.textos.loja;
+      for (const campo of ['rerolar', 'gratis', 'seguir', 'vendido', 'vazio', 'vender', 'gasto', 'semCoringa']) {
+        if (typeof t[campo] !== 'string' || t[campo] === '') erros.push(`textos.loja.${campo}: ausente ou vazio`);
+      }
+      if (exigeObjeto(t.avisos, 'textos.loja.avisos')) {
+        for (const campo of ['semCreditos', 'cheio', 'vendido', 'semNovidade']) {
+          if (typeof t.avisos[campo] !== 'string' || t.avisos[campo] === '') {
+            erros.push(`textos.loja.avisos.${campo}: ausente ou vazio`);
+          }
         }
       }
     }

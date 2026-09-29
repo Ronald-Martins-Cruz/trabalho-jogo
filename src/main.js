@@ -7,6 +7,22 @@ import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
 import { apontarCarta, atualizarCartas, escolherCarta, moverSelecaoCarta } from './cards.js';
 import { fecharAvaliacao, iniciarRun, MOTIVO_JUBILADO, MOTIVO_TEMPO } from './run.js';
+import {
+  abrirLoja,
+  apontarLoja,
+  comprarItem,
+  confirmarLoja,
+  entradaLiberada,
+  LINHA_CORINGAS,
+  LINHA_VITRINE,
+  moverSelecaoLoja,
+  posicaoRerolar,
+  posicaoSeguir,
+  rerolar,
+  seguirDaLoja,
+  trocarLinhaLoja,
+  venderCoringa,
+} from './shop.js';
 import { observarTick, registrarQuadro } from './telemetria.js';
 import { gerarRelatorio } from './relatorio.js';
 
@@ -31,6 +47,7 @@ export function atualizar(estado, dt) {
     case TELAS.PAUSA:
     case TELAS.RESULTADO:
     case TELAS.JUBILADO:
+    case TELAS.LOJA:
       // Nada roda: a partida inteira fica congelada por tras do overlay. Toda
       // tela nova entra aqui — o `default` congela igual, mas listar deixa
       // explicito que foi decisao, nao esquecimento.
@@ -147,6 +164,20 @@ export function iniciar() {
     resultado: () => sairDoResultado(estado),
     jubilado: () => sairDoResultado(estado),
   });
+  // Loja: como nas cartas, o mouse so aponta e confirma pelas funcoes de
+  // shop.js, que escrevem no estado. Rerolar e seguir tambem apontam, para o
+  // destaque do cursor acompanhar o mouse ate os botoes. O clique que gasta
+  // espera o atraso de abertura, igual ao teclado (entradaLiberada).
+  ui.ligarLoja({
+    comprar: (i) => entradaLiberada(estado) && comprarItem(estado, i),
+    vender: (i) => entradaLiberada(estado) && venderCoringa(estado, i),
+    apontarItem: (i) => apontarLoja(estado, LINHA_VITRINE, i),
+    apontarCoringa: (i) => apontarLoja(estado, LINHA_CORINGAS, i),
+    rerolar: () => entradaLiberada(estado) && rerolar(estado),
+    seguir: () => entradaLiberada(estado) && seguirDaLoja(estado),
+    apontarRerolar: () => apontarLoja(estado, LINHA_VITRINE, posicaoRerolar(estado.loja)),
+    apontarSeguir: () => apontarLoja(estado, LINHA_VITRINE, posicaoSeguir(estado.loja)),
+  });
   // Mouse na carta: a UI nao mexe no estado nem na classe CSS, so avisa qual
   // indice foi apontado ou escolhido. Mesmo caminho do teclado, e por isso
   // apontar com o mouse e confirmar com Enter leva a carta certa.
@@ -246,6 +277,10 @@ function ligarTeclado(estado) {
       ev.preventDefault();
       return;
     }
+    if (estado.tela === TELAS.LOJA && !ev.repeat && teclaDaLoja(estado, ev.code)) {
+      ev.preventDefault();
+      return;
+    }
     // Tela de fim de avaliacao: Enter e Espaco seguem adiante. Sem isto
     // o jogador precisaria achar o botao com o mouse (ou com Tab) para sair.
     if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && sairDoResultado(estado)) {
@@ -288,10 +323,30 @@ const TECLAS_SEGUIR = new Set(['Enter', 'NumpadEnter', 'Space']);
 // deixa o mesmo keydown cair para a pausa e para o movimento.
 export function sairDoResultado(estado) {
   if (estado.tela !== TELAS.RESULTADO && estado.tela !== TELAS.JUBILADO) return false;
-  // Fase 07: aprovado vai para a loja daqui; jubilado continua indo ao menu,
-  // porque a run acabou.
-  irParaTela(estado, TELAS.MENU);
+  // Aprovado vai para a loja; jubilado vai ao menu, porque a run acabou.
+  if (estado.tela === TELAS.RESULTADO) abrirLoja(estado);
+  else irParaTela(estado, TELAS.MENU);
   return true;
+}
+
+// Teclado da loja. Setas/WASD movem o cursor (cima/baixo troca entre a
+// vitrine e os seus coringas), Enter/Espaco fazem o que o cursor aponta, 1-9 compram
+// direto e R rerrola. As teclas que agem esperam o atraso de abertura
+// (entradaLiberada): o Enter repetido do boletim nao compra nada.
+function teclaDaLoja(estado, code) {
+  if (code === 'ArrowLeft' || code === 'KeyA') return moverSelecaoLoja(estado, -1);
+  if (code === 'ArrowRight' || code === 'KeyD') return moverSelecaoLoja(estado, 1);
+  if (code === 'ArrowUp' || code === 'KeyW' || code === 'ArrowDown' || code === 'KeyS') {
+    trocarLinhaLoja(estado);
+    return true;
+  }
+  const confirma = code === 'Enter' || code === 'NumpadEnter' || code === 'Space';
+  const gasta = confirma || code === 'KeyR' || /^(Digit|Numpad)[1-9]$/.test(code);
+  if (!gasta) return false;
+  if (!entradaLiberada(estado)) return true; // engole a tecla: nem compra, nem cai no resto
+  if (code === 'KeyR') return rerolar(estado) || true;
+  if (confirma) return confirmarLoja(estado) || true;
+  return comprarItem(estado, Number(code.slice(-1)) - 1) || true;
 }
 
 // Mouse pode falhar na apresentacao; teclado nao. 1/2/3 escolhe direto,

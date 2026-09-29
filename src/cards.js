@@ -3,6 +3,7 @@ import { emitir, irParaTela, TELAS } from './state.js';
 import { obterScratch } from './pool.js';
 import { dadosDaArma, equiparArma, subirNivelArma } from './weapons.js';
 import { curar, xpParaSubir } from './player.js';
+import { modificarAtributo } from './jokers.js';
 
 // XP vira nivel, nivel vira carta. Este arquivo e simulacao pura: nao sabe o
 // que e um botao nem um clique. A tela de carta congela o jogo escrevendo
@@ -138,8 +139,16 @@ export function moverSelecaoCarta(estado, passo) {
 function sortearOpcoes(estado) {
   const candidatos = montarCandidatos(estado);
   const opcoes = estado.cartas.opcoes;
+  // Um coringa pode mudar quantas opcoes esta carta mostra (jokers.js,
+  // 'opcoesCarta'). Os slots de novasCartas() sao o teto, e ao menos uma
+  // opcao sempre sai: tela de escolha sem escolha trava o jogo.
+  const quantidade = Math.max(1, Math.min(opcoes.length, modificarAtributo(estado, 'opcoesCarta', CONTEUDO.cartas.quantidade)));
 
   for (let i = 0; i < opcoes.length; i += 1) {
+    if (i >= quantidade) {
+      esvaziarOpcao(opcoes[i]);
+      continue;
+    }
     const escolhido = sortearCandidato(estado, candidatos);
     if (escolhido < 0) {
       preencherConsolo(opcoes[i]);
@@ -234,6 +243,19 @@ function preencherConsolo(opcao) {
   opcao.nivelAtual = 0;
   opcao.nivelProximo = 0;
   opcao.valor = consolo.valor;
+}
+
+// Slot fora da quantidade desta carta: tipo '' e o que ui.js esconde e o que
+// resolverEscolha ignora.
+function esvaziarOpcao(opcao) {
+  opcao.tipo = '';
+  opcao.id = '';
+  opcao.nome = '';
+  opcao.descricao = '';
+  opcao.emoji = '';
+  opcao.nivelAtual = 0;
+  opcao.nivelProximo = 0;
+  opcao.valor = 0;
 }
 
 function instanciaDaArma(estado, id) {

@@ -15,6 +15,7 @@ export const TELAS = {
   CARTA: 'carta',
   RESULTADO: 'resultado', // sobreviveu ao cronometro: nota, conceito, creditos
   JUBILADO: 'jubilado', // o HP zerou
+  LOJA: 'loja', // entre avaliacoes, depois de um boletim aprovado (fase 07)
 };
 
 export function novoEstado(seed = 1) {
@@ -42,6 +43,10 @@ export function novoEstado(seed = 1) {
 
     cartas: novasCartas(),
 
+    // A loja entre avaliacoes (src/shop.js). Como `cartas`, nasce com todos
+    // os slots e so troca conteudo.
+    loja: novaLoja(),
+
     run: novaRun(),
 
     // O que o relatorio de balanceamento le (debug.relatorio). Fica FORA de
@@ -64,6 +69,9 @@ export function novoPlayer() {
     hpMax: cfg.hpMax,
     raio: cfg.raio,
     velocidade: cfg.velocidade,
+    // Atributos que um coringa pode mudar (jokers.js, modificarAtributo) sao
+    // copiados para o player e lidos daqui, nunca de CONTEUDO.jogador direto.
+    raioColeta: cfg.raioColeta,
     nivel: 1,
     xp: 0,
     xpProximo: xpParaSubir(1),
@@ -109,12 +117,41 @@ function novaOpcao() {
   };
 }
 
+// Os itens da loja: o numero de slots e o maior `itensLoja` das faixas de
+// conceito, e `quantidade` diz quantos valem nesta visita.
+export function maxItensLoja() {
+  let maximo = 1;
+  for (const faixa of CONTEUDO.nota.faixas) if (faixa.itensLoja > maximo) maximo = faixa.itensLoja;
+  return maximo;
+}
+
+export function novaLoja() {
+  const maximo = maxItensLoja();
+  const itens = [];
+  for (let i = 0; i < maximo; i += 1) itens.push({ id: '', preco: 0, vendido: false });
+  return {
+    itens,
+    quantidade: 0, // itens validos nesta visita (3, ou 4 com B/A)
+    rerolls: 0, // rerolls pagos nesta visita: o preco sobe com eles
+    gratis: 0, // rerolls gratis que ainda restam nesta visita (conceito A)
+    linha: 0, // cursor: 0 = vitrine (itens, rerolar, seguir), 1 = coringas do jogador
+    selecionada: 0,
+    abertaEm: 0, // estado.tempo da abertura (loja.atrasoEntrada)
+    aviso: '', // chave de CONTEUDO.textos.loja.avisos, ou ''
+  };
+}
+
 export function novaRun() {
   return {
     periodoIndex: 0,
     avaliacaoIndex: 0,
     creditos: 0,
+    // Instancias dos coringas comprados: { id, contador, gasto }. Duram a run
+    // inteira; so jokers.js e shop.js mexem aqui.
     coringas: [],
+    // Ids de coringa "1x por run" que ja dispararam. A loja nao os oferece de
+    // novo, nem depois de vendidos.
+    coringasGastos: [],
     nota: 0,
     conceito: null,
     jubilado: false,

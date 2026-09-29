@@ -31,7 +31,7 @@ const EPS = 1e-6;
 // debug/relatorio ficam fora: trocar uma palavra nao pode mudar o hash.
 const CHAVES_DE_JOGO = [
   'ajuste', 'loop', 'arena', 'jogador', 'xp', 'xpOrbe', 'cartas', 'arma', 'projetil',
-  'orbital', 'ondaArea', 'armas', 'coringas', 'inimigos', 'spawn', 'separacao',
+  'orbital', 'ondaArea', 'armas', 'coringas', 'loja', 'inimigos', 'spawn', 'separacao',
   'modificadores', 'periodos', 'nota',
 ];
 

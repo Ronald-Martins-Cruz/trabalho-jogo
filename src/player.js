@@ -1,5 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { obterPool } from './pool.js';
+import { aoGanharXp, aoReceberDanoFatal } from './jokers.js';
 
 // Movimento, HP e coleta do jogador. Nunca le teclado nem DOM: a entrada ja
 // chega pronta em estado.input (eixoX/eixoY), escrita por main.js/ui.js. Isso
@@ -36,9 +37,11 @@ function moverPlayer(player, input, dt) {
     aplicarAtrito(player, cfg.atrito, dt);
   }
 
+  // player.velocidade, e nao cfg.velocidade: e o atributo ja modificado
+  // pelos coringas (jokers.js, modificarAtributo).
   const velocidadeAtual = Math.hypot(player.vx, player.vy);
-  if (velocidadeAtual > cfg.velocidade) {
-    const fator = cfg.velocidade / velocidadeAtual;
+  if (velocidadeAtual > player.velocidade) {
+    const fator = player.velocidade / velocidadeAtual;
     player.vx *= fator;
     player.vy *= fator;
   }
@@ -120,7 +123,13 @@ export function receberDano(estado, dano) {
   const player = estado.player;
   if (!player.vivo || player.invulneravel > 0 || !(dano > 0)) return false;
 
-  const aplicado = Math.min(player.hp, dano);
+  let aplicado = Math.min(player.hp, dano);
+  // Golpe fatal: um coringa (Atestado) pode segurar o jogador com algum HP.
+  // O hook devolve o HP que sobra, ou 0 se ninguem salvou.
+  if (aplicado >= player.hp) {
+    const hpSalvo = aoReceberDanoFatal(estado, dano);
+    if (hpSalvo > 0) aplicado = Math.max(0, player.hp - hpSalvo);
+  }
   player.hp -= aplicado;
   estado.run.avaliacao.danoTomado += aplicado;
 
@@ -141,7 +150,7 @@ export function receberDano(estado, dano) {
 // Um orbe/item so e atraido quando esta dentro deste raio. A coleta em si
 // acontece ao encostar (raio do jogador + raio do orbe), nao aqui.
 export function dentroDoRaioDeColeta(player, x, y) {
-  const raio = CONTEUDO.jogador.raioColeta;
+  const raio = player.raioColeta;
   const dx = player.x - x;
   const dy = player.y - y;
   return dx * dx + dy * dy <= raio * raio;
@@ -209,7 +218,7 @@ export function atualizarOrbes(estado, dt) {
 
   const player = estado.player;
   const cfg = CONTEUDO.xpOrbe;
-  const raioIma = CONTEUDO.jogador.raioColeta;
+  const raioIma = player.raioColeta; // atributo modificavel por coringa (Wi-Fi)
   const alcanceColeta = player.raio + cfg.raio;
   const freio = Math.max(0, 1 - cfg.atrito * dt);
 
@@ -252,7 +261,7 @@ export function atualizarOrbes(estado, dt) {
       // So soma XP. Quem converte XP em nivel (e em carta) e cards.js, que
       // pode emitir evento — player.js nao importa state.js porque state.js
       // ja importa criarRastro daqui.
-      player.xp += orbe.valor;
+      player.xp += aoGanharXp(estado, orbe.valor);
       pool.liberar(orbe);
     }
   }

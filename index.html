@@ -33,6 +33,8 @@
           <span id="hp-texto" class="barra-texto">100/100</span>
         </div>
       </div>
+      <!-- Os coringas da run, em emoji. Vazio sem coringa. -->
+      <div id="hud-coringas" class="hud-coringas"></div>
     </div>
 
     <!-- Menu -->
@@ -92,6 +94,25 @@
         <button class="botao botao-relatorio" type="button" data-relatorio="partida">Da partida</button>
         <span class="relatorio-status" data-relatorio-status></span>
       </div>
+    </div>
+
+    <!-- Loja: entre avaliações, depois de um boletim aprovado. Os itens e os
+         slots de coringa são montados uma vez por ui.js e só trocam de
+         conteúdo; o destaque vem do cursor em estado.loja. -->
+    <div id="loja" class="camada loja oculto">
+      <div class="loja-topo">
+        <h2 class="titulo-loja">Loja do Centro Acadêmico</h2>
+        <span id="loja-creditos" class="creditos loja-creditos">◉ 0</span>
+      </div>
+      <div id="loja-itens" class="carta-opcoes loja-itens"></div>
+      <div class="loja-acoes">
+        <button id="botao-rerolar" class="botao loja-acao" type="button">Rerrolar</button>
+        <button id="botao-seguir" class="botao botao-destaque loja-acao" type="button">Seguir →</button>
+      </div>
+      <p class="loja-rotulo">Seus coringas <span id="loja-contagem">0/5</span> · clique para vender</p>
+      <div id="loja-coringas" class="loja-coringas"></div>
+      <p id="loja-aviso" class="loja-aviso"></p>
+      <p class="dica">1 · 2 · 3 · 4 compram · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
     </div>
 
     <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. -->

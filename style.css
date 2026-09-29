@@ -511,3 +511,188 @@ body {
   line-height: 1.35;
   color: var(--tinta-fraca);
 }
+
+/* ----------------------------------------------------------------- loja */
+
+/* A loja reusa a carta (.carta-opcao) para os itens: mesmo tamanho, mesmo
+   destaque. Como nas cartas, NAO ha :hover proprio: o destaque sai so de
+   .selecionada, que ui.js pinta a partir do cursor em estado.loja. */
+.loja {
+  background: radial-gradient(circle at 50% 30%, rgba(40, 30, 12, 0.9), rgba(6, 7, 15, 0.97));
+  gap: 0.4em;
+}
+
+/* A carta da loja e mais baixa que a de nivel: a tela ainda tem acoes e a
+   fileira de coringas embaixo, e com 5 coringas o tamanho da carta de nivel
+   empurrava a dica para fora do quadro 16:9. */
+.loja-item {
+  padding: 0.7em 0.8em 0.8em;
+}
+
+.loja-item .carta-emoji {
+  font-size: 2.1em;
+}
+
+.loja-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2em;
+  width: min(44em, 90%);
+}
+
+.titulo-loja {
+  margin: 0;
+  font-size: 1.4em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--neon-quente);
+  text-shadow: 0 0 0.5em rgba(255, 184, 96, 0.5);
+}
+
+.loja-creditos {
+  margin: 0;
+  font-size: 1.5em;
+}
+
+.loja-preco {
+  font-size: 0.85em;
+  letter-spacing: 0.08em;
+  color: var(--neon-quente);
+}
+
+.loja-item.raridade-medio {
+  border-color: rgba(86, 216, 166, 0.55);
+}
+
+.loja-item.raridade-caro {
+  border-color: rgba(255, 184, 96, 0.7);
+}
+
+.loja-item.sem-credito .loja-preco {
+  color: var(--hp);
+}
+
+.loja-item.vendido {
+  opacity: 0.4;
+}
+
+.loja-item.vendido .loja-preco {
+  color: var(--tinta-fraca);
+}
+
+.loja-acoes {
+  display: flex;
+  gap: 1.2em;
+  margin-top: 0.3em;
+}
+
+.loja-acao.selecionada {
+  background: rgba(122, 162, 255, 0.22);
+  box-shadow: 0 0 1.2em rgba(122, 162, 255, 0.45);
+  transform: translateY(-2px);
+}
+
+.botao-destaque.loja-acao.selecionada {
+  background: rgba(255, 184, 96, 0.22);
+  box-shadow: 0 0 1.2em rgba(255, 184, 96, 0.45);
+}
+
+.loja-acao.sem-credito {
+  color: var(--hp);
+}
+
+/* Rerrolar sem nada novo para sortear: a loja recusa, o botao avisa antes. */
+.loja-acao.inativo {
+  opacity: 0.45;
+}
+
+/* O :hover generico de .botao e desligado aqui: com ele o mouse e o cursor
+   do teclado acenderiam dois botoes ao mesmo tempo. */
+.loja-acao:hover:not(.selecionada),
+.loja-acao:focus-visible:not(.selecionada) {
+  background: rgba(122, 162, 255, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.botao-destaque.loja-acao:hover:not(.selecionada),
+.botao-destaque.loja-acao:focus-visible:not(.selecionada) {
+  background: rgba(255, 184, 96, 0.08);
+}
+
+.loja-rotulo {
+  margin: 0.2em 0 0;
+  font-size: 0.8em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tinta-fraca);
+}
+
+.loja-coringas {
+  display: flex;
+  gap: 0.6em;
+}
+
+.loja-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15em;
+  width: 7.2em;
+  padding: 0.35em 0.4em;
+  font: inherit;
+  color: var(--tinta);
+  background: rgba(23, 28, 60, 0.85);
+  border: 1px solid var(--borda);
+  border-radius: 0.4em;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.loja-slot.selecionada {
+  transform: translateY(-0.3em);
+  border-color: var(--hp);
+  box-shadow: 0 0 1.2em rgba(255, 93, 122, 0.4);
+  outline: none;
+}
+
+.loja-slot.vazio {
+  opacity: 0.35;
+  border-style: dashed;
+  cursor: default;
+}
+
+.loja-slot.gasto .loja-slot-emoji {
+  filter: grayscale(1);
+}
+
+.loja-slot-emoji {
+  font-size: 1.4em;
+  line-height: 1.1;
+}
+
+.loja-slot-nome {
+  font-size: 0.7em;
+  text-align: center;
+}
+
+.loja-slot-venda {
+  font-size: 0.6em;
+  color: var(--tinta-fraca);
+}
+
+.loja-aviso {
+  min-height: 1.2em;
+  margin: 0.2em 0 0;
+  font-size: 0.85em;
+  color: var(--hp);
+}
+
+/* Coringas da run no HUD, logo abaixo das barras. */
+.hud-coringas {
+  align-self: flex-start;
+  font-size: 1.2em;
+  letter-spacing: 0.15em;
+  min-height: 1.2em;
+}

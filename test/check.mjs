@@ -84,7 +84,10 @@ for (const arquivo of modulos) {
 for (const arquivo of modulos) {
   const rel = relative(RAIZ, arquivo).split('\\').join('/');
   if (rel === 'test/check.mjs') continue; // o arquivo das regras cita as regras
-  const linhas = readFileSync(arquivo, 'utf8').split('\n');
+  // /\r?\n/ e nao '\n': com core.autocrlf o checkout no Windows traz CRLF, o
+  // `.` do regex de comentario abaixo nao casa o \r e um comentario que CITA
+  // Math.random() virava violacao (rng.js:1 num clone limpo).
+  const linhas = readFileSync(arquivo, 'utf8').split(/\r?\n/);
 
   linhas.forEach((linha, i) => {
     const n = i + 1;
@@ -314,6 +317,47 @@ if (erros.length === 0) {
   }
 }
 
+// ------------------------------------------ 8. coringas ligados a codigo
+
+// Todo coringa de content.js aponta para um efeito que existe em jokers.js,
+// com os params que o efeito pede, e todo efeito so implementa hooks da lista
+// fechada. content.js nao pode importar jokers.js (ciclo), entao a ligacao e
+// conferida aqui. O id repetido tambem cai aqui, alem do validador geral.
+if (erros.length === 0) {
+  try {
+    const jokers = await import(pathToFileURL(join(RAIZ, 'src', 'jokers.js')).href);
+    erros.push(...jokers.verificarCoringasDoConteudo().map((e) => `jokers.js — ${e}`));
+  } catch (e) {
+    erros.push(`src/jokers.js nao pode ser verificado: ${e.message}`);
+  }
+}
+
+// ----------------------------------------- 9. hooks so dentro de jokers.js
+
+// A regra da fase 07: nenhum `if (temCoringa('x'))` fora de jokers.js. Id de
+// coringa especifico escrito num .js de src/ que nao seja jokers.js e logica
+// de coringa vazando — o comportamento tem que sair do `efeito` em content.js.
+if (erros.length === 0) {
+  try {
+    const { CONTEUDO } = await import(pathToFileURL(join(RAIZ, 'data', 'content.js')).href);
+    const ids = CONTEUDO.coringas.map((c) => c.id);
+    for (const arquivo of modulos) {
+      const rel = relative(RAIZ, arquivo).split('\\').join('/');
+      if (!rel.startsWith('src/') || rel === 'src/jokers.js') continue;
+      readFileSync(arquivo, 'utf8').split(/\r?\n/).forEach((linha, i) => {
+        const semComentario = linha.replace(/\/\/.*$/, '');
+        for (const id of ids) {
+          if (new RegExp(`['"\`]${id}['"\`]`).test(semComentario)) {
+            erros.push(`${rel}:${i + 1}: id de coringa "${id}" fora de jokers.js — use um efeito em content.js`);
+          }
+        }
+      });
+    }
+  } catch (e) {
+    erros.push(`nao deu para varrer os ids de coringa: ${e.message}`);
+  }
+}
+
 // --------------------------------------------------------------- relatorio
 
 for (const aviso of avisos) console.log(`  aviso: ${aviso}`);
@@ -327,5 +371,5 @@ if (erros.length > 0) {
 
 console.log(
   `check ok — ${modulos.length} modulos + ${marcacoes.length} html/css + package.json` +
-    ' · sintaxe, regras estruturais, zero externo, content.js, nota'
+    ' · sintaxe, regras estruturais, zero externo, content.js, nota, coringas'
 );

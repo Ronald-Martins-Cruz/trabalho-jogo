@@ -2,6 +2,7 @@ import { CONTEUDO } from '../data/content.js';
 import { emitir } from './state.js';
 import { obterPool } from './pool.js';
 import { aplicarDano, poolInimigos } from './enemies.js';
+import { aoCalcularDano } from './jokers.js';
 
 // Armas e projeteis. A regra desta fase: **arma e dado, nao classe**. Cada
 // entrada de CONTEUDO.armas aponta um `comportamento` para uma das funcoes
@@ -215,9 +216,7 @@ function orbital(estado, arma, dados, nivel, dt) {
       if (emCooldown(arma.golpes, e, agora)) continue;
 
       lembrarGolpe(arma.golpes, e, agora + nivel.intervaloDano, agora);
-      const efetivo = Math.min(nivel.dano, e.hp);
-      const matou = aplicarDano(estado, e, nivel.dano);
-      emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, efetivo, matou });
+      golpear(estado, e, nivel.dano, dados.id);
       atingiu = true;
     }
   }
@@ -271,8 +270,8 @@ function ondaArea(estado, arma, dados, nivel, dt) {
     const d2 = dx * dx + dy * dy;
     if (d2 > soma * soma) continue;
 
-    const efetivo = Math.min(nivel.dano, e.hp);
-    const matou = aplicarDano(estado, e, nivel.dano);
+    // O acerto e registrado ANTES do empurrao, no lugar em que a onda pegou.
+    const matou = golpear(estado, e, nivel.dano, dados.id);
     if (!matou) {
       const d = Math.sqrt(d2);
       const dirX = d > 0 ? dx / d : 0;
@@ -280,7 +279,6 @@ function ondaArea(estado, arma, dados, nivel, dt) {
       e.x += dirX * nivel.empurrao;
       e.y += dirY * nivel.empurrao;
     }
-    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano: nivel.dano, efetivo, matou });
   }
   // angulo:0 porque a onda nao tem direcao — e simetrica ao redor do jogador.
   emitir(estado, 'arma-disparo', { arma: dados.id, x: player.x, y: player.y, angulo: 0 });
@@ -328,12 +326,27 @@ function feixe(estado, arma, dados, nivel, dt) {
     const limite = meiaLargura + e.raio;
     if (perpX * perpX + perpY * perpY > limite * limite) continue;
 
-    const efetivo = Math.min(dano, e.hp);
-    const matou = aplicarDano(estado, e, dano);
-    emitir(estado, 'arma-acerto', { arma: dados.id, x: e.x, y: e.y, dano, efetivo, matou });
+    golpear(estado, e, dano, dados.id);
     atingiu = true;
   }
   return atingiu;
+}
+
+// Porta unica de golpe de arma em inimigo: todo comportamento passa aqui. E
+// o UNICO lugar que chama o hook aoCalcularDano — o dano da arma entra cru,
+// os coringas o modificam (Vespera, Grupo de WhatsApp) e so entao ele e
+// aplicado. O evento leva o dano ja modificado, senao o relatorio de
+// balanceamento veria overkill negativo com coringa de dano.
+// `efetivo` e o que o golpe realmente tirou de HP; a diferenca para `dano` e
+// o desperdicio (overkill) que o relatorio mede por arma.
+function golpear(estado, e, danoBase, armaId) {
+  const dano = aoCalcularDano(estado, danoBase, e);
+  const x = e.x;
+  const y = e.y;
+  const efetivo = Math.min(dano, e.hp);
+  const matou = aplicarDano(estado, e, dano);
+  emitir(estado, 'arma-acerto', { arma: armaId, x, y, dano, efetivo, matou });
+  return matou;
 }
 
 // Varredura linear sobre os inimigos ativos. So roda quando uma arma dispara
@@ -455,13 +468,7 @@ function colidirProjetil(estado, p) {
     if (jaAtingiu(p, e)) continue;
 
     lembrarAtingido(p, e);
-    const x = e.x;
-    const y = e.y;
-    // O que o golpe realmente tirou de HP. A diferenca para `dano` e o
-    // desperdicio (overkill) que o relatorio mede por arma.
-    const efetivo = Math.min(p.dano, e.hp);
-    const matou = aplicarDano(estado, e, p.dano);
-    emitir(estado, 'arma-acerto', { arma: p.arma, x, y, dano: p.dano, efetivo, matou });
+    golpear(estado, e, p.dano, p.arma);
 
     if (p.perfuracao <= 0) return true;
     p.perfuracao -= 1;
