@@ -66,6 +66,7 @@ export function criarUi(doc) {
     botaoComecar: doc.getElementById('botao-comecar'),
     tcc: doc.getElementById('tcc'),
     botaoTcc: doc.getElementById('botao-tcc'),
+    botaoMudo: doc.getElementById('botao-mudo'),
     // Fase 10: a barra da Banca no HUD, as telas de fim e o recorde no menu.
     bancaHud: doc.getElementById('banca-hud'),
     bancaNome: doc.getElementById('banca-nome'),
@@ -644,7 +645,27 @@ export function criarUi(doc) {
     classe(el.timer, 'parado', estado.tela !== TELAS.AVALIACAO);
   }
 
-  return { ligarBotoes, ligarCartas, ligarLoja, ligarRelatorio, sincronizar, el };
+  // Botao de som: a UI so avisa do clique; quem muda e audio.js, via main.js. O
+  // foco sai do botao, senao o Enter/Espaco seguinte o clicaria de novo.
+  function ligarMudo(alternar) {
+    if (!el.botaoMudo) return;
+    el.botaoMudo.addEventListener('click', () => {
+      alternar();
+      soltarFoco(el.botaoMudo);
+    });
+  }
+
+  function mostrarMudo(mudo) {
+    if (!el.botaoMudo) return;
+    const t = CONTEUDO.textos.audio;
+    texto(el.botaoMudo, mudo ? t.mudo : t.ligado);
+    const titulo = mudo ? t.tituloMudo : t.tituloLigado;
+    el.botaoMudo.title = titulo;
+    el.botaoMudo.setAttribute('aria-label', titulo);
+    classe(el.botaoMudo, 'mudo', mudo);
+  }
+
+  return { ligarMudo, mostrarMudo, ligarBotoes, ligarCartas, ligarLoja, ligarRelatorio, sincronizar, el };
 }
 
 // ------------------------------------------------------ exportar relatorio

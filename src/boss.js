@@ -219,6 +219,11 @@ export function bancaVencida(estado) {
     espelhar(b, corpo);
     return false;
   }
+  // Morte simultanea e jubilado (main.js): o jogador ja caiu neste tick, entao
+  // a Banca nao e marcada derrotada nem emite 'banca-derrotada' — senao a fila
+  // levaria vitoria e jubilacao juntas e o boletim contaria uma Banca vencida.
+  // O espelho fica com o ultimo HP visto, que e o que a tela de jubilado mostra.
+  if (!estado.player.vivo) return false;
   b.estado = E.DERROTADA;
   b.padrao = '';
   b.relogio = 0;

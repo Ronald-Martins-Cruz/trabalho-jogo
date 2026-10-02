@@ -1,6 +1,7 @@
 import { CONTEUDO } from '../data/content.js';
 import { novoEstado, novoRecorde, irParaTela, emitir, TELAS } from './state.js';
 import { desenhar } from './render.js';
+import { criarAudio } from './audio.js';
 import { criarUi } from './ui.js';
 import { atualizarPlayer, atualizarOrbes } from './player.js';
 import { atualizarInimigos } from './enemies.js';
@@ -192,8 +193,21 @@ export function iniciar() {
   // recorde zerado e nada quebra.
   Object.assign(estado.recorde, lerRecorde());
   const ui = criarUi(document);
+  // O audio vive fora do estado: a simulacao nunca o enxerga. O contexto so
+  // nasce no primeiro gesto (ligarGestos), porque o navegador bloqueia antes.
+  const audio = criarAudio({
+    criarContexto: () => new (window.AudioContext || window.webkitAudioContext)(),
+    mudoInicial: lerMudo(),
+    aoMudar: (mudo) => {
+      gravarMudo(mudo);
+      ui.mostrarMudo(mudo);
+    },
+  });
+  ui.mostrarMudo(audio.estaMudo());
+  ui.ligarMudo(() => audio.alternarMudo());
+  ligarGestos(audio);
 
-  ligarTeclado(estado);
+  ligarTeclado(estado, audio);
   ui.ligarBotoes({
     jogar: () => iniciarRun(estado),
     continuar: () => irParaTela(estado, TELAS.AVALIACAO),
@@ -248,9 +262,10 @@ export function iniciar() {
 
     desenhar(estado, ctx);
     ui.sincronizar(estado);
-    // Consumidor da fila: a fase 11 poe audio.js aqui, antes de esvaziar. O
-    // recorde e gravado aqui, e nao dentro da simulacao: run.js so o escreve
-    // no estado e emite 'recorde'.
+    // Consumidor da fila, antes de esvaziar: o audio toca o que o quadro
+    // emitiu e o recorde e gravado aqui, e nao dentro da simulacao: run.js so o
+    // escreve no estado e emite 'recorde'.
+    audio.consumir(estado.eventos);
     for (let i = 0; i < estado.eventos.length; i += 1) {
       if (estado.eventos[i].tipo === 'recorde') gravarRecorde(estado.recorde);
     }
@@ -296,6 +311,37 @@ function ambienteDoNavegador(agora) {
     janela: `${window.innerWidth}x${window.innerHeight}`,
     pixelRatio: window.devicePixelRatio || 1,
   };
+}
+
+// -------------------------------------------------------------------- mudo
+
+// Mesmo padrao do recorde: o localStorage so e tocado aqui, e qualquer falha
+// (ausente, bloqueado, cota) degrada em silencio. Padrao: som ligado.
+export function lerMudo(armazenamento = armazenamentoDoNavegador()) {
+  if (!armazenamento) return false;
+  try {
+    return armazenamento.getItem(CONTEUDO.audio.chaveMudo) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function gravarMudo(mudo, armazenamento = armazenamentoDoNavegador()) {
+  if (!armazenamento) return false;
+  try {
+    armazenamento.setItem(CONTEUDO.audio.chaveMudo, mudo ? '1' : '0');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// O primeiro gesto cria o AudioContext; os seguintes acordam um contexto que o
+// navegador tenha suspendido (aba escondida, politica de autoplay).
+function ligarGestos(audio) {
+  const gesto = () => audio.destravar();
+  window.addEventListener('pointerdown', gesto);
+  window.addEventListener('keydown', gesto);
 }
 
 // ------------------------------------------------------------------ recorde
@@ -367,7 +413,7 @@ const MAPA_TECLAS = {
   ArrowRight: 'direita',
 };
 
-function ligarTeclado(estado) {
+function ligarTeclado(estado, audio) {
   const aplicar = (code, apertada) => {
     const acao = MAPA_TECLAS[code];
     if (!acao) return false;
@@ -379,6 +425,13 @@ function ligarTeclado(estado) {
   };
 
   window.addEventListener('keydown', (ev) => {
+    // M muda o som em qualquer tela, antes de tudo: numa apresentacao de sala
+    // e preciso poder calar o jogo na hora.
+    if (ev.code === 'KeyM' && !ev.repeat) {
+      audio.alternarMudo();
+      ev.preventDefault();
+      return;
+    }
     // A carta come a tecla antes do movimento: as setas navegam entre as
     // opcoes em vez de empurrar um jogador que esta congelado de qualquer
     // jeito. O keyup segue chamando aplicar(), entao nenhuma tecla fica presa.

@@ -1068,6 +1068,138 @@ export const CONTEUDO = {
     },
   },
 
+  // Audio procedural (fase 11). Nada aqui e arquivo: cada som e uma lista de
+  // `camadas`, e audio.js sintetiza cada uma com um oscilador (ou ruido branco)
+  // e um envelope. Uma camada:
+  //   onda      'sine' | 'square' | 'triangle' | 'sawtooth' | 'ruido'
+  //   freq      Hz no inicio (ignorado no ruido)
+  //   freqFim   Hz no fim da camada (glissando; omitido = constante)
+  //   inicio    s depois do disparo do som
+  //   duracao   s, do ataque ao silencio
+  //   ataque    s de subida linear ate `volume`; o resto e decay exponencial
+  //   volume    0..1, ANTES do volume geral
+  //   filtro    { tipo: 'lowpass'|'highpass'|'bandpass', freq } so no ruido
+  audio: {
+    // Conservador: melhor o professor aumentar do que levar um susto.
+    volumeGeral: 0.25,
+    chaveMudo: 'semana-de-provas/mudo',
+    // Limitador de vozes. Os tres numeros valem por TIPO de som:
+    //   maxPorQuadro   quantos o consumidor da fila deixa tocar por quadro;
+    //   intervaloMin   s de relogio de audio entre dois disparos do mesmo tipo;
+    //   prioritario    nunca e cortado pelo teto de vozes simultaneas.
+    // Os numeros se somam: 30 mortes num quadro viram no maximo `maxPorQuadro`.
+    maxVozesSimultaneas: 16,
+    // Rampa curta para o volume geral nao estalar ao mudar.
+    rampaGeral: 0.02,
+    // Semente do buffer de ruido branco: um rng a parte, que nunca toca o da
+    // simulacao (o audio nao pode mudar a partida).
+    sementeRuido: 7,
+    duracaoBufferRuido: 1,
+    // Evento da fila -> som.
+    eventos: {
+      'xp-coletado': 'xp',
+      nivel: 'nivel',
+      'jogador-dano': 'dano',
+      'inimigo-morto': 'morte',
+      'avaliacao-fim': 'aprovado',
+      jubilado: 'jubilado',
+      colacao: 'colacao',
+      'banca-telegrafo': 'aviso',
+    },
+    sons: {
+      // 🔹 blip agudo curto
+      xp: {
+        maxPorQuadro: 1,
+        intervaloMin: 0.04,
+        prioritario: false,
+        camadas: [{ onda: 'triangle', freq: 1320, freqFim: 1900, inicio: 0, duracao: 0.07, ataque: 0.004, volume: 0.35 }],
+      },
+      // 🎵 acorde ascendente (do-mi-sol-do)
+      nivel: {
+        maxPorQuadro: 1,
+        intervaloMin: 0.3,
+        prioritario: true,
+        camadas: [
+          { onda: 'triangle', freq: 523.25, inicio: 0, duracao: 0.12, ataque: 0.01, volume: 0.35 },
+          { onda: 'triangle', freq: 659.25, inicio: 0.07, duracao: 0.12, ataque: 0.01, volume: 0.35 },
+          { onda: 'triangle', freq: 783.99, inicio: 0.14, duracao: 0.12, ataque: 0.01, volume: 0.35 },
+          { onda: 'triangle', freq: 1046.5, inicio: 0.21, duracao: 0.4, ataque: 0.01, volume: 0.45 },
+        ],
+      },
+      // 💥 ruido branco com decay
+      dano: {
+        maxPorQuadro: 1,
+        intervaloMin: 0.08,
+        prioritario: true,
+        camadas: [
+          { onda: 'ruido', inicio: 0, duracao: 0.25, ataque: 0.002, volume: 0.6, filtro: { tipo: 'lowpass', freq: 1800 } },
+          { onda: 'sawtooth', freq: 150, freqFim: 55, inicio: 0, duracao: 0.2, ataque: 0.002, volume: 0.25 },
+        ],
+      },
+      // 🔸 estalo seco
+      morte: {
+        maxPorQuadro: 2,
+        intervaloMin: 0.03,
+        prioritario: false,
+        camadas: [
+          { onda: 'ruido', inicio: 0, duracao: 0.05, ataque: 0.001, volume: 0.3, filtro: { tipo: 'highpass', freq: 2500 } },
+          { onda: 'square', freq: 240, freqFim: 90, inicio: 0, duracao: 0.05, ataque: 0.001, volume: 0.12 },
+        ],
+      },
+      // 🎉 fanfarra de aprovacao
+      aprovado: {
+        maxPorQuadro: 1,
+        intervaloMin: 1,
+        prioritario: true,
+        camadas: [
+          { onda: 'square', freq: 523.25, inicio: 0, duracao: 0.14, ataque: 0.01, volume: 0.22 },
+          { onda: 'square', freq: 523.25, inicio: 0.16, duracao: 0.14, ataque: 0.01, volume: 0.22 },
+          { onda: 'square', freq: 659.25, inicio: 0.32, duracao: 0.14, ataque: 0.01, volume: 0.22 },
+          { onda: 'square', freq: 783.99, inicio: 0.48, duracao: 0.5, ataque: 0.01, volume: 0.26 },
+          { onda: 'triangle', freq: 392, inicio: 0.48, duracao: 0.5, ataque: 0.01, volume: 0.3 },
+        ],
+      },
+      // 📉 grave descendente
+      jubilado: {
+        maxPorQuadro: 1,
+        intervaloMin: 1,
+        prioritario: true,
+        camadas: [
+          { onda: 'sawtooth', freq: 220, freqFim: 55, inicio: 0, duracao: 1.1, ataque: 0.02, volume: 0.35 },
+          { onda: 'triangle', freq: 110, freqFim: 36, inicio: 0.1, duracao: 1.2, ataque: 0.02, volume: 0.4 },
+        ],
+      },
+      // 🎓 fanfarra maior (acorde final de do maior com oitava)
+      colacao: {
+        maxPorQuadro: 1,
+        intervaloMin: 1,
+        prioritario: true,
+        camadas: [
+          { onda: 'square', freq: 523.25, inicio: 0, duracao: 0.16, ataque: 0.01, volume: 0.2 },
+          { onda: 'square', freq: 659.25, inicio: 0.18, duracao: 0.16, ataque: 0.01, volume: 0.2 },
+          { onda: 'square', freq: 783.99, inicio: 0.36, duracao: 0.16, ataque: 0.01, volume: 0.2 },
+          { onda: 'square', freq: 1046.5, inicio: 0.54, duracao: 0.3, ataque: 0.01, volume: 0.22 },
+          { onda: 'square', freq: 783.99, inicio: 0.9, duracao: 0.16, ataque: 0.01, volume: 0.2 },
+          { onda: 'square', freq: 1046.5, inicio: 1.08, duracao: 0.16, ataque: 0.01, volume: 0.2 },
+          { onda: 'square', freq: 1318.5, inicio: 1.26, duracao: 0.9, ataque: 0.01, volume: 0.2 },
+          { onda: 'triangle', freq: 523.25, inicio: 1.26, duracao: 0.9, ataque: 0.01, volume: 0.22 },
+          { onda: 'triangle', freq: 659.25, inicio: 1.26, duracao: 0.9, ataque: 0.01, volume: 0.2 },
+          { onda: 'triangle', freq: 783.99, inicio: 1.26, duracao: 0.9, ataque: 0.01, volume: 0.2 },
+        ],
+      },
+      // 🚨 aviso da Banca: dois pulsos
+      aviso: {
+        maxPorQuadro: 1,
+        intervaloMin: 0.3,
+        prioritario: true,
+        camadas: [
+          { onda: 'square', freq: 880, inicio: 0, duracao: 0.13, ataque: 0.005, volume: 0.22 },
+          { onda: 'square', freq: 880, inicio: 0.17, duracao: 0.13, ataque: 0.005, volume: 0.22 },
+        ],
+      },
+    },
+  },
+
   // HUD. Numeros de apresentacao que o ui.js le; o que o canvas desenha fica
   // em `visual`.
   hud: {
@@ -1078,6 +1210,12 @@ export const CONTEUDO = {
 
   // Toda string visivel ao jogador que nao esta no index.html mora aqui.
   textos: {
+    audio: {
+      ligado: '🔊',
+      mudo: '🔇',
+      tituloLigado: 'Som ligado (M)',
+      tituloMudo: 'Som desligado (M)',
+    },
     telas: {
       menu: 'Menu',
       avaliacao: 'Avaliação',
@@ -1842,6 +1980,66 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(conteudo.colacao.atrasoEntrada, 'colacao.atrasoEntrada', { min: 0, max: 3 });
   }
   if (exigeObjeto(conteudo.recorde, 'recorde')) exigeTexto(conteudo.recorde.chave, 'recorde.chave');
+
+  // Audio (fase 11): todo som que a fila pode pedir existe, e nenhum som
+  // estoura o volume sozinho (a soma das camadas que soam juntas passa de 1).
+  if (exigeObjeto(conteudo.audio, 'audio')) {
+    const a = conteudo.audio;
+    exigeNumero(a.volumeGeral, 'audio.volumeGeral', { min: 0, max: 0.5 });
+    exigeNumero(a.maxVozesSimultaneas, 'audio.maxVozesSimultaneas', { min: 1 });
+    exigeNumero(a.rampaGeral, 'audio.rampaGeral', { min: 0, max: 1 });
+    exigeNumero(a.sementeRuido, 'audio.sementeRuido', { min: 0 });
+    exigeNumero(a.duracaoBufferRuido, 'audio.duracaoBufferRuido', { min: 0.1, max: 5 });
+    exigeTexto(a.chaveMudo, 'audio.chaveMudo');
+    const ondas = ['sine', 'square', 'triangle', 'sawtooth', 'ruido'];
+    const filtros = ['lowpass', 'highpass', 'bandpass'];
+    if (exigeObjeto(a.sons, 'audio.sons') && exigeObjeto(a.eventos, 'audio.eventos')) {
+      for (const [evento, som] of Object.entries(a.eventos)) {
+        if (!a.sons[som]) erros.push(`audio.eventos.${evento}: o som "${som}" nao existe em audio.sons`);
+      }
+      for (const [nome, som] of Object.entries(a.sons)) {
+        const c0 = `audio.sons.${nome}`;
+        if (!exigeObjeto(som, c0)) continue;
+        exigeNumero(som.maxPorQuadro, `${c0}.maxPorQuadro`, { min: 1 });
+        exigeNumero(som.intervaloMin, `${c0}.intervaloMin`, { min: 0 });
+        if (typeof som.prioritario !== 'boolean') erros.push(`${c0}.prioritario: esperava booleano`);
+        if (!Object.values(a.eventos).includes(nome)) erros.push(`${c0}: nenhum evento de audio.eventos toca este som`);
+        if (!Array.isArray(som.camadas) || som.camadas.length === 0) {
+          erros.push(`${c0}.camadas: esperava uma lista nao vazia`);
+          continue;
+        }
+        som.camadas.forEach((c, i) => {
+          const cc = `${c0}.camadas[${i}]`;
+          if (!exigeObjeto(c, cc)) return;
+          if (!ondas.includes(c.onda)) erros.push(`${cc}.onda: "${c.onda}" desconhecida`);
+          if (c.onda !== 'ruido') exigeNumero(c.freq, `${cc}.freq`, { min: 20, max: 8000 });
+          if (c.freqFim !== undefined) exigeNumero(c.freqFim, `${cc}.freqFim`, { min: 20, max: 8000 });
+          exigeNumero(c.inicio, `${cc}.inicio`, { min: 0, max: 5 });
+          exigeNumero(c.duracao, `${cc}.duracao`, { min: 0.01, max: 5 });
+          exigeNumero(c.ataque, `${cc}.ataque`, { min: 0, max: Number.isFinite(c.duracao) ? c.duracao : 5 });
+          exigeNumero(c.volume, `${cc}.volume`, { min: 0.001, max: 1 });
+          if (c.filtro !== undefined) {
+            if (c.onda !== 'ruido') erros.push(`${cc}.filtro: so o ruido tem filtro`);
+            else if (exigeObjeto(c.filtro, `${cc}.filtro`)) {
+              if (!filtros.includes(c.filtro.tipo)) erros.push(`${cc}.filtro.tipo: "${c.filtro.tipo}" desconhecido`);
+              exigeNumero(c.filtro.freq, `${cc}.filtro.freq`, { min: 20, max: 20000 });
+            }
+          }
+        });
+        // Camadas que soam juntas somam: acima de 1 o som satura.
+        for (const c of som.camadas) {
+          if (!Number.isFinite(c.inicio) || !Number.isFinite(c.duracao)) continue;
+          const soma = som.camadas
+            .filter((o) => Number.isFinite(o.inicio) && Number.isFinite(o.duracao) && o.inicio <= c.inicio && o.inicio + o.duracao > c.inicio)
+            .reduce((t, o) => t + o.volume, 0);
+          if (soma > 1) erros.push(`${c0}: as camadas que soam juntas em ${c.inicio}s somam volume ${soma.toFixed(2)} (> 1, satura)`);
+        }
+      }
+    }
+  }
+  if (exigeObjeto(conteudo.textos && conteudo.textos.audio, 'textos.audio')) {
+    for (const k of ['ligado', 'mudo', 'tituloLigado', 'tituloMudo']) exigeTexto(conteudo.textos.audio[k], `textos.audio.${k}`);
+  }
 
   // Os campos que cada padrao da Banca pede, alem de telegrafo/recuperacao.
   // Mesma divisao de CAMPOS_POR_COMPORTAMENTO: aqui so o que content.js sabe

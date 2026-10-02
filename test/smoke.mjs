@@ -51,7 +51,8 @@ import {
   poolPerguntas,
   verificarBancaDoConteudo,
 } from '../src/boss.js';
-import { gravarRecorde, lerRecorde } from '../src/main.js';
+import { gravarMudo, gravarRecorde, lerMudo, lerRecorde } from '../src/main.js';
+import { criarAudio, criarLimitador, planejarSons } from '../src/audio.js';
 import {
   aoCalcularDano,
   ATRIBUTOS,
@@ -4757,6 +4758,265 @@ function checarRecorde() {
   return `sem localStorage, lancando ou podre: recorde zerado, sem excecao · 3 formaturas guardam ${rec.melhorConceito} (${rec.melhorMedia})`;
 }
 
+// ---------------------------------------------------------------- fase 11
+
+// Um AudioContext de mentira, so para exercitar o sintetizador no node: guarda
+// o que foi pedido e deixa o teste mexer em `state` e `currentTime`.
+function contextoFalso(estadoInicial = 'running', { resumeAcorda = true } = {}) {
+  const reg = { criados: 0, resumes: 0, osciladores: [], ruidos: [], ganhoMestre: null, filtros: 0, compressores: 0, ctx: null, buffers: [] };
+  const param = () => ({
+    value: 0,
+    alvo: null,
+    setValueAtTime() {},
+    linearRampToValueAtTime() {},
+    exponentialRampToValueAtTime() {},
+    cancelScheduledValues() {},
+    setTargetAtTime(v) { this.alvo = v; },
+  });
+  const fabrica = () => {
+    reg.criados += 1;
+    const ctx = {
+      state: estadoInicial,
+      currentTime: 10,
+      sampleRate: 8000,
+      destination: {},
+      resume() {
+        reg.resumes += 1;
+        if (resumeAcorda) ctx.state = 'running';
+        return Promise.resolve();
+      },
+      createGain() {
+        const g = { gain: param(), connect() {} };
+        if (reg.ganhoMestre === null) reg.ganhoMestre = g;
+        return g;
+      },
+      createDynamicsCompressor() { reg.compressores += 1; return { connect() {} }; },
+      createBuffer(c, n) {
+        const dados = new Float32Array(n);
+        reg.buffers.push(dados);
+        return { getChannelData: () => dados };
+      },
+      createOscillator() {
+        const o = { type: '', frequency: param(), connect() {}, start(t) { o.t0 = t; }, stop(t) { o.t1 = t; } };
+        reg.osciladores.push(o);
+        return o;
+      },
+      createBufferSource() {
+        const n = { buffer: null, loop: false, connect() {}, start(t) { n.t0 = t; }, stop(t) { n.t1 = t; } };
+        reg.ruidos.push(n);
+        return n;
+      },
+      createBiquadFilter() { reg.filtros += 1; return { type: '', frequency: param(), connect() {} }; },
+    };
+    reg.ctx = ctx;
+    return ctx;
+  };
+  return { reg, fabrica };
+}
+
+function eventosDe(tipo, n) {
+  return Array.from({ length: n }, () => ({ tipo, dados: null, t: 0 }));
+}
+
+function checarAudio() {
+  const A = CONTEUDO.audio;
+  const NOMES = ['xp', 'nivel', 'dano', 'morte', 'aprovado', 'jubilado', 'colacao', 'aviso'];
+
+  // Conteudo: os 8 sons do contrato existem, e o validador pega um evento que
+  // aponta para um som que nao existe, um som que satura e um volume alto.
+  for (const nome of NOMES) if (!A.sons[nome]) falhar(0, `audio: falta o som "${nome}" em content.js`);
+  const semSom = structuredClone(CONTEUDO);
+  semSom.audio.eventos['xp-coletado'] = 'nao-existe';
+  if (!validarConteudo(semSom).erros.some((e) => e.includes('audio.eventos'))) falhar(0, 'audio: o validador aceitou um evento que aponta para um som inexistente');
+  const alto = structuredClone(CONTEUDO);
+  alto.audio.sons.nivel.camadas.forEach((c) => { c.volume = 0.9; c.duracao = 0.5; });
+  if (!validarConteudo(alto).erros.some((e) => e.includes('satura'))) falhar(0, 'audio: o validador aceitou camadas que somam mais que 1');
+  const barulhento = structuredClone(CONTEUDO);
+  barulhento.audio.volumeGeral = 1;
+  if (!validarConteudo(barulhento).erros.some((e) => e.includes('volumeGeral'))) falhar(0, 'audio: o validador aceitou volume geral 1');
+
+  // Todo evento mapeado e emitido de verdade em algum lugar de src/ (um nome
+  // errado em content.js seria um som que nunca toca).
+  const pasta = new URL('../src/', import.meta.url);
+  const fontes = readdirSync(pasta).filter((n) => n.endsWith('.js')).map((n) => readFileSync(new URL(n, pasta), 'utf8')).join('\n');
+  for (const tipo of Object.keys(A.eventos)) {
+    if (!new RegExp(`emitir\\([^)]*'${tipo}'`).test(fontes)) falhar(0, `audio: nenhum emitir() em src/ emite "${tipo}", o som nunca tocaria`);
+  }
+
+  // Mapa: cada evento toca o som certo, e os 8 sons saem distintos.
+  const todos = Object.keys(A.eventos).map((tipo) => ({ tipo, dados: null, t: 0 }));
+  const planoTodos = planejarSons(todos, criarLimitador(), 10);
+  if (planoTodos.length !== NOMES.length || !NOMES.every((n) => planoTodos.includes(n))) {
+    falhar(0, `audio: os eventos do contrato tocaram [${planoTodos}], esperava os 8 sons`);
+  }
+  if (planejarSons([{ tipo: 'tela', dados: 'menu', t: 0 }, { tipo: 'arma-disparo', dados: null, t: 0 }], criarLimitador(), 10).length !== 0) {
+    falhar(0, 'audio: evento sem som mapeado tocou');
+  }
+
+  // Limitador: 30 mortes no mesmo quadro -> no maximo maxPorQuadro.
+  const lim = criarLimitador();
+  const horda = planejarSons(eventosDe('inimigo-morto', 30), lim, 10);
+  if (horda.length !== A.sons.morte.maxPorQuadro) falhar(0, `audio: 30 mortes num quadro tocaram ${horda.length} estalos, o teto e ${A.sons.morte.maxPorQuadro}`);
+  // E entre quadros: o intervalo minimo segura o quadro seguinte, e libera depois.
+  const colado = planejarSons(eventosDe('inimigo-morto', 30), lim, 10 + A.sons.morte.intervaloMin / 2);
+  if (colado.length !== 0) falhar(0, `audio: o quadro seguinte, dentro do intervalo minimo, tocou ${colado.length} estalos`);
+  const livre = planejarSons(eventosDe('inimigo-morto', 30), lim, 10 + A.sons.morte.intervaloMin * 2);
+  if (livre.length !== A.sons.morte.maxPorQuadro) falhar(0, `audio: passado o intervalo, tocaram ${livre.length} estalos`);
+
+  // Pendencia 35: com a fila cortada em 256 por emitir(), o limite segue valendo
+  // sobre o que sobrou.
+  const cheio = novoEstado(SEMENTE);
+  for (let i = 0; i < CONTEUDO.arena.limites.eventos + 144; i += 1) emitir(cheio, 'inimigo-morto', { tipo: 'x' });
+  if (cheio.eventos.length !== CONTEUDO.arena.limites.eventos) falhar(0, `audio: a fila cortada tem ${cheio.eventos.length}, esperava ${CONTEUDO.arena.limites.eventos}`);
+  if (planejarSons(cheio.eventos, criarLimitador(), 10).length !== A.sons.morte.maxPorQuadro) falhar(0, 'audio: com a fila cortada pelo teto, o limitador deixou passar mais que maxPorQuadro (pendencia 35)');
+
+  // Mortes de verdade, pela porta do jogo: 30 inimigos no mesmo tick.
+  const horda30 = novoEstado(SEMENTE + 1100);
+  comecarAvaliacao(horda30);
+  const alvos = [];
+  for (let i = 0; i < 30; i += 1) alvos.push(spawnInimigo(horda30, CONTEUDO.inimigos[0].id));
+  horda30.eventos.length = 0;
+  for (const e of alvos) if (e) aplicarDano(horda30, e, 1e9);
+  const mortes = horda30.eventos.filter((e) => e.tipo === 'inimigo-morto').length;
+  if (mortes < 25) falhar(0, `audio: a horda de teste so gerou ${mortes} mortes, o teste perdeu o sentido`);
+  if (planejarSons(horda30.eventos, criarLimitador(), 10).length > A.sons.morte.maxPorQuadro) falhar(0, `audio: ${mortes} mortes reais num quadro tocaram mais que ${A.sons.morte.maxPorQuadro} estalos`);
+
+  // Teto de vozes: som comum e cortado, prioritario passa.
+  const apertado = { ...A, maxVozesSimultaneas: 1 };
+  const mistura = planejarSons([...eventosDe('inimigo-morto', 1), ...eventosDe('xp-coletado', 1), ...eventosDe('jogador-dano', 1)], criarLimitador(apertado), 10);
+  if (mistura.join() !== 'morte,dano') falhar(0, `audio: com o teto de 1 voz, esperava morte,dano (o xp comum cortado, o dano prioritario passa), veio ${mistura}`);
+
+  // Sintetizador, com o contexto de mentira.
+  // 1. Nada de contexto antes do gesto.
+  const f1 = contextoFalso();
+  const audio = criarAudio({ criarContexto: f1.fabrica });
+  if (audio.consumir(eventosDe('jogador-dano', 1)) !== 0 || f1.reg.criados !== 0 || audio.diagnostico().criado) falhar(0, 'audio: o AudioContext nasceu antes de um gesto do usuario');
+  // 2. O gesto cria; depois cada som toca, com envelopes sensatos.
+  if (!audio.destravar() || f1.reg.criados !== 1) falhar(0, 'audio: destravar nao criou o contexto');
+  audio.destravar();
+  if (f1.reg.criados !== 1) falhar(0, 'audio: um segundo gesto criou outro contexto');
+  if (f1.reg.ganhoMestre.gain.value !== A.volumeGeral || A.volumeGeral > 0.5) falhar(0, `audio: volume geral ${f1.reg.ganhoMestre.gain.value}, esperava ${A.volumeGeral} (conservador)`);
+  // O buffer de ruido branco e ruido de verdade: dos dois sinais, dentro de [-1, 1].
+  const ruidoBranco = f1.reg.buffers[0];
+  if (!ruidoBranco || !ruidoBranco.some((v) => v > 0.5) || !ruidoBranco.some((v) => v < -0.5) || ruidoBranco.some((v) => Math.abs(v) > 1)) falhar(0, 'audio: o buffer de ruido branco nao e ruido');
+  if (f1.reg.compressores !== 1) falhar(0, 'audio: sem o compressor de seguranca na saida');
+  for (const nome of NOMES) {
+    const tipo = Object.keys(A.eventos).find((k) => A.eventos[k] === nome);
+    f1.reg.osciladores.length = 0;
+    f1.reg.ruidos.length = 0;
+    // O relogio avanca: o intervalo minimo de um som nao pode calar o seguinte.
+    f1.reg.ctx.currentTime += 5;
+    const antes = audio.diagnostico().tocados[nome] || 0;
+    if (audio.consumir(eventosDe(tipo, 1)) !== 1) falhar(0, `audio: o evento "${tipo}" nao tocou "${nome}"`);
+    if ((audio.diagnostico().tocados[nome] || 0) !== antes + 1) falhar(0, `audio: o diagnostico nao contou "${nome}"`);
+    const camadas = A.sons[nome].camadas;
+    const fontesDoSom = [...f1.reg.osciladores, ...f1.reg.ruidos];
+    if (fontesDoSom.length !== camadas.length) falhar(0, `audio: "${nome}" tem ${camadas.length} camadas e gerou ${fontesDoSom.length} fontes`);
+    for (const f of fontesDoSom) {
+      if (!(f.t1 > f.t0) || f.t0 < f1.reg.ctx.currentTime) falhar(0, `audio: "${nome}" agendou start ${f.t0} / stop ${f.t1} fora de ordem`);
+    }
+  }
+  // 3. Suspenso (autoplay): o gesto acorda; enquanto suspenso, nada toca.
+  const f2 = contextoFalso('suspended');
+  criarAudio({ criarContexto: f2.fabrica }).destravar();
+  if (f2.reg.resumes !== 1) falhar(0, 'audio: um contexto suspenso nao foi acordado no gesto');
+  const f3 = contextoFalso('suspended', { resumeAcorda: false });
+  const audioTeimoso = criarAudio({ criarContexto: f3.fabrica });
+  audioTeimoso.destravar();
+  if (audioTeimoso.consumir(eventosDe('jogador-dano', 1)) !== 0) falhar(0, 'audio: tocou com o contexto ainda suspenso');
+  // 4. Mudo: nada toca, o volume vai a zero, e volta.
+  const mudancas = [];
+  const f4 = contextoFalso();
+  const audioMudo = criarAudio({ criarContexto: f4.fabrica, aoMudar: (m) => mudancas.push(m) });
+  audioMudo.destravar();
+  audioMudo.alternarMudo();
+  if (!audioMudo.estaMudo() || f4.reg.ganhoMestre.gain.alvo !== 0 || mudancas.join() !== 'true') falhar(0, 'audio: alternarMudo nao silenciou');
+  f4.reg.ctx.currentTime += 5;
+  if (audioMudo.consumir(eventosDe('jogador-dano', 1)) !== 0) falhar(0, 'audio: tocou mudo');
+  audioMudo.alternarMudo();
+  if (audioMudo.estaMudo() || f4.reg.ganhoMestre.gain.alvo !== A.volumeGeral) falhar(0, 'audio: desmutar nao devolveu o volume geral');
+  if (criarAudio({ criarContexto: f4.fabrica, mudoInicial: true }).estaMudo() !== true) falhar(0, 'audio: mudoInicial ignorado');
+  // 5. Sem Web Audio: nao quebra.
+  const audioSem = criarAudio({ criarContexto: () => { throw new Error('sem Web Audio'); } });
+  if (audioSem.destravar() !== false || audioSem.consumir(eventosDe('jogador-dano', 1)) !== 0 || !audioSem.diagnostico().indisponivel) falhar(0, 'audio: sem Web Audio, o jogo deveria seguir mudo');
+
+  // O mudo no armazenamento: o mesmo padrao do recorde.
+  const disco = new Map();
+  const memoria = { getItem: (k) => (disco.has(k) ? disco.get(k) : null), setItem: (k, v) => disco.set(k, String(v)) };
+  if (lerMudo(memoria) !== false) falhar(0, 'mudo: o padrao deveria ser som ligado');
+  if (!gravarMudo(true, memoria) || lerMudo(memoria) !== true) falhar(0, 'mudo: o que foi gravado nao volta');
+  if (!gravarMudo(false, memoria) || lerMudo(memoria) !== false) falhar(0, 'mudo: desligar o mudo nao volta');
+  const quebrado = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('QuotaExceededError'); } };
+  let leu;
+  let gravou;
+  try {
+    leu = lerMudo(quebrado);
+    gravou = gravarMudo(true, quebrado);
+  } catch (e) {
+    falhar(0, `mudo: o armazenamento quebrado lancou (${e.message})`);
+  }
+  if (leu !== false || gravou !== false) falhar(0, 'mudo: o armazenamento quebrado nao degradou em silencio');
+  if (lerMudo() !== false || gravarMudo(true) !== false) falhar(0, 'mudo: sem localStorage deveria degradar');
+
+  // O audio nao mexe na simulacao: a mesma partida, com e sem o consumidor.
+  const corrida = (comAudio) => {
+    const estado = novoEstado(SEMENTE + 1101);
+    comecarAvaliacao(estado);
+    const falso = contextoFalso();
+    const som = criarAudio({ criarContexto: falso.fabrica });
+    som.destravar();
+    for (let t = 1; t <= TICKS; t += 1) {
+      botCircular(estado, t);
+      atualizar(estado, PASSO);
+      if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+      estado.player.hp = estado.player.hpMax;
+      if (t % 4 === 0) {
+        falso.reg.ctx.currentTime += 4 * PASSO;
+        if (comAudio) som.consumir(estado.eventos);
+        estado.eventos.length = 0;
+      }
+    }
+    return { rng: estado.rng.s, kills: estado.run.avaliacao.kills, nivel: estado.player.nivel, x: estado.player.x, tocados: som.diagnostico().tocados };
+  };
+  const com = corrida(true);
+  const sem = corrida(false);
+  if (com.rng !== sem.rng || com.kills !== sem.kills || com.nivel !== sem.nivel || com.x !== sem.x) {
+    falhar(0, `audio: a partida mudou com o audio ligado (rng ${com.rng}/${sem.rng}, mortos ${com.kills}/${sem.kills})`);
+  }
+  for (const nome of ['xp', 'nivel', 'dano', 'morte']) {
+    if (!(com.tocados[nome] > 0)) falhar(0, `audio: em 60s de partida real, "${nome}" nunca tocou (${JSON.stringify(com.tocados)})`);
+  }
+  if (!(com.tocados.morte < com.kills)) falhar(0, `audio: ${com.tocados.morte} estalos para ${com.kills} mortos — o limitador nao limitou nada`);
+
+  return `8 sons · partida de 60s identica com e sem audio (${com.kills} mortos -> ${com.tocados.morte} estalos, ${com.tocados.xp} blips de xp, ${com.tocados.dano} danos, ${com.tocados.nivel} niveis)`;
+}
+
+// Pendencia 73: jogador e Banca caem no mesmo tick. A decisao de design e que a
+// morte ganha (jubilado); o estado e a fila tem que concordar com ela.
+function checarMorteSimultanea() {
+  const estado = estadoNoTcc(SEMENTE + 1103);
+  const b = estado.run.avaliacao.banca;
+  b.fase = CONTEUDO.banca.fases.length - 1;
+  for (let t = 0; t < 30; t += 1) atualizar(estado, PASSO);
+  const corpo = acharBanca(estado);
+  corpo.hp = corpo.hpMax * 0.01;
+  atualizar(estado, PASSO); // o espelho de HP da Banca registra o 1%
+  estado.eventos.length = 0;
+  receberDano(estado, estado.player.hpMax * 3);
+  if (!aplicarDano(estado, corpo, corpo.hpMax)) falhar(0, 'morte simultanea: a Banca nao caiu no cenario');
+  atualizar(estado, PASSO);
+  const tipos = estado.eventos.map((e) => e.tipo);
+  if (estado.tela !== TELAS.JUBILADO || estado.run.resultado.aprovado) falhar(0, `morte simultanea: a tela e "${estado.tela}", a decisao de design e jubilado`);
+  if (b.estado === ESTADOS_BANCA.DERROTADA) falhar(0, 'morte simultanea: a Banca ficou DERROTADA ao mesmo tempo em que o jogador caiu');
+  if (tipos.includes('banca-derrotada') || tipos.includes('colacao')) falhar(0, `morte simultanea: a fila levou vitoria junto com a jubilacao: ${tipos.filter((t) => t !== 'tela')}`);
+  if (!tipos.includes('jubilado')) falhar(0, 'morte simultanea: a fila nao tem o evento jubilado');
+  if (Math.abs(estado.run.resultado.bancaFracao - 0.01) > 0.005) falhar(0, `morte simultanea: o boletim diz que a Banca tinha ${estado.run.resultado.bancaFracao}, esperava ~1%`);
+  // O som correspondente: so a jubilacao toca.
+  const sons = planejarSons(estado.eventos, criarLimitador(), 10);
+  if (sons.includes('colacao') || sons.includes('aprovado') || !sons.includes('jubilado')) falhar(0, `morte simultanea: os sons seriam [${sons}]`);
+  return 'jogador e Banca no mesmo tick: JUBILADO, sem banca-derrotada nem colacao na fila';
+}
+
 // Tarefa 5: as duas telas de fim. Jubilado diz onde caiu e quanto faltava
 // (da prova e da run); no TCC, quanto de HP a Banca tinha. Os textos sao
 // funcoes puras (ui.js), testadas aqui sem DOM, e o jubilado do TCC passa
@@ -5177,6 +5437,9 @@ const investidaNaParede = checarInvestidaNaParede();
 checarVesperaNoTcc();
 const recorde = checarRecorde();
 const telasDeFim = checarTelasDeFim();
+// Fase 11: o audio e a morte simultanea (pendencia 73).
+const morteSimultanea = checarMorteSimultanea();
+const audioDoJogo = checarAudio();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -5422,6 +5685,8 @@ console.log(
     `\n  investida na parede: ${investidaNaParede}` +
     `\n  recorde (localStorage): ${recorde}` +
     `\n  jubilado no TCC: ${telasDeFim}` +
+    `\n  morte simultanea (pendencia 73): ${morteSimultanea}` +
+    `\n  audio (fase 11): ${audioDoJogo}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +
