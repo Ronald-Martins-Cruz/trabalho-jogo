@@ -421,7 +421,8 @@ function fecharAvaliacao(estado, sc, situacao, lerEstado) {
     const av = estado.run.avaliacao;
     const p = estado.player;
     if (av.decorrido > sc.ultimaAmostraEm + EPS) amostrar(estado, reg, sc);
-    reg.tempoJogado = arred(Math.min(av.decorrido, av.duracao), 3);
+    // Sem cronometro (o TCC, fase 10: duracao 0), o tempo e o da luta inteira.
+    reg.tempoJogado = arred(av.duracao > 0 ? Math.min(av.decorrido, av.duracao) : av.decorrido, 3);
     const armas = [];
     for (let i = 0; i < p.armas.length; i += 1) {
       armas.push({ id: p.armas[i].id, nivel: p.armas[i].nivel });

@@ -1,8 +1,18 @@
 import { CONTEUDO } from '../data/content.js';
-import { dadosDaAvaliacao, emitir, iniciarAvaliacao, irParaTela, novaRun, TELAS } from './state.js';
+import {
+  avaliacaoDosDados,
+  dadosDaAvaliacao,
+  emitir,
+  iniciarAvaliacao,
+  irParaTela,
+  novaRun,
+  prepararAvaliacao,
+  TELAS,
+} from './state.js';
 import { aoIniciarAvaliacao } from './jokers.js';
 import { equiparArma } from './weapons.js';
 import { receberDano } from './player.js';
+import { iniciarBanca, novaBanca } from './boss.js';
 
 // A run e o fim de cada avaliacao.
 //
@@ -14,7 +24,11 @@ import { receberDano } from './player.js';
 //        RESULTADO --sairDoResultado (main.js)--> LOJA --seguirDaLoja (shop.js)-->
 //        avancarRun --> ANUNCIO da proxima, ou TCC depois da ultima
 //   AVALIACAO --HP zerou--> JUBILADO --sairDoResultado--> MENU (a run acabou; sem save)
-//   TCC --sairDoTcc--> MENU   (provisorio: a fase 10 poe A Banca aqui)
+//   TCC --comecarTcc--> AVALIACAO com A Banca (av.banca; a luta e uma avaliacao
+//        sem cronometro, e por isso pausa, carta e HUD sao os de sempre)
+//   AVALIACAO do TCC --A Banca caiu (main.js: bancaVencida)--> colarGrau -->
+//        COLACAO --sairDaColacao--> MENU
+//   AVALIACAO do TCC --HP zerou--> JUBILADO, como em qualquer avaliacao
 //
 // Nada aqui sabe o que e uma Prova Final nem o que um modificador faz: a
 // Prova Final e so uma entrada de CONTEUDO.periodos com numeros maiores, e um
@@ -28,6 +42,7 @@ import { receberDano } from './player.js';
 
 export const MOTIVO_TEMPO = 'tempo'; // o cronometro zerou: aprovado
 export const MOTIVO_JUBILADO = 'jubilado'; // o HP zerou
+export const MOTIVO_BANCA = 'banca'; // A Banca caiu: aprovado no TCC, que nao tem nota
 
 function numero(valor) {
   return Number.isFinite(valor) ? valor : 0;
@@ -114,7 +129,10 @@ export function fecharAvaliacao(estado, motivo) {
   const av = estado.run.avaliacao;
   const player = estado.player;
   const r = estado.run.resultado;
-  const aprovado = motivo === MOTIVO_TEMPO;
+  const aprovado = motivo !== MOTIVO_JUBILADO;
+  // So a avaliacao de cronometro tem nota (design §4). O TCC aprova pela
+  // Banca, e quem fecha a run com um numero e a media (colarGrau).
+  const comNota = motivo === MOTIVO_TEMPO;
 
   r.id = av.id;
   r.nome = av.nome;
@@ -129,7 +147,11 @@ export function fecharAvaliacao(estado, motivo) {
   r.hpMax = player.hpMax;
   r.hpFracao = player.hpMax > 0 ? r.hp / player.hpMax : 0;
   r.duracao = av.duracao;
-  r.tempo = Math.min(av.decorrido, av.duracao);
+  // Sem cronometro (o TCC), o tempo e o da luta inteira.
+  r.tempo = av.duracao > 0 ? Math.min(av.decorrido, av.duracao) : av.decorrido;
+  r.chefe = av.banca !== null;
+  r.bancaFracao = av.banca && av.banca.hpMax > 0 ? Math.max(0, av.banca.hp) / av.banca.hpMax : 0;
+  r.restantes = av.banca ? 0 : avaliacoesDepois(estado.run.periodoIndex, estado.run.avaliacaoIndex);
   // `ileso` sai de danoTomado, e nao de hp === hpMax, por causa do Lanche da
   // Cantina: quem levou uma paulada e curou depois nao terminou ileso. E e por
   // isso que o grampo de danoTomado (player.js limita o golpe fatal ao HP
@@ -138,15 +160,17 @@ export function fecharAvaliacao(estado, motivo) {
   // nao ha nota.
   r.ileso = aprovado && av.danoTomado <= 0;
 
-  if (aprovado) {
+  if (comNota) {
     const p = parcelasDaNota({ kills: r.kills, hpRestante: r.hp, hpMax: r.hpMax, ileso: r.ileso }, r.parcelas);
     r.nota = Math.max(0, Math.min(CONTEUDO.nota.maxima, arredondarNota(p.kills + p.hp + p.ileso)));
     const faixa = faixaDaNota(r.nota);
     r.conceito = faixa.conceito;
     r.creditos = creditosDaFaixa(faixa);
+    registrarBoletim(estado.run, estado.run.periodoIndex, estado.run.avaliacaoIndex, r);
   } else {
     // Jubilado nao tem nota: a run acabou, nao existe loja depois. A tela
-    // mostra o que ele fez (mortos e tempo), nao quanto valeu.
+    // mostra o que ele fez (mortos e tempo), nao quanto valeu. O TCC vencido
+    // tambem nao: depois dele vem a colacao, nao a loja.
     r.parcelas.kills = 0;
     r.parcelas.hp = 0;
     r.parcelas.ileso = 0;
@@ -156,7 +180,7 @@ export function fecharAvaliacao(estado, motivo) {
   }
 
   estado.run.nota = r.nota;
-  estado.run.conceito = aprovado ? r.conceito : null;
+  estado.run.conceito = comNota ? r.conceito : null;
   estado.run.jubilado = !aprovado;
   estado.run.creditos += r.creditos;
   r.creditosTotal = estado.run.creditos;
@@ -220,9 +244,15 @@ export function anuncioLiberado(estado) {
 // uma avaliacao aberta por outro caminho roda sem os coringas.
 export function comecarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0, modificadores = undefined) {
   iniciarAvaliacao(estado, periodoIndex, avaliacaoIndex, modificadores);
+  armarJogador(estado);
+}
+
+// O que toda avaliacao da run faz depois de o estado dela nascer, o TCC
+// inclusive: os coringas agem e o jogador recebe a arma inicial. Aqui, uma
+// vez, e nao a cada tick em weapons.js (pendencia 21): o player acabou de
+// nascer sem arma nenhuma.
+function armarJogador(estado) {
   aoIniciarAvaliacao(estado);
-  // Aqui, uma vez, e nao a cada tick em weapons.js (pendencia 21): o player
-  // acabou de nascer sem arma nenhuma.
   equiparArma(estado, CONTEUDO.arma.inicial);
 }
 
@@ -243,6 +273,9 @@ export function proximaAvaliacao(periodoIndex, avaliacaoIndex, periodos = CONTEU
 export function avancarRun(estado) {
   const prox = proximaAvaliacao(estado.run.periodoIndex, estado.run.avaliacaoIndex);
   if (!prox) {
+    // A tela do TCC e o anuncio da defesa: marca a abertura como o anuncio,
+    // e o atraso (tcc.atrasoEntrada) vale do mesmo jeito (pendencia 60).
+    estado.run.proxima.abertaEm = estado.tempo;
     irParaTela(estado, TELAS.TCC);
     emitir(estado, 'tcc', null);
     return false;
@@ -251,9 +284,105 @@ export function avancarRun(estado) {
   return true;
 }
 
-// A saida da tela provisoria do TCC (botao e Enter). A fase 10 substitui.
-export function sairDoTcc(estado) {
+// O atraso de abertura da tela do TCC. Quem checa e o main.js, antes de
+// chamar comecarTcc — como no anuncio.
+export function tccLiberado(estado) {
+  return estado.tela === TELAS.TCC && estado.tempo - estado.run.proxima.abertaEm >= CONTEUDO.tcc.atrasoEntrada;
+}
+
+// O "Comecar a defesa" (botao e Enter). O TCC e uma avaliacao como as outras
+// — mesma porta de nascimento (prepararAvaliacao), coringas e arma inicial
+// (armarJogador) —, montada de CONTEUDO.tcc em vez de `periodos`, e com A
+// Banca. Nao mexe em run.periodoIndex/avaliacaoIndex: a run continua parada
+// na ultima Prova Final. Devolve false fora da tela do TCC.
+export function comecarTcc(estado) {
   if (estado.tela !== TELAS.TCC) return false;
+  const tcc = CONTEUDO.tcc;
+  const avaliacao = avaliacaoDosDados(tcc, tcc.periodo);
+  avaliacao.banca = novaBanca();
+  prepararAvaliacao(estado, avaliacao);
+  armarJogador(estado);
+  iniciarBanca(estado);
+  return true;
+}
+
+// ---------------------------------------------------- boletins e colacao
+
+// O slot de (periodo, avaliacao) em run.boletins: a ordem da run, periodo a
+// periodo, como state.js novosBoletins os criou.
+export function indiceDoBoletim(periodoIndex, avaliacaoIndex, periodos = CONTEUDO.periodos) {
+  let indice = 0;
+  for (let p = 0; p < periodoIndex && p < periodos.length; p += 1) indice += periodos[p].avaliacoes.length;
+  return indice + avaliacaoIndex;
+}
+
+// Quantas avaliacoes da run vem depois de (periodo, avaliacao). O TCC nao
+// conta: e a tela de jubilado que diz "e o TCC".
+export function avaliacoesDepois(periodoIndex, avaliacaoIndex, periodos = CONTEUDO.periodos) {
+  let total = 0;
+  for (const periodo of periodos) total += periodo.avaliacoes.length;
+  return Math.max(0, total - indiceDoBoletim(periodoIndex, avaliacaoIndex, periodos) - 1);
+}
+
+function registrarBoletim(run, periodoIndex, avaliacaoIndex, resultado) {
+  const boletim = run.boletins[indiceDoBoletim(periodoIndex, avaliacaoIndex)];
+  if (!boletim) return;
+  boletim.feita = true;
+  boletim.nota = resultado.nota;
+  boletim.conceito = resultado.conceito;
+}
+
+// A media das notas da run (so os boletins feitos), arredondada como uma
+// nota: e ela que escolhe o conceito geral, pela mesma tabela de faixas.
+export function mediaDosBoletins(boletins) {
+  let soma = 0;
+  let feitas = 0;
+  for (const b of boletins) {
+    if (!b.feita) continue;
+    soma += b.nota;
+    feitas += 1;
+  }
+  return feitas > 0 ? arredondarNota(soma / feitas) : 0;
+}
+
+// A Banca caiu (main.js, bancaVencida): fecha o TCC como aprovado, calcula o
+// conceito geral e atualiza o recorde. A simulacao so escreve no estado
+// (estado.recorde) e avisa com o evento 'recorde'; gravar no localStorage e
+// com main.js, fora da simulacao.
+export function colarGrau(estado) {
+  fecharAvaliacao(estado, MOTIVO_BANCA);
+  const run = estado.run;
+  const c = run.colacao;
+  c.media = mediaDosBoletins(run.boletins);
+  c.conceito = conceitoDaNota(c.media);
+  c.tempoTcc = run.resultado.tempo;
+  c.feita = true;
+  c.abertaEm = estado.tempo;
+  c.novoRecorde = registrarFormatura(estado.recorde, c.media, c.conceito);
+  irParaTela(estado, TELAS.COLACAO);
+  emitir(estado, 'colacao', { media: c.media, conceito: c.conceito, novoRecorde: c.novoRecorde });
+  emitir(estado, 'recorde', null);
+}
+
+// Soma uma formatura e guarda a media se ela for a melhor. Devolve se bateu
+// o recorde (a primeira formatura sempre bate).
+export function registrarFormatura(recorde, media, conceito) {
+  const novo = recorde.formaturas === 0 || media > recorde.melhorMedia;
+  recorde.formaturas += 1;
+  if (novo) {
+    recorde.melhorMedia = media;
+    recorde.melhorConceito = conceito;
+  }
+  return novo;
+}
+
+export function colacaoLiberada(estado) {
+  return estado.tela === TELAS.COLACAO && estado.tempo - estado.run.colacao.abertaEm >= CONTEUDO.colacao.atrasoEntrada;
+}
+
+// A saida da colacao (botao e Enter): a run acabou, volta ao menu.
+export function sairDaColacao(estado) {
+  if (estado.tela !== TELAS.COLACAO) return false;
   irParaTela(estado, TELAS.MENU);
   return true;
 }

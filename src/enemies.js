@@ -32,7 +32,18 @@ export function atualizarInimigos(estado, dt) {
 const MOVIMENTOS = {
   perseguir: moverPerseguir,
   errante: moverErrante,
+  rumo: moverRumo,
 };
+
+// Fase 10: linha reta num rumo fixo (e.rumoX/e.rumoY, unitario), sem olhar
+// para o jogador — a investida da Banca. Quem escreve o rumo e quem troca o
+// `comportamento` da instancia para 'rumo' e src/boss.js; o resto (separacao,
+// colisao, dano) e o de qualquer inimigo.
+function moverRumo(e) {
+  direcaoScratch.x = e.rumoX;
+  direcaoScratch.y = e.rumoY;
+  return direcaoScratch;
+}
 
 function moverPerseguir(e, player) {
   return direcaoPerseguicao(e, player);
@@ -85,6 +96,12 @@ function direcaoPerseguicao(e, player) {
 // Para o smoke: todo inimigo de content.js precisa apontar para um
 // comportamento que exista aqui. Mesmo papel de verificarArmasDoConteudo em
 // weapons.js.
+// Fase 10: boss.js confere o `comportamento` da Banca (que nao mora em
+// CONTEUDO.inimigos) por aqui, sem precisar conhecer o registro.
+export function existeMovimento(nome) {
+  return Object.prototype.hasOwnProperty.call(MOVIMENTOS, nome);
+}
+
 export function verificarInimigosDoConteudo() {
   for (const tipo of CONTEUDO.inimigos) {
     if (!MOVIMENTOS[tipo.comportamento]) {
@@ -132,6 +149,13 @@ function fabricarInimigo() {
     ruidoFase: 0, // sorteada no nascimento (estado.rng), nao Math.random
     geracao: 0, // 0 = nascido normal; N = filhote de N-esima divisao (📱)
     nascidoEm: 0, // avaliacao.decorrido do nascimento; o relatorio mede quanto cada um viveu
+    // Fase 10. `chefe`: o alvo e A Banca (tipo.chefe). A separacao nao o
+    // empurra, e coringas futuros que nao devem valer contra chefe (Cola na
+    // Regua, pendencia 55) leem daqui. Reescrito em TODO nascimento, entao o
+    // objeto da Banca reaproveitado por um 📕 (a pool e LIFO) deixa de ser chefe.
+    chefe: false,
+    rumoX: 0, // direcao unitaria do comportamento 'rumo' (investida da Banca)
+    rumoY: 0,
   };
 }
 
@@ -182,7 +206,9 @@ function atualizarSpawn(estado, pool, scratchInimigos, dt) {
   if (!estado.player.vivo || av.concluida) return;
 
   const cfg = CONTEUDO.spawn;
-  const curva = cfg.curvas[cfg.curvaPadrao];
+  // Fase 10: cada avaliacao aponta a sua curva (o TCC tem uma propria, mais
+  // rala); a padrao e a rede de seguranca, como em composicaoDaAvaliacao.
+  const curva = cfg.curvas[av.curvaSpawn] || cfg.curvas[cfg.curvaPadrao];
   // A global (Mestrado/Doutorado um dia) vezes a da avaliacao: a regra
   // `dificuldade` ja traz o numero da avaliacao em content.js e o de qualquer
   // modificador que mexa nela (state.js, regrasDaAvaliacao).
@@ -276,6 +302,22 @@ export function spawnInimigo(estado, tipoId = null) {
   return inimigo;
 }
 
+// Fase 10: nasce um inimigo de um tipo que NAO mora em CONTEUDO.inimigos — A
+// Banca (CONTEUDO.banca), com o mesmo contrato de campos — num ponto dado.
+// Sem o teto de spawn.maxSimultaneos: o chefe nasce numa arena recem-limpa
+// (iniciarAvaliacao esvazia a pool) e nao pode ficar de fora por causa dele.
+// Mesmo caminho de inicializacao de todo inimigo, entao as regras da
+// avaliacao (hpInimigo, velocidadeInimigo) valem para ele tambem.
+export function spawnTipo(estado, tipo, x, y) {
+  const pool = poolInimigos(estado);
+  const inimigo = pool.obter();
+  inicializarInimigo(inimigo, tipo, estado.run.avaliacao, estado.rng);
+  inimigo.x = x;
+  inimigo.y = y;
+  emitir(estado, 'inimigo-nasceu', { tipo: tipo.id });
+  return inimigo;
+}
+
 // Escreve TODOS os campos de jogabilidade de um inimigo (nao mexe em
 // x/y — spawnInimigo poe na borda, dividirSeAplicavel poe no lugar da morte).
 // `overrides` e so usado pelos filhotes do Trabalho em Grupo: os fatores de
@@ -306,6 +348,9 @@ function inicializarInimigo(inimigo, tipo, av, rng, overrides = null) {
   // senao a rajada inteira balancaria junto como um bloco so.
   inimigo.ruidoFase = tipo.ruido ? rng.float() * Math.PI * 2 : 0;
   inimigo.geracao = overrides ? overrides.geracao : 0;
+  inimigo.chefe = tipo.chefe === true;
+  inimigo.rumoX = 0;
+  inimigo.rumoY = 0;
   inimigo.vx = 0;
   inimigo.vy = 0;
   inimigo.empurraoX = 0;
@@ -478,6 +523,10 @@ function calcularSeparacao(grade, inimigos) {
     e.empurraoX = 0;
     e.empurraoY = 0;
     if (!Number.isFinite(e.x) || !Number.isFinite(e.y)) continue;
+    // O chefe abre caminho: o bando e empurrado por ele (o laco dos OUTROS o
+    // ve como vizinho), mas ele nao e empurrado pelo bando — senao os 📕 que
+    // ele mesmo invoca o arrastariam no meio do aviso de um padrao.
+    if (e.chefe) continue;
 
     const cx = colunaDe(grade, e.x);
     const cy = linhaDe(grade, e.y);

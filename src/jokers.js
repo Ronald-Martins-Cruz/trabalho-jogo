@@ -96,11 +96,14 @@ const EFEITOS = {
     },
   },
 
-  // 🌙 Vespera da Prova.
+  // 🌙 Vespera da Prova. Avaliacao sem cronometro (duracao 0: o TCC, fase
+  // 10) nao tem "ultimos segundos" — sem esta guarda, restante 0 ligaria o
+  // efeito na defesa inteira.
   danoNoFim: {
     parametros: ['segundos', 'fator'],
     aoCalcularDano(estado, inst, params, dano) {
-      return estado.run.avaliacao.restante <= params.segundos ? dano * params.fator : dano;
+      const av = estado.run.avaliacao;
+      return av.duracao > 0 && av.restante <= params.segundos ? dano * params.fator : dano;
     },
   },
 

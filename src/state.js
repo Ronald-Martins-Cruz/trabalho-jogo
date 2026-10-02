@@ -17,7 +17,8 @@ export const TELAS = {
   JUBILADO: 'jubilado', // o HP zerou
   LOJA: 'loja', // entre avaliacoes, depois de um boletim aprovado (fase 07)
   ANUNCIO: 'anuncio', // antes de cada avaliacao: materia, duracao, modificadores (fase 08)
-  TCC: 'tcc', // depois da loja do 3º periodo. Provisoria ate a fase 10 (A Banca)
+  TCC: 'tcc', // depois da loja do 3º periodo: o anuncio da defesa (a luta e uma AVALIACAO com av.banca)
+  COLACAO: 'colacao', // A Banca caiu: o resumo da run inteira (fase 10)
 };
 
 export function novoEstado(seed = 1) {
@@ -38,6 +39,7 @@ export function novoEstado(seed = 1) {
     projectiles: [],
     xpOrbs: [],
     particles: [],
+    perguntas: [], // projeteis da Banca (fase 10, src/boss.js)
 
     // Fila de eventos consumida por audio.js e pelo render (juice). A fisica
     // so empilha, nunca chama audio direto.
@@ -50,6 +52,11 @@ export function novoEstado(seed = 1) {
     loja: novaLoja(),
 
     run: novaRun(),
+
+    // O unico estado que atravessa runs (fase 10): fica FORA de `run`, que
+    // nasce de novo a cada "Jogar". A simulacao so o atualiza (run.js,
+    // colarGrau); ler e gravar no localStorage e com main.js.
+    recorde: novoRecorde(),
 
     // O que o relatorio de balanceamento le (debug.relatorio). Fica FORA de
     // `run` porque atravessa as partidas da sessao inteira, e nasce preguicoso
@@ -163,7 +170,40 @@ export function novaRun() {
     proxima: { periodoIndex: 0, avaliacaoIndex: 0, modificadores: [], abertaEm: 0 },
     avaliacao: novaAvaliacao(0, 0),
     resultado: novoResultado(),
+    // Fase 10: a nota de cada avaliacao da run, um slot por avaliacao de
+    // CONTEUDO.periodos (na ordem da run), preenchido por fecharAvaliacao. E
+    // o que a colacao de grau mostra.
+    boletins: novosBoletins(),
+    colacao: novaColacao(),
   };
+}
+
+export function novosBoletins() {
+  const boletins = [];
+  for (const periodo of CONTEUDO.periodos) {
+    for (const av of periodo.avaliacoes) {
+      boletins.push({ id: av.id, nome: av.nome, materia: av.materia, periodo: periodo.nome, feita: false, nota: 0, conceito: '' });
+    }
+  }
+  return boletins;
+}
+
+// O fim da run vencida (run.js, colarGrau).
+export function novaColacao() {
+  return {
+    feita: false,
+    media: 0, // media das notas dos boletins feitos, ja arredondada
+    conceito: '', // conceito geral (a faixa da media)
+    tempoTcc: 0, // segundos de defesa ate A Banca cair
+    novoRecorde: false, // esta formatura bateu o recorde guardado
+    abertaEm: 0, // estado.tempo da abertura (colacao.atrasoEntrada)
+  };
+}
+
+// formaturas 0 = nunca se formou, e entao melhorMedia/melhorConceito nao
+// valem nada.
+export function novoRecorde() {
+  return { formaturas: 0, melhorMedia: 0, melhorConceito: '' };
 }
 
 // O boletim da ultima avaliacao encerrada. Nasce com a run e e PREENCHIDO por
@@ -193,6 +233,10 @@ export function novoResultado() {
     parcelas: { kills: 0, hp: 0, ileso: 0 },
     creditos: 0, // ganhos nesta avaliacao
     creditosTotal: 0, // o que a run tem depois de somar
+    // Fase 10: o que a tela de jubilado diz que faltava.
+    restantes: 0, // avaliacoes da run depois desta (o TCC nao conta)
+    chefe: false, // foi o TCC (A Banca)
+    bancaFracao: 0, // HP da Banca / hpMax no fim (so com chefe)
   };
 }
 
@@ -219,13 +263,22 @@ export function dadosDaAvaliacao(periodoIndex, avaliacaoIndex) {
 export function novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores = SEM_MODIFICADORES) {
   const periodo = CONTEUDO.periodos[periodoIndex];
   const dados = dadosDaAvaliacao(periodoIndex, avaliacaoIndex);
-  const { duracao } = dados;
+  return avaliacaoDosDados(dados, periodo.nome, modificadores);
+}
+
+// A avaliacao a partir de uma entrada no formato de `periodos[].avaliacoes[]`.
+// Fase 10: e por aqui que o TCC (CONTEUDO.tcc, fora de `periodos`) vira uma
+// avaliacao com a mesma forma de todas as outras. Sem `duracao` (o TCC), a
+// avaliacao nao tem cronometro: duracao e restante ficam em 0 e quem decide o
+// fim e A Banca (`banca`, preenchido por run.js/boss.js).
+export function avaliacaoDosDados(dados, nomePeriodo, modificadores = SEM_MODIFICADORES) {
+  const duracao = typeof dados.duracao === 'number' ? dados.duracao : 0;
   const regras = regrasDaAvaliacao(dados, modificadores);
   return {
     id: dados.id,
     nome: dados.nome,
     materia: dados.materia,
-    periodo: periodo.nome,
+    periodo: nomePeriodo,
     tipo: dados.tipo,
     duracao,
     restante: duracao,
@@ -240,6 +293,10 @@ export function novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores = SEM_
     // Fase 09: quais tipos de inimigo podem nascer nesta avaliacao — nome de
     // uma entrada em CONTEUDO.spawn.composicoes, lido por enemies.js.
     composicaoSpawn: dados.composicaoSpawn,
+    // Fase 10: a curva de spawn (CONTEUDO.spawn.curvas); sem ela, a padrao.
+    curvaSpawn: dados.curvaSpawn || CONTEUDO.spawn.curvaPadrao,
+    // Fase 10: o estado da Banca (boss.js, novaBanca) no TCC; null no resto.
+    banca: null,
   };
 }
 
@@ -287,7 +344,13 @@ export function irParaTela(estado, tela) {
 export function iniciarAvaliacao(estado, periodoIndex = 0, avaliacaoIndex = 0, modificadores = SEM_MODIFICADORES) {
   estado.run.periodoIndex = periodoIndex;
   estado.run.avaliacaoIndex = avaliacaoIndex;
-  estado.run.avaliacao = novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores);
+  prepararAvaliacao(estado, novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores));
+}
+
+// O que toda avaliacao faz ao nascer, a de `periodos` ou o TCC (fase 10, que
+// monta a sua com avaliacaoDosDados e nao mexe nos indices da run).
+export function prepararAvaliacao(estado, avaliacao) {
+  estado.run.avaliacao = avaliacao;
   estado.player = novoPlayer();
   // No centro da arena desta avaliacao (a Sala Lotada encolhe em volta dele).
   const arena = estado.run.avaliacao.arena;

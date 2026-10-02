@@ -38,6 +38,11 @@ export const CONTEUDO = {
       projectiles: 600,
       xpOrbs: 600,
       particles: 800,
+      // Fase 10: os projeteis da Banca (o leque de perguntas). Pool propria,
+      // e nao a dos projeteis do jogador: estes acertam o JOGADOR, nunca um
+      // inimigo. Pico medido na luta inteira (8 sementes, fase 2 com 2 salvas
+      // de 11): 22 vivas ao mesmo tempo. 96 e ~4x isso.
+      perguntas: 96,
       eventos: 256, // fila de eventos para audio/juice; emitir() descarta o mais antigo
     },
   },
@@ -64,6 +69,28 @@ export const CONTEUDO = {
     corOndaTelegrafo: 'rgba(255, 210, 90, 0.55)', // anel do telegrafo do Resumo (comportamento ondaArea)
     corFeixe: 'rgba(255, 235, 59, 0.32)', // faixa translucida do Marca-texto (comportamento feixe)
     corForaArena: 'rgba(0, 0, 0, 0.55)', // o que fica fora da arena encolhida (regras.arena < 1)
+    // A Banca (fase 10). O emoji e maior que o corpo de colisao (banca.raio):
+    // o raio fica preso pela regra da grade de separacao (separacao.gradePasso)
+    // e o tamanho na tela e o que diz "chefe".
+    banca: {
+      tamanhoEmoji: 76,
+      raioAura: 46, // px do circulo colorido por baixo do emoji
+      // Uma cor por fase (banca.fases): e a "mudanca de cor" da transicao.
+      corAura: ['rgba(122, 162, 255, 0.30)', 'rgba(255, 93, 122, 0.42)'],
+      corTelegrafo: 'rgba(255, 93, 122, 0.85)', // linhas, faixa e circulos de aviso
+      alphaTelegrafoMin: 0.18, // o aviso nasce fraco...
+      alphaTelegrafoMax: 0.75, // ...e fica forte ate o golpe sair
+      alcanceRaioLeque: 560, // px das linhas do aviso do leque (a pergunta voa alem)
+      larguraRaioLeque: 3,
+      emojiPerguntaFator: 2.6, // tamanho do ❓ = banca.pergunta.raio x este fator
+      fonteTexto: 'bold 34px ui-monospace, "Cascadia Mono", Consolas, monospace',
+      fonteSubtexto: '20px ui-monospace, "Cascadia Mono", Consolas, monospace',
+      corTexto: '#ffd0d8',
+      corSombraTexto: 'rgba(5, 6, 14, 0.75)', // faixa atras do texto da transicao
+      faixaTextoY: 0.36, // fracao da altura do canvas onde a faixa do texto comeca
+      faixaTextoAltura: 0.22, // fracao da altura do canvas
+      pulsoTransicao: 6, // Hz do pulso da aura durante a transicao
+    },
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -597,6 +624,14 @@ export const CONTEUDO = {
         { t: 60, intervalo: 0.45, porOnda: 6 },
         { t: 90, intervalo: 0.35, porOnda: 8 },
       ],
+      // Fase 10: o fiozinho de 📕 por tras da Banca no TCC. Quem enche a arena
+      // ali e a propria Banca (padrao `horda`); isto so garante XP para o
+      // jogador, que comeca a defesa no nivel 1 como em toda avaliacao.
+      tcc: [
+        { t: 0, intervalo: 2.2, porOnda: 1 },
+        { t: 60, intervalo: 1.6, porOnda: 1.5 },
+        { t: 120, intervalo: 1.2, porOnda: 2 },
+      ],
     },
     intervaloMinimo: 0.25, // piso duro: nem o modificador mais agressivo passa daqui
     porOndaMaximo: 8,
@@ -626,6 +661,9 @@ export const CONTEUDO = {
       p1Final: { prazo: 1, notificacao: 0.6, pdf: 0.3 },
       // 2o periodo em diante: os 4 tipos, pesos fixos (fase 13 balanceia).
       todos: { prazo: 1, notificacao: 0.6, pdf: 0.3, trabalhoGrupo: 0.35 },
+      // TCC (fase 10): so o Prazo no fio de fundo — os 📱 da fase 2 vem da
+      // Banca, nao do sorteio.
+      tcc: { prazo: 1 },
     },
   },
 
@@ -780,6 +818,136 @@ export const CONTEUDO = {
     atrasoEntrada: 0.35,
   },
 
+  // O TCC (design §2 e §10): depois da loja da ultima Prova Final. E uma
+  // avaliacao como as outras para o resto do jogo (jogador do zero, arma
+  // inicial, coringas, cartas, pausa), com tres diferencas, todas daqui:
+  //   - nao tem cronometro (`duracao` 0): acaba quando A Banca cai (colacao)
+  //     ou quando o jogador cai (jubilado);
+  //   - a curva e a composicao de spawn sao proprias (`curvaSpawn`,
+  //     `composicaoSpawn`): quem enche a arena e a Banca;
+  //   - A Banca (bloco `banca`, abaixo) nasce no comeco.
+  // `nome`, `materia` e `periodo` sao o que o HUD e o boletim mostram.
+  tcc: {
+    id: 'tcc-defesa',
+    nome: 'Defesa',
+    materia: 'TCC',
+    periodo: 'Fim do curso',
+    tipo: 'defesa', // so descricao, como `tipo` das avaliacoes
+    dificuldade: 1, // x ajuste.dificuldade na curva de fundo
+    curvaSpawn: 'tcc',
+    composicaoSpawn: 'tcc',
+    // Pendencia 60: a tela do TCC abre logo depois do "Seguir" da ultima
+    // loja; o Enter repetido nao pode comecar a defesa sem ela ser lida.
+    atrasoEntrada: 0.35,
+  },
+
+  // A Banca (design §10). Herda TUDO de inimigo: as primeiras linhas sao o
+  // mesmo contrato de `inimigos[]` (enemies.js a cria com spawnTipo e ela anda,
+  // colide e toma dano como qualquer um). Ela nao mora em `inimigos[]` para
+  // nunca entrar num sorteio de spawn nem nas corridas por tipo do smoke.
+  //   chefe        marca o alvo como chefe (inimigo.chefe): a separacao nao o
+  //                empurra, e coringas futuros (Cola na Regua, pendencia 55)
+  //                sabem exclui-lo
+  //   entrada      { duracao (s parada depois de nascer), margem (px abaixo do
+  //                topo da arena onde ela nasce) }
+  //   transicao    { duracao }: a pausa entre fases — parada, sem atacar e sem
+  //                perder HP abaixo do limiar da fase que acabou
+  //   pergunta     o projetil do leque: { id (a `fonte` do 'jogador-dano'),
+  //                nome, emoji, raio, vidaMaxima (s), margemDescarte (px) }
+  //   fases[]      em ordem; a fase i vale enquanto HP/hpMax > `ate`. A ultima
+  //                tem ate 0. Cada uma: { nome, ate, velocidadeFator (x
+  //                velocidade ao perseguir), intervalo (s perseguindo entre um
+  //                padrao e o proximo), sequencia (nomes de padroes, em ciclo),
+  //                padroes: { nome: parametros } }
+  //
+  // Padroes (o nome e uma funcao registrada em src/boss.js, PADROES). Todo
+  // padrao tem `telegrafo` (s de aviso antes do golpe; >= 0,5, o validador
+  // exige — dano sem aviso le como bug) e `recuperacao` (s parada depois):
+  //   leque      { projeteis, abertura (rad, do primeiro ao ultimo), velocidade
+  //              (px/s), dano, salvas, intervaloSalvas (s) } — mira no jogador
+  //              no INICIO do aviso; o golpe sai nas linhas mostradas
+  //   investida  { velocidade (px/s), distancia (px), dano (de contato durante
+  //              a corrida) } — para, mostra a faixa, corre em linha reta
+  //   horda      { tipo (id de inimigos[]), quantidade, raio (px da Banca ate
+  //              cada ponto) } — circulos no chao, depois os inimigos ali
+  //
+  // Primeiro corte, sem medicao fina (fase 13). O design pede "~2min". Medido
+  // com o botDesvio do smoke, SEM coringas e do nivel 1 (o pior jogador que
+  // ainda se mexe), 8 sementes: com HP segurado A Banca cai em 54-114s
+  // (mediana ~95s); com HP de verdade o bot cai em 4 das 8, com a Banca entre
+  // 17% e 26% — ele nao desvia de pergunta nenhuma. Com 1400 de HP a luta
+  // durava 43-83s: curta para um chefe. A luta dedicada do smoke imprime o
+  // numero da semente fixa (SEMENTE+900).
+  banca: {
+    id: 'banca',
+    nome: 'A Banca',
+    emoji: '📋',
+    hp: 2200,
+    velocidade: 62, // px/s: devagar — o perigo sao os padroes, nao a perseguicao
+    dano: 14, // por encostada, fora da investida
+    raio: 26, // 2 x 26 + folga cabe na grade de separacao (gradePasso 56)
+    xp: 0,
+    comportamento: 'perseguir',
+    chefe: true,
+    // margem 120: o HUD (barras e coringas) cobre o topo do canvas; com menos
+    // que isso ela nasceria escondida atras da propria barra de HP.
+    entrada: { duracao: 1.2, margem: 120 },
+    transicao: { duracao: 1.8 },
+    pergunta: {
+      id: 'pergunta',
+      nome: 'Pergunta da Banca',
+      emoji: '❓',
+      raio: 9,
+      vidaMaxima: 4,
+      margemDescarte: 40,
+    },
+    fases: [
+      {
+        nome: 'Arguição',
+        ate: 0.5,
+        velocidadeFator: 1,
+        intervalo: 2.4,
+        sequencia: ['leque', 'horda'],
+        padroes: {
+          leque: {
+            telegrafo: 0.8, recuperacao: 0.4,
+            projeteis: 7, abertura: 1.0, velocidade: 220, dano: 10, salvas: 1, intervaloSalvas: 0,
+          },
+          horda: { telegrafo: 1.0, recuperacao: 0.4, tipo: 'prazo', quantidade: 6, raio: 80 },
+        },
+      },
+      {
+        nome: 'Réplica',
+        ate: 0,
+        velocidadeFator: 1.3,
+        intervalo: 1.8,
+        sequencia: ['investida', 'leque', 'investida', 'horda'],
+        padroes: {
+          leque: {
+            telegrafo: 0.7, recuperacao: 0.4,
+            projeteis: 11, abertura: 1.5, velocidade: 250, dano: 10, salvas: 2, intervaloSalvas: 0.35,
+          },
+          investida: { telegrafo: 0.9, recuperacao: 0.8, velocidade: 520, distancia: 460, dano: 20 },
+          horda: { telegrafo: 1.0, recuperacao: 0.4, tipo: 'trabalhoGrupo', quantidade: 4, raio: 80 },
+        },
+      },
+    ],
+  },
+
+  // A tela de colacao de grau (fim da run vencida). O atraso e maior que o
+  // das outras telas: e o resumo da run inteira, e ninguem quer pula-lo com
+  // a tecla que ainda estava apertada na luta.
+  colacao: {
+    atrasoEntrada: 0.6,
+  },
+
+  // O unico estado que sobrevive entre runs (main.js, lerRecorde/gravarRecorde):
+  // melhor conceito geral e quantas vezes se formou. `chave` e o nome no
+  // localStorage do navegador.
+  recorde: {
+    chave: 'semana-de-provas/recorde',
+  },
+
   // Nota, conceito e economia (design §4). A nota nao aprova nem reprova —
   // sobreviver ao cronometro ja aprova. Ela decide quantos creditos a loja
   // recebe, e por isso e o unico motivo mecanico para jogar bem.
@@ -920,6 +1088,35 @@ export const CONTEUDO = {
       loja: 'Loja',
       anuncio: 'Anúncio',
       tcc: 'TCC',
+      colacao: 'Colação de Grau',
+    },
+    // Fase 10. Os textos com {chave} sao modelos: ui.js troca cada {chave}
+    // pelo valor (preencher). Modelo inteiro, e nao pedacos colados, porque
+    // a ordem das palavras e do portugues, nao do codigo.
+    banca: {
+      transicao: 'A Banca se reúne', // o texto grande da pausa entre fases
+      fase: 'Fase {n} — {nome}', // embaixo dele, e no HUD ao lado da barra
+    },
+    jubilado: {
+      onde: 'Caiu em {avaliacao} — {periodo}.',
+      faltavaTempo: 'Faltavam {tempo} para o fim da prova',
+      faltavaBanca: 'A Banca ainda tinha {hp}% de HP',
+      restamVarias: ', e ainda {n} avaliações e o TCC até a formatura.',
+      restaUma: ', e ainda 1 avaliação e o TCC até a formatura.',
+      soTcc: ', e depois só o TCC.',
+      ultimaEtapa: ' — era a última etapa antes da formatura.',
+    },
+    colacao: {
+      tcc: 'TCC aprovado pela Banca em {tempo}',
+      media: 'Média {media}',
+      conceito: 'Conceito geral {conceito}',
+      semCoringa: 'Formou-se sem nenhum coringa.',
+      novoRecorde: 'Novo recorde! Melhor conceito geral: {conceito} ({media}) · formaturas: {formaturas}',
+      recorde: 'Recorde: {conceito} ({media}) · formaturas: {formaturas}',
+    },
+    // A linha do menu, so depois da primeira formatura.
+    recorde: {
+      menu: '🎓 Formado {formaturas}× · melhor conceito geral: {conceito} ({media})',
     },
     // A tela de anuncio monta a linha "Avaliação 1 · 1:00" e a lista de
     // modificadores; o texto fixo (titulo, dica, botao) mora no index.html.
@@ -1465,6 +1662,10 @@ export function validarConteudo(conteudo = CONTEUDO) {
           }
         }
       }
+      // A Banca (fase 10) mora na mesma pool e passa pela mesma grade.
+      if (conteudo.banca && typeof conteudo.banca.raio === 'number' && conteudo.banca.raio > maiorRaio) {
+        maiorRaio = conteudo.banca.raio;
+      }
       const minimo = 2 * maiorRaio + conteudo.separacao.folga;
       if (conteudo.separacao.gradePasso < minimo) {
         erros.push(
@@ -1601,6 +1802,155 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(conteudo.anuncio.atrasoEntrada, 'anuncio.atrasoEntrada', { min: 0, max: 2 });
   }
   if (conteudo.cartas) exigeNumero(conteudo.cartas.atrasoEntrada, 'cartas.atrasoEntrada', { min: 0, max: 2 });
+
+  // TCC e A Banca (fase 10).
+  const exigeTexto = (valor, caminho) => {
+    if (typeof valor !== 'string' || valor === '') {
+      erros.push(`${caminho}: ausente ou vazio`);
+      return false;
+    }
+    return true;
+  };
+  const exigeInteiro = (valor, caminho, limites) => {
+    if (exigeNumero(valor, caminho, limites) && !Number.isInteger(valor)) {
+      erros.push(`${caminho}: ${valor} precisa ser inteiro`);
+    }
+  };
+  const idsDeInimigo = new Set(Array.isArray(conteudo.inimigos) ? conteudo.inimigos.map((i) => i && i.id) : []);
+
+  if (exigeObjeto(conteudo.tcc, 'tcc')) {
+    const t = conteudo.tcc;
+    for (const campo of ['id', 'nome', 'materia', 'periodo', 'tipo']) exigeTexto(t[campo], `tcc.${campo}`);
+    exigeNumero(t.dificuldade, 'tcc.dificuldade', { min: 0.1, max: 10 });
+    exigeNumero(t.atrasoEntrada, 'tcc.atrasoEntrada', { min: 0, max: 2 });
+    if (conteudo.spawn && conteudo.spawn.curvas && !conteudo.spawn.curvas[t.curvaSpawn]) {
+      erros.push(`tcc.curvaSpawn: "${t.curvaSpawn}" nao existe em spawn.curvas`);
+    }
+    if (conteudo.spawn && conteudo.spawn.composicoes && !conteudo.spawn.composicoes[t.composicaoSpawn]) {
+      erros.push(`tcc.composicaoSpawn: "${t.composicaoSpawn}" nao existe em spawn.composicoes`);
+    }
+    // O id do TCC nao pode colidir com o de uma avaliacao: o relatorio e o
+    // boletim identificam cada registro por ele.
+    for (const periodo of Array.isArray(conteudo.periodos) ? conteudo.periodos : []) {
+      for (const av of Array.isArray(periodo && periodo.avaliacoes) ? periodo.avaliacoes : []) {
+        if (av && av.id === t.id) erros.push(`tcc.id: "${t.id}" repete o id de uma avaliacao de periodos`);
+      }
+    }
+  }
+
+  if (exigeObjeto(conteudo.colacao, 'colacao')) {
+    exigeNumero(conteudo.colacao.atrasoEntrada, 'colacao.atrasoEntrada', { min: 0, max: 3 });
+  }
+  if (exigeObjeto(conteudo.recorde, 'recorde')) exigeTexto(conteudo.recorde.chave, 'recorde.chave');
+
+  // Os campos que cada padrao da Banca pede, alem de telegrafo/recuperacao.
+  // Mesma divisao de CAMPOS_POR_COMPORTAMENTO: aqui so o que content.js sabe
+  // sem importar logica; se o NOME do padrao existe em boss.js, quem confere
+  // e o smoke (verificarBancaDoConteudo).
+  const CAMPOS_POR_PADRAO = {
+    leque: [['projeteis', 1], ['abertura', 0], ['velocidade', 1], ['dano', 0], ['salvas', 1], ['intervaloSalvas', 0]],
+    investida: [['velocidade', 1], ['distancia', 1], ['dano', 0]],
+    horda: [['quantidade', 1], ['raio', 0]],
+  };
+  const PADROES_INTEIROS = new Set(['projeteis', 'salvas', 'quantidade']);
+  // Contrato da fase 10, tarefa 4: todo padrao avisa pelo menos isto antes.
+  const TELEGRAFO_MINIMO = 0.5;
+
+  if (exigeObjeto(conteudo.banca, 'banca')) {
+    const b = conteudo.banca;
+    for (const campo of ['id', 'nome', 'emoji', 'comportamento']) exigeTexto(b[campo], `banca.${campo}`);
+    exigeNumero(b.hp, 'banca.hp', { min: 1 });
+    exigeNumero(b.velocidade, 'banca.velocidade', { min: 1 });
+    exigeNumero(b.dano, 'banca.dano', { min: 0 });
+    exigeNumero(b.raio, 'banca.raio', { min: 1 });
+    exigeNumero(b.xp, 'banca.xp', { min: 0 });
+    if (b.chefe !== true) erros.push('banca.chefe: precisa ser true — e o que marca o alvo como chefe (inimigo.chefe)');
+    if (idsDeInimigo.has(b.id)) erros.push(`banca.id: "${b.id}" repete um id de inimigos — o relatorio confundiria as fontes`);
+    if (exigeObjeto(b.entrada, 'banca.entrada')) {
+      exigeNumero(b.entrada.duracao, 'banca.entrada.duracao', { min: 0 });
+      exigeNumero(b.entrada.margem, 'banca.entrada.margem', { min: 0 });
+    }
+    // A pausa entre fases tem que ser vista: menos que isto e um piscar.
+    if (exigeObjeto(b.transicao, 'banca.transicao')) {
+      exigeNumero(b.transicao.duracao, 'banca.transicao.duracao', { min: 0.5, max: 5 });
+    }
+    const jogadorRaio = conteudo.jogador && typeof conteudo.jogador.raio === 'number' ? conteudo.jogador.raio : 0;
+    const passoLoop = conteudo.loop && typeof conteudo.loop.passo === 'number' ? conteudo.loop.passo : 1 / 60;
+    if (exigeObjeto(b.pergunta, 'banca.pergunta')) {
+      const p = b.pergunta;
+      for (const campo of ['id', 'nome', 'emoji']) exigeTexto(p[campo], `banca.pergunta.${campo}`);
+      exigeNumero(p.raio, 'banca.pergunta.raio', { min: 1 });
+      exigeNumero(p.vidaMaxima, 'banca.pergunta.vidaMaxima', { min: 0.1 });
+      exigeNumero(p.margemDescarte, 'banca.pergunta.margemDescarte', { min: 0 });
+      if (idsDeInimigo.has(p.id) || p.id === b.id) {
+        erros.push(`banca.pergunta.id: "${p.id}" repete outro id de fonte de dano — o relatorio confundiria as fontes`);
+      }
+    }
+    if (!Array.isArray(b.fases) || b.fases.length === 0) {
+      erros.push('banca.fases: esperava um array nao vazio');
+    } else {
+      let anterior = 1;
+      b.fases.forEach((fase, i) => {
+        const c = `banca.fases[${i}]`;
+        if (!exigeObjeto(fase, c)) return;
+        exigeTexto(fase.nome, `${c}.nome`);
+        if (exigeNumero(fase.ate, `${c}.ate`, { min: 0, max: 1 })) {
+          if (fase.ate >= anterior) erros.push(`${c}.ate: ${fase.ate} precisa ser menor que o da fase anterior (${anterior})`);
+          anterior = fase.ate;
+        }
+        exigeNumero(fase.velocidadeFator, `${c}.velocidadeFator`, { min: 0.01 });
+        exigeNumero(fase.intervalo, `${c}.intervalo`, { min: 0.1 });
+        if (!exigeObjeto(fase.padroes, `${c}.padroes`)) return;
+        if (!Array.isArray(fase.sequencia) || fase.sequencia.length === 0) {
+          erros.push(`${c}.sequencia: esperava um array nao vazio de nomes de padrao`);
+        } else {
+          for (const nome of fase.sequencia) {
+            if (!fase.padroes[nome]) erros.push(`${c}.sequencia: "${nome}" nao tem parametros em ${c}.padroes`);
+          }
+        }
+        for (const [nome, padrao] of Object.entries(fase.padroes)) {
+          const cp = `${c}.padroes.${nome}`;
+          if (!exigeObjeto(padrao, cp)) continue;
+          exigeNumero(padrao.telegrafo, `${cp}.telegrafo`, { min: TELEGRAFO_MINIMO });
+          exigeNumero(padrao.recuperacao, `${cp}.recuperacao`, { min: 0 });
+          const campos = CAMPOS_POR_PADRAO[nome];
+          if (!campos) {
+            erros.push(`${cp}: padrao desconhecido (conhecidos: ${Object.keys(CAMPOS_POR_PADRAO).join(', ')})`);
+            continue;
+          }
+          for (const [campo, min] of campos) {
+            if (PADROES_INTEIROS.has(campo)) exigeInteiro(padrao[campo], `${cp}.${campo}`, { min });
+            else exigeNumero(padrao[campo], `${cp}.${campo}`, { min });
+          }
+          if (nome === 'leque') {
+            if (typeof padrao.abertura === 'number' && padrao.abertura > Math.PI * 2) {
+              erros.push(`${cp}.abertura: ${padrao.abertura} rad passa de uma volta inteira`);
+            }
+            if (padrao.salvas > 1 && !(padrao.intervaloSalvas > 0)) {
+              erros.push(`${cp}.intervaloSalvas: com ${padrao.salvas} salvas precisa ser > 0 — sairiam todas no mesmo tick`);
+            }
+            // A pergunta anda isto por quadro; mais que o alcance da colisao
+            // e ela atravessa o jogador sem acertar.
+            const alcance = jogadorRaio + (b.pergunta && typeof b.pergunta.raio === 'number' ? b.pergunta.raio : 0);
+            if (padrao.velocidade * passoLoop > alcance) {
+              erros.push(`${cp}.velocidade: ${padrao.velocidade} px/s anda mais que ${alcance}px por quadro — a pergunta atravessaria o jogador`);
+            }
+          }
+          if (nome === 'investida' && padrao.velocidade * passoLoop > jogadorRaio + (typeof b.raio === 'number' ? b.raio : 0)) {
+            erros.push(`${cp}.velocidade: ${padrao.velocidade} px/s anda mais que o contato por quadro — a Banca atravessaria o jogador`);
+          }
+          if (nome === 'horda' && !idsDeInimigo.has(padrao.tipo)) {
+            erros.push(`${cp}.tipo: "${padrao.tipo}" nao e um id em inimigos`);
+          }
+        }
+      });
+      if (anterior !== 0) erros.push(`banca.fases: a ultima fase precisa de ate 0 (tem ${anterior}) — senao a Banca nunca cai`);
+      const cores = conteudo.visual && conteudo.visual.banca && conteudo.visual.banca.corAura;
+      if (!Array.isArray(cores) || cores.length < b.fases.length) {
+        erros.push(`visual.banca.corAura: precisa de uma cor por fase da Banca (${b.fases.length})`);
+      }
+    }
+  }
 
   // Nota e faixas de conceito.
   if (exigeObjeto(conteudo.nota, 'nota')) {
@@ -1842,6 +2192,17 @@ export function validarConteudo(conteudo = CONTEUDO) {
       if (typeof conteudo.textos.anuncio.semModificador !== 'string' || conteudo.textos.anuncio.semModificador === '') {
         erros.push('textos.anuncio.semModificador: ausente ou vazio');
       }
+    }
+    // Fase 10: telas de fim e a Banca.
+    const CAMPOS_DE_TEXTO = {
+      banca: ['transicao', 'fase'],
+      jubilado: ['onde', 'faltavaTempo', 'faltavaBanca', 'restamVarias', 'restaUma', 'soTcc', 'ultimaEtapa'],
+      colacao: ['tcc', 'media', 'conceito', 'semCoringa', 'novoRecorde', 'recorde'],
+      recorde: ['menu'],
+    };
+    for (const [grupo, campos] of Object.entries(CAMPOS_DE_TEXTO)) {
+      if (!exigeObjeto(conteudo.textos[grupo], `textos.${grupo}`)) continue;
+      for (const campo of campos) exigeTexto(conteudo.textos[grupo][campo], `textos.${grupo}.${campo}`);
     }
     if (exigeObjeto(conteudo.textos.relatorio, 'textos.relatorio')) {
       for (const campo of ['baixado', 'copiado', 'semCopia', 'vazio']) {

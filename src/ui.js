@@ -1,6 +1,7 @@
 import { CONTEUDO } from '../data/content.js';
 import { maxItensLoja, TELAS } from './state.js';
 import { coringasDesligados, dadosDoCoringa } from './jokers.js';
+import { ESTADOS_BANCA } from './boss.js';
 import {
   LINHA_VITRINE,
   posicaoRerolar,
@@ -65,6 +66,23 @@ export function criarUi(doc) {
     botaoComecar: doc.getElementById('botao-comecar'),
     tcc: doc.getElementById('tcc'),
     botaoTcc: doc.getElementById('botao-tcc'),
+    // Fase 10: a barra da Banca no HUD, as telas de fim e o recorde no menu.
+    bancaHud: doc.getElementById('banca-hud'),
+    bancaNome: doc.getElementById('banca-nome'),
+    bancaFase: doc.getElementById('banca-fase'),
+    bancaBarra: doc.getElementById('banca-barra'),
+    bancaMarcas: doc.getElementById('banca-marcas'),
+    jubiladoOnde: doc.getElementById('jubilado-onde'),
+    jubiladoFaltava: doc.getElementById('jubilado-faltava'),
+    colacao: doc.getElementById('colacao'),
+    colacaoTcc: doc.getElementById('colacao-tcc'),
+    colacaoMedia: doc.getElementById('colacao-media'),
+    colacaoConceito: doc.getElementById('colacao-conceito'),
+    colacaoBoletins: doc.getElementById('colacao-boletins'),
+    colacaoCoringas: doc.getElementById('colacao-coringas'),
+    colacaoRecorde: doc.getElementById('colacao-recorde'),
+    botaoColacao: doc.getElementById('botao-colacao'),
+    menuRecorde: doc.getElementById('menu-recorde'),
   };
 
   // Barras de relatorio (debug.relatorio): uma em cada tela de fim e uma no
@@ -384,7 +402,97 @@ export function criarUi(doc) {
     visivel(el.anuncioSemModificador, nenhum);
   }
 
-  function ligarBotoes({ jogar, continuar, menu, resultado, jubilado, comecar, tcc }) {
+  // ---------------------------------------------------------------- A Banca
+  // A barra de HP no topo do HUD (design §10). As marcas de fase saem de
+  // content.js (banca.fases[].ate), montadas uma vez: o jogador ve, antes de
+  // chegar la, onde a Banca vai virar.
+  function montarBanca() {
+    if (!el.bancaMarcas || el.bancaMarcas.childElementCount > 0) return;
+    const fases = CONTEUDO.banca.fases;
+    for (let i = 0; i < fases.length - 1; i += 1) {
+      const marca = doc.createElement('span');
+      marca.className = 'banca-marca';
+      marca.style.left = `${fases[i].ate * 100}%`;
+      el.bancaMarcas.appendChild(marca);
+    }
+  }
+
+  montarBanca();
+
+  function sincronizarBanca(estado, emJogo) {
+    const b = estado.run.avaliacao.banca;
+    visivel(el.bancaHud, emJogo && b !== null);
+    if (!b) return;
+    const fases = CONTEUDO.banca.fases;
+    const fase = fases[Math.min(b.fase, fases.length - 1)];
+    texto(el.bancaNome, `${CONTEUDO.banca.emoji} ${CONTEUDO.banca.nome}`);
+    texto(el.bancaFase, preencher(CONTEUDO.textos.banca.fase, { n: b.fase + 1, nome: fase.nome }));
+    largura(el.bancaBarra, b.hpMax > 0 ? b.hp / b.hpMax : 0);
+    for (let i = 0; i < fases.length; i += 1) classe(el.bancaHud, `fase-${i + 1}`, i === b.fase);
+    classe(el.bancaHud, 'transicao', b.estado === ESTADOS_BANCA.TRANSICAO);
+  }
+
+  // --------------------------------------------------------------- colacao
+  // O resumo da run: uma coluna por periodo, uma linha por avaliacao, todas
+  // montadas uma vez a partir de CONTEUDO.periodos (a mesma ordem de
+  // run.boletins) e so trocando de texto.
+  const linhasBoletim = [];
+
+  function montarColacao() {
+    if (!el.colacaoBoletins || linhasBoletim.length > 0) return;
+    for (const periodo of CONTEUDO.periodos) {
+      const coluna = doc.createElement('div');
+      coluna.className = 'colacao-periodo';
+      const titulo = span('colacao-periodo-nome');
+      titulo.textContent = periodo.nome;
+      coluna.appendChild(titulo);
+      for (const av of periodo.avaliacoes) {
+        const linha = doc.createElement('div');
+        linha.className = 'colacao-linha';
+        const materia = span('colacao-materia');
+        materia.textContent = av.materia;
+        const nome = span('colacao-avaliacao');
+        nome.textContent = av.nome;
+        const nota = span('colacao-nota');
+        const conceito = span('colacao-conceito-av');
+        linha.append(materia, nome, nota, conceito);
+        coluna.appendChild(linha);
+        linhasBoletim.push({ linha, nota, conceito, letra: '' });
+      }
+      el.colacaoBoletins.appendChild(coluna);
+    }
+  }
+
+  montarColacao();
+
+  function sincronizarColacao(estado) {
+    const run = estado.run;
+    const c = run.colacao;
+    const t = CONTEUDO.textos.colacao;
+    texto(el.colacaoTcc, textoDoTcc(c));
+    texto(el.colacaoMedia, formatarNota(c.media));
+    texto(el.colacaoConceito, preencher(t.conceito, { conceito: c.conceito }));
+    for (let i = 0; i < linhasBoletim.length; i += 1) {
+      const no = linhasBoletim[i];
+      const b = run.boletins[i];
+      const feita = Boolean(b && b.feita);
+      escrever(no.nota, feita ? formatarNota(b.nota) : '—');
+      escrever(no.conceito, feita ? b.conceito : '');
+      // A letra pinta a linha (conceito-A, conceito-F...): o olho acha a
+      // pior prova da run sem ler os numeros.
+      const letra = feita ? `conceito-${b.conceito}` : '';
+      if (no.letra !== letra) {
+        if (no.letra) no.linha.classList.remove(no.letra);
+        if (letra) no.linha.classList.add(letra);
+        no.letra = letra;
+      }
+    }
+    texto(el.colacaoCoringas, run.coringas.length > 0 ? nomesDosCoringas(run.coringas) : t.semCoringa);
+    texto(el.colacaoRecorde, textoDoRecorde(estado.recorde, c.novoRecorde));
+    classe(el.colacaoRecorde, 'novo', c.novoRecorde);
+  }
+
+  function ligarBotoes({ jogar, continuar, menu, resultado, jubilado, comecar, tcc, colacao }) {
     if (el.botaoJogar && jogar) el.botaoJogar.addEventListener('click', jogar);
     if (el.botaoContinuar && continuar) el.botaoContinuar.addEventListener('click', continuar);
     if (el.botaoMenu && menu) el.botaoMenu.addEventListener('click', menu);
@@ -398,6 +506,7 @@ export function criarUi(doc) {
     };
     if (el.botaoComecar && comecar) el.botaoComecar.addEventListener('click', soltando(el.botaoComecar, comecar));
     if (el.botaoTcc && tcc) el.botaoTcc.addEventListener('click', soltando(el.botaoTcc, tcc));
+    if (el.botaoColacao && colacao) el.botaoColacao.addEventListener('click', soltando(el.botaoColacao, colacao));
   }
 
   // `gerar(escopo)` devolve { nome, texto } ou null (nada gravado ainda). O
@@ -466,7 +575,10 @@ export function criarUi(doc) {
   }
 
   function sincronizarJubilado(estado) {
-    texto(el.jubiladoResumo, resumoDoJubilado(estado.run.resultado));
+    const r = estado.run.resultado;
+    texto(el.jubiladoOnde, textoOndeCaiu(r));
+    texto(el.jubiladoFaltava, textoQuantoFaltava(r));
+    texto(el.jubiladoResumo, resumoDoJubilado(r));
     sincronizarArmas(el.jubiladoArmas, estado);
   }
 
@@ -493,11 +605,19 @@ export function criarUi(doc) {
     visivel(el.loja, naLoja);
     visivel(el.anuncio, noAnuncio);
     visivel(el.tcc, estado.tela === TELAS.TCC);
+    const naColacao = estado.tela === TELAS.COLACAO;
+    visivel(el.colacao, naColacao);
     if (naCarta) sincronizarCartas(estado);
     if (naLoja) sincronizarLoja(estado);
     if (noAnuncio) sincronizarAnuncio(estado);
     if (noResultado) sincronizarResultado(estado);
     if (noJubilado) sincronizarJubilado(estado);
+    if (naColacao) sincronizarColacao(estado);
+    sincronizarBanca(estado, emJogo);
+    // O recorde no menu, so depois da primeira formatura.
+    const textoRecorde = estado.recorde.formaturas > 0 ? textoDoRecordeNoMenu(estado.recorde) : '';
+    texto(el.menuRecorde, textoRecorde);
+    visivel(el.menuRecorde, textoRecorde !== '');
     sincronizarRelatorio(estado);
 
     const p = estado.player;
@@ -512,13 +632,14 @@ export function criarUi(doc) {
     // o jogador ve que continuam dele, e que nao valem nesta prova.
     classe(el.hudCoringas, 'desligados', coringasDesligados(estado));
     texto(el.hudModificadores, emojisDosModificadores(av.modificadores));
-    texto(el.timer, formatarTempo(av.restante));
+    // O TCC nao tem cronometro: o relogio conta a defesa para cima.
+    texto(el.timer, formatarTempo(av.banca ? av.decorrido : av.restante));
     texto(el.avaliacaoNome, nomeDaAvaliacao(av));
     texto(el.periodoNome, av.periodo);
     // O unico aviso de "esta acabando" que existe sem ficar lendo o numero.
     // Sai do ESTADO (av.restante), como o realce da carta sai de
     // cartas.selecionada — nada de classe pintada por evento.
-    classe(el.timer, 'urgente', emJogo && !av.concluida && av.restante <= CONTEUDO.hud.timerUrgente);
+    classe(el.timer, 'urgente', emJogo && !av.concluida && !av.banca && av.restante <= CONTEUDO.hud.timerUrgente);
     // Com o mundo congelado (pausa, carta) o pulso do timer congela junto.
     classe(el.timer, 'parado', estado.tela !== TELAS.AVALIACAO);
   }
@@ -583,11 +704,10 @@ export function decomposicaoDaNota(resultado, textos = CONTEUDO.textos.resultado
 
 // "47 mortos · sobreviveu 0:42 de 1:00". Sem nota: jubilado nao tem boletim,
 // tem o que deu tempo de fazer.
+// Sem cronometro (o TCC), sem o "de 1:00": "12 mortos · sobreviveu 1:42".
 export function resumoDoJubilado(resultado, textos = CONTEUDO.textos.resultado) {
-  const partes = [
-    `${resultado.kills} ${textos.mortos}`,
-    `${textos.sobreviveu} ${formatarTempo(resultado.tempo)} ${textos.de} ${formatarTempo(resultado.duracao)}`,
-  ];
+  const de = resultado.duracao > 0 ? ` ${textos.de} ${formatarTempo(resultado.duracao)}` : '';
+  const partes = [`${resultado.kills} ${textos.mortos}`, `${textos.sobreviveu} ${formatarTempo(resultado.tempo)}${de}`];
   return partes.join(textos.separador);
 }
 
@@ -655,6 +775,69 @@ export function rotuloDeNivel(carta, textos) {
   if (carta.nivelProximo <= 0) return `+${carta.valor} ${textos.cura}`;
   if (carta.nivelAtual <= 0) return textos.novidade;
   return `${textos.nivel} ${carta.nivelAtual} ${textos.seta} ${carta.nivelProximo}`;
+}
+
+// ------------------------------------------------- telas de fim (fase 10)
+// Puras, como as do boletim: o smoke as testa sem DOM.
+
+// Troca cada {chave} do modelo (content.js) pelo valor. Chave sem valor fica
+// como esta — aparece na tela e ninguem deixa passar.
+export function preencher(modelo, valores) {
+  return modelo.replace(/\{(\w+)\}/g, (inteiro, chave) => (chave in valores ? String(valores[chave]) : inteiro));
+}
+
+// "Caiu em Cálculo I · Avaliação 1 — 1º Período."
+export function textoOndeCaiu(resultado, textos = CONTEUDO.textos.jubilado) {
+  return preencher(textos.onde, { avaliacao: nomeDaAvaliacao(resultado), periodo: resultado.periodo });
+}
+
+// "Faltavam 0:18 para o fim da prova, e ainda 7 avaliações e o TCC até a
+// formatura." No TCC: "A Banca ainda tinha 34% de HP — era a última etapa
+// antes da formatura." E o "quanto faltava" do contrato: da prova, e da run.
+export function textoQuantoFaltava(resultado, textos = CONTEUDO.textos.jubilado) {
+  if (resultado.chefe) {
+    const hp = Math.max(1, Math.ceil(Math.max(0, Math.min(1, resultado.bancaFracao)) * 100));
+    return preencher(textos.faltavaBanca, { hp }) + textos.ultimaEtapa;
+  }
+  const tempo = formatarTempo(Math.max(0, resultado.duracao - resultado.tempo));
+  let resto = textos.soTcc;
+  if (resultado.restantes === 1) resto = textos.restaUma;
+  else if (resultado.restantes > 1) resto = preencher(textos.restamVarias, { n: resultado.restantes });
+  return preencher(textos.faltavaTempo, { tempo }) + resto;
+}
+
+// "TCC aprovado pela Banca em 1:42".
+export function textoDoTcc(colacao, textos = CONTEUDO.textos.colacao) {
+  return preencher(textos.tcc, { tempo: formatarTempo(colacao.tempoTcc) });
+}
+
+// A linha de recorde da colacao: o recorde acabou de ser batido, ou o que
+// ja estava guardado.
+export function textoDoRecorde(recorde, novo, textos = CONTEUDO.textos.colacao) {
+  const valores = {
+    conceito: recorde.melhorConceito,
+    media: formatarNota(recorde.melhorMedia),
+    formaturas: recorde.formaturas,
+  };
+  return preencher(novo ? textos.novoRecorde : textos.recorde, valores);
+}
+
+export function textoDoRecordeNoMenu(recorde, textos = CONTEUDO.textos.recorde) {
+  return preencher(textos.menu, {
+    formaturas: recorde.formaturas,
+    conceito: recorde.melhorConceito,
+    media: formatarNota(recorde.melhorMedia),
+  });
+}
+
+// "🔋 Energético · 🏥 Atestado Médico": os coringas da formatura.
+export function nomesDosCoringas(coringas, lista = CONTEUDO.coringas, separador = CONTEUDO.textos.resultado.separador) {
+  const partes = [];
+  for (const inst of coringas) {
+    const dados = dadosDoCoringa(inst.id, lista);
+    if (dados) partes.push(`${dados.emoji} ${dados.nome}`);
+  }
+  return partes.join(separador);
 }
 
 export function formatarTempo(segundos) {

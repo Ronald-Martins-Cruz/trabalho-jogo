@@ -32,7 +32,7 @@ const EPS = 1e-6;
 const CHAVES_DE_JOGO = [
   'ajuste', 'loop', 'arena', 'jogador', 'xp', 'xpOrbe', 'cartas', 'arma', 'projetil',
   'orbital', 'ondaArea', 'armas', 'coringas', 'loja', 'inimigos', 'spawn', 'separacao',
-  'modificadores', 'regras', 'periodos', 'nota',
+  'modificadores', 'regras', 'periodos', 'nota', 'tcc', 'banca',
 ];
 
 // ------------------------------------------------------------------ entrada
@@ -833,6 +833,12 @@ function tabelaResumo(reg, a) {
 }
 
 function descreverResultado(reg, a) {
+  // O TCC (fase 10) nao tem cronometro: duracao 0 diria "aos 0s".
+  if (!(reg.duracao > 0)) {
+    if (reg.situacao === SITUACAO.APROVADO) return `✅ A Banca caiu aos ${seg(reg.tempoJogado)} de defesa`;
+    if (reg.situacao === SITUACAO.JUBILADO) return `❌ jubilado aos ${seg(reg.morte ? reg.morte.t : a.tempo)} de defesa`;
+    return `⏹ defesa ${reg.situacao} aos ${seg(a.tempo)}`;
+  }
   switch (reg.situacao) {
     case SITUACAO.APROVADO:
       return `✅ aprovado: sobreviveu aos ${reg.duracao}s`;
@@ -1516,10 +1522,17 @@ function comportamentoArma(id, conteudo = CONTEUDO) {
   return arma ? arma.comportamento : '?';
 }
 
-function nomeFonte(id, conteudo = CONTEUDO) {
+// Exportada para o smoke (pendencia 49): toda fonte de 'jogador-dano' tem
+// que ter nome aqui, e nao cair no String(id) cru.
+export function nomeFonte(id, conteudo = CONTEUDO) {
   if (id === FONTE_DESCONHECIDA) return 'fonte desconhecida (sem evento jogador-dano)';
   const inimigo = conteudo.inimigos.find((i) => i.id === id);
-  return inimigo ? `${inimigo.emoji} ${inimigo.nome}` : String(id);
+  if (inimigo) return `${inimigo.emoji} ${inimigo.nome}`;
+  // Fase 10: o corpo da Banca (contato e investida) e as perguntas do leque.
+  const banca = conteudo.banca;
+  if (banca && id === banca.id) return `${banca.emoji} ${banca.nome}`;
+  if (banca && banca.pergunta && id === banca.pergunta.id) return `${banca.pergunta.emoji} ${banca.pergunta.nome}`;
+  return String(id);
 }
 
 function semDescricoes(valor) {

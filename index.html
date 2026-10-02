@@ -24,6 +24,19 @@
         </div>
       </div>
 
+      <!-- A Banca: só no TCC. As marcas de fase são montadas por ui.js a partir
+           de content.js (banca.fases). -->
+      <div id="banca-hud" class="banca-hud oculto">
+        <div class="banca-cabecalho">
+          <span id="banca-nome" class="banca-nome">📋 A Banca</span>
+          <span id="banca-fase" class="banca-fase">Fase 1</span>
+        </div>
+        <div class="barra barra-banca">
+          <div id="banca-barra" class="preenchimento"></div>
+          <div id="banca-marcas" class="banca-marcas"></div>
+        </div>
+      </div>
+
       <div class="hud-barras">
         <div class="barra barra-xp">
           <div id="xp-barra" class="preenchimento"></div>
@@ -56,13 +69,48 @@
       <p class="dica">Enter ou Espaço para começar</p>
     </div>
 
-    <!-- TCC: provisório até A Banca (fase 10). -->
+    <!-- TCC: o anúncio da defesa. A luta em si é uma avaliação com A Banca. -->
     <div id="tcc" class="camada tcc oculto">
+      <p class="anuncio-novo-periodo">Fim do curso</p>
       <h2 class="titulo-tcc">TCC</h2>
-      <p class="subtitulo">Você sobreviveu aos três períodos.</p>
-      <p class="decomposicao">A Banca ainda está sendo convocada. Por enquanto, a graduação termina aqui.</p>
-      <button id="botao-tcc" class="botao botao-destaque" type="button">Voltar ao menu</button>
+      <p class="subtitulo">Você sobreviveu aos três períodos. Falta a defesa.</p>
+      <div class="tcc-banca">
+        <span class="tcc-banca-emoji">📋</span>
+        <div class="tcc-banca-texto">
+          <p class="tcc-banca-nome">A Banca</p>
+          <p class="tcc-banca-descricao">Duas rodadas: da metade da vida dela em diante, ela endurece.
+            Faz perguntas em leque, chama reforços e, na segunda rodada, avança sobre você.
+            Tudo o que ela vai fazer aparece antes no chão: linhas, faixa ou círculos.</p>
+        </div>
+      </div>
+      <p class="decomposicao">Sem cronômetro: a defesa acaba quando ela cair — ou você.</p>
+      <button id="botao-tcc" class="botao botao-destaque" type="button">Começar a defesa</button>
+      <p class="dica">Enter ou Espaço para começar</p>
+    </div>
+
+    <!-- Colação de Grau: A Banca caiu. As linhas das 9 avaliações são montadas
+         por ui.js a partir de content.js (periodos); os números saem de
+         estado.run.boletins e estado.run.colacao. -->
+    <div id="colacao" class="camada colacao oculto">
+      <p class="resultado-cabecalho">Colação de Grau</p>
+      <h2 class="titulo-colacao">🎓 Formado</h2>
+      <p id="colacao-tcc" class="subtitulo">TCC aprovado pela Banca</p>
+      <div class="nota-caixa colacao-caixa">
+        <span id="colacao-media" class="nota-valor">0,0</span>
+        <span id="colacao-conceito" class="nota-conceito">Conceito geral</span>
+      </div>
+      <div id="colacao-boletins" class="colacao-boletins"></div>
+      <p class="colacao-rotulo">Coringas na formatura</p>
+      <p id="colacao-coringas" class="colacao-coringas"></p>
+      <p id="colacao-recorde" class="colacao-recorde"></p>
+      <button id="botao-colacao" class="botao botao-destaque" type="button">Voltar ao menu</button>
       <p class="dica">Enter ou Espaço para voltar</p>
+      <div class="relatorio-barra oculto" data-relatorio-barra>
+        <span class="relatorio-rotulo">Relatório</span>
+        <button class="botao botao-relatorio" type="button" data-relatorio="avaliacao">Do TCC</button>
+        <button class="botao botao-relatorio" type="button" data-relatorio="partida">Da partida</button>
+        <span class="relatorio-status" data-relatorio-status></span>
+      </div>
     </div>
 
     <!-- Menu -->
@@ -70,7 +118,9 @@
       <h1 class="titulo">Semana de Provas</h1>
       <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
       <button id="botao-jogar" class="botao botao-destaque" type="button">Jogar</button>
-      <p class="dica">3 períodos · 9 avaliações · uma loja depois de cada · WASD ou setas para mover · ESC pausa</p>
+      <!-- O recorde (localStorage), só depois da primeira formatura. -->
+      <p id="menu-recorde" class="menu-recorde oculto"></p>
+      <p class="dica">3 períodos · 9 avaliações · uma loja depois de cada · o TCC · WASD ou setas para mover · ESC pausa</p>
       <!-- Só com CONTEUDO.debug.relatorio ligado e alguma partida já jogada. -->
       <div class="relatorio-barra oculto" data-relatorio-barra data-relatorio-menu>
         <span class="relatorio-rotulo">Relatório</span>
@@ -143,10 +193,13 @@
       <p class="dica">1 · 2 · 3 · 4 compram · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
     </div>
 
-    <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. -->
+    <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. Onde caiu e quanto
+         faltava saem de estado.run.resultado (ui.js). -->
     <div id="jubilado" class="camada jubilado oculto">
-      <h2 class="titulo-jubilado">Jubilado</h2>
-      <p class="subtitulo">Seu HP chegou a zero no meio da prova.</p>
+      <h2 class="titulo-jubilado">💀 Jubilado</h2>
+      <p class="subtitulo">Seu HP chegou a zero.</p>
+      <p id="jubilado-onde" class="jubilado-onde">—</p>
+      <p id="jubilado-faltava" class="jubilado-faltava">—</p>
       <p id="jubilado-resumo" class="decomposicao">—</p>
       <p id="jubilado-armas" class="dica oculto"></p>
       <button id="botao-jubilado" class="botao" type="button">Voltar ao menu</button>

@@ -1,20 +1,25 @@
 import { CONTEUDO } from '../data/content.js';
-import { novoEstado, irParaTela, emitir, TELAS } from './state.js';
+import { novoEstado, novoRecorde, irParaTela, emitir, TELAS } from './state.js';
 import { desenhar } from './render.js';
 import { criarUi } from './ui.js';
 import { atualizarPlayer, atualizarOrbes } from './player.js';
 import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
+import { atualizarBanca, bancaVencida } from './boss.js';
 import { apontarCarta, atualizarCartas, cartaLiberada, escolherCarta, moverSelecaoCarta } from './cards.js';
 import {
   anuncioLiberado,
   atualizarRegras,
+  colacaoLiberada,
+  colarGrau,
   comecarProxima,
+  comecarTcc,
   fecharAvaliacao,
   iniciarRun,
   MOTIVO_JUBILADO,
   MOTIVO_TEMPO,
-  sairDoTcc,
+  sairDaColacao,
+  tccLiberado,
 } from './run.js';
 import {
   abrirLoja,
@@ -59,6 +64,7 @@ export function atualizar(estado, dt) {
     case TELAS.LOJA:
     case TELAS.ANUNCIO:
     case TELAS.TCC:
+    case TELAS.COLACAO:
       // Nada roda: a partida inteira fica congelada por tras do overlay. Toda
       // tela nova entra aqui — o `default` congela igual, mas listar deixa
       // explicito que foi decisao, nao esquecimento.
@@ -83,12 +89,16 @@ function atualizarAvaliacao(estado, dt) {
   atualizarPlayer(estado, dt);
 
   av.decorrido += dt;
-  av.restante = Math.max(0, av.duracao - av.decorrido);
+  // O TCC (av.banca) nao tem cronometro: quem decide o fim e A Banca.
+  if (!av.banca) av.restante = Math.max(0, av.duracao - av.decorrido);
 
   // As regras da avaliacao que agem com o tempo (perda de HP). Antes dos
   // inimigos: a morte por ela cai no mesmo observador de sempre, logo abaixo.
   atualizarRegras(estado, dt);
   atualizarInimigos(estado, dt);
+  // A Banca depois dos inimigos (o corpo dela ja andou como um deles neste
+  // tick) e antes das armas: ela decide o padrao, as perguntas voam e acertam.
+  if (av.banca) atualizarBanca(estado, dt);
   // Depois dos inimigos: as armas miram e os projeteis colidem com as posicoes
   // ja integradas deste quadro, nao com as do quadro anterior.
   atualizarArmas(estado, dt);
@@ -100,8 +110,14 @@ function atualizarAvaliacao(estado, dt) {
   atualizarOrbes(estado, dt);
   if (estado.player.xp > xpAntes) emitir(estado, 'xp-coletado', estado.player.xp - xpAntes);
 
-  // Unico observador da morte do jogador: qualquer fonte de dano (inimigo
-  // agora, modificador e chefe depois) so precisa zerar o hp via receberDano().
+  // Depois das armas: a Banca caiu neste tick? Perguntado antes da morte do
+  // jogador so para o espelho de HP dela estar em dia no boletim de quem
+  // morreu junto.
+  const bancaCaiu = av.banca !== null && bancaVencida(estado);
+
+  // Unico observador da morte do jogador: qualquer fonte de dano (inimigo,
+  // modificador, A Banca) so precisa zerar o hp via receberDano(). A morte
+  // ganha da Banca caindo no mesmo tick, como ganha do cronometro.
   if (!estado.player.vivo) {
     av.concluida = true;
     emitir(estado, 'jubilado', av.id);
@@ -110,7 +126,13 @@ function atualizarAvaliacao(estado, dt) {
     return;
   }
 
-  if (av.restante <= 0) {
+  if (bancaCaiu) {
+    av.concluida = true;
+    colarGrau(estado);
+    return;
+  }
+
+  if (!av.banca && av.restante <= 0) {
     av.concluida = true;
     emitir(estado, 'avaliacao-fim', av.id);
     fecharAvaliacao(estado, MOTIVO_TEMPO);
@@ -165,6 +187,10 @@ export function iniciar() {
   canvas.height = CONTEUDO.arena.altura;
 
   const estado = novoEstado(Date.now() >>> 0);
+  // O unico estado persistente do jogo (fase 10). Sem localStorage
+  // (armazenamento bloqueado, navegador que o proiba), o jogo segue com o
+  // recorde zerado e nada quebra.
+  Object.assign(estado.recorde, lerRecorde());
   const ui = criarUi(document);
 
   ligarTeclado(estado);
@@ -177,9 +203,10 @@ export function iniciar() {
     // a loja entra no lugar do menu.
     resultado: () => sairDoResultado(estado),
     jubilado: () => sairDoResultado(estado),
-    // Anuncio: o clique espera o atraso de abertura, como o Enter.
+    // Anuncio, TCC e colacao: o clique espera o atraso de abertura, como o Enter.
     comecar: () => anuncioLiberado(estado) && comecarProxima(estado),
-    tcc: () => sairDoTcc(estado),
+    tcc: () => tccLiberado(estado) && comecarTcc(estado),
+    colacao: () => colacaoLiberada(estado) && sairDaColacao(estado),
   });
   // Loja: como nas cartas, o mouse so aponta e confirma pelas funcoes de
   // shop.js, que escrevem no estado. Rerolar e seguir tambem apontam, para o
@@ -221,7 +248,12 @@ export function iniciar() {
 
     desenhar(estado, ctx);
     ui.sincronizar(estado);
-    // Consumidor da fila: a fase 11 poe audio.js aqui, antes de esvaziar.
+    // Consumidor da fila: a fase 11 poe audio.js aqui, antes de esvaziar. O
+    // recorde e gravado aqui, e nao dentro da simulacao: run.js so o escreve
+    // no estado e emite 'recorde'.
+    for (let i = 0; i < estado.eventos.length; i += 1) {
+      if (estado.eventos[i].tipo === 'recorde') gravarRecorde(estado.recorde);
+    }
     estado.eventos.length = 0;
 
     requestAnimationFrame(frame);
@@ -266,6 +298,64 @@ function ambienteDoNavegador(agora) {
   };
 }
 
+// ------------------------------------------------------------------ recorde
+
+// O localStorage do navegador, ou null. Isolado aqui porque e a unica coisa
+// do jogo que persiste (fase 10, tarefa 6) e porque ele falha de jeitos
+// diferentes: nao existe no node, e no navegador ate LER `localStorage` pode
+// lancar (armazenamento bloqueado pelo usuario). Quem chama recebe null e
+// segue sem recorde.
+export function armazenamentoDoNavegador() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage ? localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+// O recorde guardado, ja conferido. Qualquer coisa fora do formato (nada
+// guardado, JSON quebrado, numero torto, conceito que nao existe mais em
+// content.js, getItem que lanca) vira o recorde zerado — nunca uma excecao.
+export function lerRecorde(armazenamento = armazenamentoDoNavegador()) {
+  const recorde = novoRecorde();
+  if (!armazenamento) return recorde;
+  try {
+    const bruto = armazenamento.getItem(CONTEUDO.recorde.chave);
+    if (typeof bruto !== 'string') return recorde;
+    const dados = JSON.parse(bruto);
+    const conceitos = CONTEUDO.nota.faixas.map((f) => f.conceito);
+    if (
+      dados &&
+      Number.isInteger(dados.formaturas) &&
+      dados.formaturas > 0 &&
+      Number.isFinite(dados.melhorMedia) &&
+      dados.melhorMedia >= 0 &&
+      dados.melhorMedia <= CONTEUDO.nota.maxima &&
+      conceitos.includes(dados.melhorConceito)
+    ) {
+      recorde.formaturas = dados.formaturas;
+      recorde.melhorMedia = dados.melhorMedia;
+      recorde.melhorConceito = dados.melhorConceito;
+    }
+  } catch {
+    // Degrada em silencio: sem recorde e melhor que sem jogo.
+  }
+  return recorde;
+}
+
+// Devolve se gravou. Cota cheia, armazenamento bloqueado ou ausente: false, e
+// o jogo segue.
+export function gravarRecorde(recorde, armazenamento = armazenamentoDoNavegador()) {
+  if (!armazenamento) return false;
+  try {
+    const dados = { formaturas: recorde.formaturas, melhorMedia: recorde.melhorMedia, melhorConceito: recorde.melhorConceito };
+    armazenamento.setItem(CONTEUDO.recorde.chave, JSON.stringify(dados));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const MAPA_TECLAS = {
   KeyW: 'cima',
   ArrowUp: 'cima',
@@ -306,15 +396,21 @@ function ligarTeclado(estado) {
       ev.preventDefault();
       return;
     }
-    // Anuncio e TCC: as mesmas teclas. O anuncio espera o atraso de abertura
-    // e engole a tecla enquanto isso (o Enter que saiu da loja nao comeca a
-    // prova); fora dele, cai no resto.
+    // Anuncio, TCC e colacao: as mesmas teclas. Cada uma espera o atraso de
+    // abertura e engole a tecla enquanto isso (o Enter que saiu da loja nao
+    // comeca a prova nem a defesa); fora delas, cai no resto.
     if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && estado.tela === TELAS.ANUNCIO) {
       if (anuncioLiberado(estado)) comecarProxima(estado);
       ev.preventDefault();
       return;
     }
-    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && sairDoTcc(estado)) {
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && estado.tela === TELAS.TCC) {
+      if (tccLiberado(estado)) comecarTcc(estado);
+      ev.preventDefault();
+      return;
+    }
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && estado.tela === TELAS.COLACAO) {
+      if (colacaoLiberada(estado)) sairDaColacao(estado);
       ev.preventDefault();
       return;
     }
