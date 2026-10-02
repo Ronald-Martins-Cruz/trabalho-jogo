@@ -237,6 +237,9 @@ export function novaAvaliacao(periodoIndex, avaliacaoIndex, modificadores = SEM_
     regras,
     arena: arenaDaRegra(regras.arena),
     relogioPerdaHp: 0, // segundos desde a ultima perda de HP (regras.perdaHp)
+    // Fase 09: quais tipos de inimigo podem nascer nesta avaliacao — nome de
+    // uma entrada em CONTEUDO.spawn.composicoes, lido por enemies.js.
+    composicaoSpawn: dados.composicaoSpawn,
   };
 }
 

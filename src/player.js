@@ -77,7 +77,14 @@ function aplicarAtrito(player, atrito, dt) {
 // A arena e o retangulo da avaliacao (av.arena, centrado no canvas); o
 // jogador para na borda, nao atravessa. Com a regra `arena` < 1 (Sala Lotada)
 // ele encolhe em volta do centro.
-function limitarNaArena(player, arena) {
+//
+// Exportada (fase 09): o empurrao do PDF de 300 Paginas (enemies.js,
+// colidirComJogador) desloca o jogador FORA do passo normal de
+// atualizarPlayer — precisa grampear na arena no mesmo tick, com a mesma
+// regra, ou o jogador ficaria fora dela ate o proximo quadro (o smoke
+// verifica "jogador dentro da arena" TODO tick, nao so depois de
+// atualizarPlayer).
+export function limitarNaArena(player, arena) {
   const r = player.raio;
 
   if (player.x < arena.esquerda + r) {

@@ -77,7 +77,14 @@ import {
   rotuloDoReroll,
 } from '../src/ui.js';
 import { readdirSync, readFileSync } from 'node:fs';
-import { aplicarDano, atualizarInimigos, spawnInimigo, poolInimigos, limparInimigos } from '../src/enemies.js';
+import {
+  aplicarDano,
+  atualizarInimigos,
+  spawnInimigo,
+  poolInimigos,
+  limparInimigos,
+  verificarInimigosDoConteudo,
+} from '../src/enemies.js';
 import {
   atualizarArmas,
   dadosDaArma,
@@ -356,11 +363,22 @@ function botCircular(estado, tick) {
 // No modo carga a arena fica cheia ate o teto da pool e o jogador nao morre —
 // o que se quer medir e o custo por quadro de IA, separacao e colisao com a
 // pool inteira viva, nao a sobrevivencia dele.
+//
+// Fase 09: preenche em RODIZIO pelos 4 tipos (tipoId explicito), nao pelo
+// sorteio natural da composicao da avaliacao — a avaliacao default (p1-av1)
+// e so Prazo de Entrega, e "400 inimigos misturados" (criterio de aceite)
+// precisa dos 4 tipos de verdade, nao de sorte. O contador persiste entre
+// quadros: como as armas matam alguns a cada tick, o rodizio continua de
+// onde parou e a mistura fica presente na corrida inteira, nao so na
+// abertura.
+let proximoTipoCarga = 0;
 function manterCarga(estado) {
   if (!CARGA || estado.tela !== TELAS.AVALIACAO) return;
   estado.player.hp = estado.player.hpMax; // toma dano (e conta), mas nao cai
-  while (estado.enemies.length < ALVO_CARGA && spawnInimigo(estado)) {
-    /* enche ate o teto */
+  while (estado.enemies.length < ALVO_CARGA) {
+    const tipo = CONTEUDO.inimigos[proximoTipoCarga % CONTEUDO.inimigos.length];
+    proximoTipoCarga += 1;
+    if (!spawnInimigo(estado, tipo.id)) break;
   }
 }
 
@@ -416,6 +434,678 @@ function checarReciclagemDaPool() {
   if (pool.ativos.length !== 0 || pool.reserva.length !== 3) {
     falhar(0, `liberarTodos deixou ativos=${pool.ativos.length} reserva=${pool.reserva.length}`);
   }
+}
+
+// ------------------------------------------------------- fase 09: bestiario
+
+// Inimigo e dado, como arma: a entrada de content.js so ganha movimento se
+// `comportamento` apontar para uma funcao registrada em enemies.js. Mesmo
+// papel de checarArmasDoConteudo, para o registro MOVIMENTOS.
+function checarInimigosDoConteudo() {
+  const problema = verificarInimigosDoConteudo();
+  if (problema) falhar(0, problema);
+}
+
+// Tarefa 5 do contrato: cada tipo, sozinho, numa corrida curta — pega
+// qualquer excecao de um comportamento novo (o 'errante' da Notificacao, o
+// empurrao do PDF) antes de chegar na corrida principal, onde um tipo raro
+// (peso baixo) poderia nao nascer nenhuma vez em 60s.
+const TICKS_TIPO_ISOLADO = 300; // 5s bastam pra mover, separar e colidir umas poucas vezes
+function checarTiposIsolados() {
+  for (const tipo of CONTEUDO.inimigos) {
+    const estado = novoEstado(SEMENTE + 500);
+    iniciarAvaliacao(estado);
+    for (let tick = 1; tick <= TICKS_TIPO_ISOLADO; tick += 1) {
+      botCircular(estado, tick);
+      for (let s = 0; s < 3; s += 1) spawnInimigo(estado, tipo.id);
+      try {
+        atualizarInimigos(estado, PASSO);
+      } catch (e) {
+        falhar(tick, `tipo isolado "${tipo.id}" quebrou atualizarInimigos: ${e && e.stack ? e.stack : e}`);
+      }
+      for (const inimigo of estado.enemies) {
+        if (!Number.isFinite(inimigo.x) || !Number.isFinite(inimigo.y) || !Number.isFinite(inimigo.hp)) {
+          falhar(tick, `tipo isolado "${tipo.id}": inimigo com numero invalido (x=${inimigo.x}, y=${inimigo.y}, hp=${inimigo.hp})`);
+        }
+      }
+    }
+    if (estado.enemies.length === 0) falhar(0, `tipo isolado "${tipo.id}": nenhum sobreviveu ${TICKS_TIPO_ISOLADO} ticks — spawnInimigo(estado, id) funciona?`);
+
+    // Pendencia 49: TODA fonte de dano nova precisa emitir jogador-dano com
+    // a origem certa — sem isso o relatorio mostraria "fonte desconhecida"
+    // para os 3 tipos novos. Contato forcado (encostado no jogador), nao a
+    // perseguicao natural: o PDF sozinho, vindo da borda, levaria bem mais
+    // de 5s pra chegar, e o teste ficaria falso-negativo pra ele.
+    const e2 = novoEstado(SEMENTE + 500);
+    iniciarAvaliacao(e2);
+    limparInimigos(e2);
+    const encostado = spawnInimigo(e2, tipo.id);
+    encostado.x = e2.player.x + e2.player.raio + encostado.raio - 1;
+    encostado.y = e2.player.y;
+    let fonteVista = null;
+    for (let tick = 1; tick <= 90 && !fonteVista; tick += 1) {
+      atualizarInimigos(e2, PASSO);
+      for (const evento of e2.eventos) {
+        if (evento.tipo === 'jogador-dano') fonteVista = evento.dados.fonte;
+      }
+      e2.eventos.length = 0;
+    }
+    if (fonteVista !== tipo.id) {
+      falhar(
+        0,
+        `tipo "${tipo.id}": encostado no jogador, nenhum jogador-dano com fonte "${tipo.id}" saiu em 90 ticks ` +
+          `(veio "${fonteVista}") — o relatorio mostraria fonte desconhecida para este tipo`
+      );
+    }
+  }
+}
+
+// Tarefa 2 do contrato: o empurrao do PDF acontece FORA do passo normal de
+// atualizarPlayer (colidirComJogador roda depois, dentro de
+// atualizarInimigos), entao se ele nao grampear na arena sozinho, o jogador
+// sai dela no MESMO tick — e nenhuma outra verificacao deste arquivo pegaria
+// isso, porque a corrida principal (VERIFICACOES, "jogador dentro da arena")
+// roda so em p1-av1, onde o PDF nem pode nascer. Jogador colado na quina,
+// tipo empurrando na direcao da parede: o pior caso pro clamp.
+function checarEmpurraoNaArena() {
+  const tipo = CONTEUDO.inimigos.find((t) => t.empurraoContato > 0);
+  if (!tipo) falhar(0, 'empurrao na arena: nenhum inimigo com empurraoContato — a tarefa 2 da fase 09 nao foi feita');
+
+  const estado = novoEstado(SEMENTE + 507);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+  const arena = estado.run.avaliacao.arena;
+  const player = estado.player;
+  player.x = arena.esquerda + player.raio;
+  player.y = arena.topo + player.raio;
+
+  const e = spawnInimigo(estado, tipo.id);
+  // Encostado, do lado de DENTRO da arena: o vetor jogador-menos-inimigo
+  // aponta para a quina, o pior caso pro clamp.
+  e.x = player.x + player.raio + e.raio - 1;
+  e.y = player.y + player.raio + e.raio - 1;
+
+  for (let tick = 1; tick <= 90; tick += 1) {
+    atualizarInimigos(estado, PASSO);
+    const r = player.raio;
+    const FOLGA = 0.5;
+    if (
+      player.x < arena.esquerda + r - FOLGA || player.x > arena.direita - r + FOLGA ||
+      player.y < arena.topo + r - FOLGA || player.y > arena.base - r + FOLGA
+    ) {
+      falhar(
+        tick,
+        `empurrao na arena: o tipo "${tipo.id}" empurrou o jogador para (${player.x.toFixed(1)}, ${player.y.toFixed(1)}), ` +
+          `fora dela — colidirComJogador precisa grampear na arena depois do empurrao`
+      );
+    }
+  }
+  return `${tipo.emoji} ${tipo.id} (empurraoContato=${tipo.empurraoContato}): encostado na quina, o jogador nao sai da arena em 90 ticks`;
+}
+
+// Correcao pos-revisao (item 3): checarEmpurraoNaArena() so prova que o
+// empurrao nao joga o jogador pra fora da arena — trocar o empurrao inteiro
+// por `+= 0` passa por ela sem ser notado, porque no centro aberto o jogador
+// nunca chegaria perto da borda de qualquer jeito. Este teste mede a
+// MAGNITUDE: no meio da arena (longe de qualquer parede, sem limitarNaArena
+// entrar na conta), com o tipo PARADO (velocidade=0, so o empurrao move
+// alguem) e dy=0 o tempo inteiro (a direcao do empurrao fica exatamente
+// (1,0), sem mudar com a distancia), o deslocamento esperado a cada quadro
+// de sobreposicao e EXATAMENTE empurraoContato x PASSO — soma-se isso pelos
+// quadros que os corpos ficaram sobrepostos e compara-se com o deslocamento
+// real do jogador.
+function checarEmpurraoEmCampoAberto() {
+  const tipo = CONTEUDO.inimigos.find((t) => t.empurraoContato > 0);
+  if (!tipo) falhar(0, 'empurrao em campo aberto: nenhum inimigo com empurraoContato');
+
+  const estado = novoEstado(SEMENTE + 510);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const arena = estado.run.avaliacao.arena;
+  const player = estado.player;
+  player.x = (arena.esquerda + arena.direita) / 2;
+  player.y = (arena.topo + arena.base) / 2;
+
+  const e = spawnInimigo(estado, tipo.id);
+  if (!e) falhar(0, 'empurrao em campo aberto: spawnInimigo devolveu null');
+  const soma = e.raio + player.raio;
+  e.velocidade = 0; // nao persegue: so o empurrao desloca alguem neste teste
+  e.x = player.x - soma * 0.5; // 50% de sobreposicao, folga de sobra pra medir varios quadros
+  e.y = player.y;
+
+  const xInicial = player.x;
+  const yInicial = player.y;
+  let ticks = 0;
+  const TETO_TICKS = 60; // 1s de sobra: a sobreposicao de 50% se desfaz bem antes
+  while (player.x - e.x < soma && ticks < TETO_TICKS) {
+    atualizarInimigos(estado, PASSO);
+    ticks += 1;
+  }
+
+  if (ticks === 0) falhar(0, 'empurrao em campo aberto: os corpos ja nasceram sem se sobrepor — cenario mal montado');
+  if (Math.abs(player.y - yInicial) > 1e-6) {
+    falhar(0, `empurrao em campo aberto: o jogador se moveu ${(player.y - yInicial).toFixed(3)}px no eixo Y, esperava 0 (dy=0 o tempo inteiro)`);
+  }
+  const deslocamento = player.x - xInicial;
+  const esperado = tipo.empurraoContato * ticks * PASSO;
+  const FOLGA = 0.02; // 2%: so ponto flutuante, a fisica aqui e exata por construcao
+  if (Math.abs(deslocamento - esperado) > Math.max(0.5, esperado * FOLGA)) {
+    falhar(
+      0,
+      `empurrao em campo aberto: o tipo "${tipo.id}" deslocou o jogador ${deslocamento.toFixed(2)}px em ` +
+        `${ticks} quadros sobrepostos, esperava ~${esperado.toFixed(2)}px (empurraoContato=${tipo.empurraoContato} x tempo) — ` +
+        'a magnitude do empurrao nao bate com content.js'
+    );
+  }
+
+  return `${tipo.emoji} ${tipo.id}: ${ticks} quadros sobrepostos deslocaram o jogador ${deslocamento.toFixed(2)}px (esperado ~${esperado.toFixed(2)}px)`;
+}
+
+// Tarefa 3 do contrato, a parte que mais importa: a divisao do 📱 Trabalho em
+// Grupo (1) tem profundidade travada — o filhote NAO divide de novo — e
+// (2) respeita spawn.maxSimultaneos mesmo com a pool no teto, sem travar em
+// loop. As duas provas usam a porta de sempre (aplicarDano), nao um atalho.
+function checarDivisaoTrabalhoEmGrupo() {
+  const onde = 'divisao do Trabalho em Grupo';
+  const tipo = CONTEUDO.inimigos.find((i) => i.divisao);
+  if (!tipo) falhar(0, `${onde}: nenhum inimigo em content.js tem \`divisao\` — a tarefa 3 da fase 09 nao foi feita`);
+
+  // 1) Profundidade: matar um pai (geracao 0) produz `filhos` filhotes
+  //    geracao 1; matar um FILHOTE nao produz neto nenhum.
+  const e = novoEstado(SEMENTE + 501);
+  iniciarAvaliacao(e);
+  limparInimigos(e);
+  const pool = poolInimigos(e);
+
+  const pai = spawnInimigo(e, tipo.id);
+  if (!pai) falhar(0, `${onde}: spawnInimigo devolveu null montando o pai`);
+  const antesDivisao = pool.ativos.length;
+  aplicarDano(e, pai, pai.hpMax);
+  const filhotes = pool.ativos.filter((x) => x.tipo === tipo.id && x.geracao === 1);
+  if (filhotes.length !== tipo.divisao.filhos) {
+    falhar(0, `${onde}: matar o pai deixou ${filhotes.length} filhotes geracao 1 na pool, esperava ${tipo.divisao.filhos}`);
+  }
+  if (pool.ativos.length !== antesDivisao - 1 + tipo.divisao.filhos) {
+    falhar(0, `${onde}: a pool ficou com ${pool.ativos.length} ativos depois da divisao, esperava ${antesDivisao - 1 + tipo.divisao.filhos}`);
+  }
+  const problemaPool = pool.verificar();
+  if (problemaPool) falhar(0, `${onde}: pool inconsistente depois da divisao normal: ${problemaPool}`);
+
+  const antesNeto = pool.ativos.length;
+  aplicarDano(e, filhotes[0], filhotes[0].hpMax);
+  if (pool.ativos.length !== antesNeto - 1) {
+    falhar(
+      0,
+      `${onde}: matar um filhote foi de ${antesNeto} para ${pool.ativos.length} ativos (esperava -1): ` +
+        'ele dividiu de novo, geracaoMaxima nao esta travando a profundidade'
+    );
+  }
+
+  // 2) Espaco PARCIAL: o teto trancado bem no que ja esta vivo (contando o
+  //    pai que esta prestes a morrer) deixa exatamente 1 vaga livre quando
+  //    ele morre — matar libera 1 slot antes de dividirSeAplicavel rodar,
+  //    entao filhos=2 so cabe 1. Isto prova que o teto e respeitado PARA
+  //    CADA filhote (nao so no primeiro), nao que a divisao vira 0.
+  const e2 = novoEstado(SEMENTE + 502);
+  iniciarAvaliacao(e2);
+  limparInimigos(e2);
+  const pool2 = poolInimigos(e2);
+  const pai2 = spawnInimigo(e2, tipo.id);
+  if (!pai2) falhar(0, `${onde}: spawnInimigo devolveu null montando o pai do cenario com espaco parcial`);
+  const maxOriginal = CONTEUDO.spawn.maxSimultaneos;
+  CONTEUDO.spawn.maxSimultaneos = pool2.ativos.length; // trava exatamente no que ja esta vivo
+  try {
+    const antes2 = pool2.ativos.length;
+    aplicarDano(e2, pai2, pai2.hpMax);
+    // O pai morreu (-1) e SO 1 filhote coube na vaga que abriu, mesmo
+    // `divisao.filhos` pedindo mais — nunca pode passar do teto.
+    const esperado2 = antes2 - 1 + Math.min(1, tipo.divisao.filhos);
+    if (pool2.ativos.length !== esperado2 || pool2.ativos.length > CONTEUDO.spawn.maxSimultaneos) {
+      falhar(
+        0,
+        `${onde}: com o teto travado em ${CONTEUDO.spawn.maxSimultaneos}, matar o pai foi de ${antes2} para ` +
+          `${pool2.ativos.length} ativos (esperava ${esperado2}, nunca acima do teto) — a divisao ignorou maxSimultaneos`
+      );
+    }
+    const problema2 = pool2.verificar();
+    if (problema2) falhar(0, `${onde}: pool inconsistente depois da divisao com espaco parcial: ${problema2}`);
+  } finally {
+    CONTEUDO.spawn.maxSimultaneos = maxOriginal;
+  }
+
+  // 3) Espaco ZERO: o teto travado ABAIXO do que ja esta vivo (outros
+  //    inimigos ocupando as vagas, nao o proprio pai) — mesmo depois de o
+  //    pai morrer e liberar 1 slot, a pool continua no teto ou acima, e
+  //    NENHUM filhote pode nascer. E o cenario real de "pool cheia": a
+  //    prova de que a recursao de divisao nao estoura o teto quando ele
+  //    esta genuinamente lotado por OUTRA coisa, nao pelo proprio pai.
+  const e3 = novoEstado(SEMENTE + 505);
+  iniciarAvaliacao(e3);
+  limparInimigos(e3);
+  const pool3 = poolInimigos(e3);
+  const outroTipo = CONTEUDO.inimigos.find((t) => t.id !== tipo.id) || tipo;
+  const ENCHIMENTO = 4;
+  for (let i = 0; i < ENCHIMENTO; i += 1) spawnInimigo(e3, outroTipo.id);
+  const pai3 = spawnInimigo(e3, tipo.id);
+  if (!pai3) falhar(0, `${onde}: spawnInimigo devolveu null montando o pai do cenario sem espaco`);
+  const maxOriginal3 = CONTEUDO.spawn.maxSimultaneos;
+  CONTEUDO.spawn.maxSimultaneos = ENCHIMENTO; // so cabem os "outros"; nem o pai deveria caber de novo
+  try {
+    const antes3 = pool3.ativos.length; // ENCHIMENTO + 1 (o pai), acima do teto de proposito
+    aplicarDano(e3, pai3, pai3.hpMax);
+    if (pool3.ativos.length !== antes3 - 1) {
+      falhar(
+        0,
+        `${onde}: com o teto (${CONTEUDO.spawn.maxSimultaneos}) abaixo do que ja estava vivo, matar o pai foi ` +
+          `de ${antes3} para ${pool3.ativos.length} ativos (esperava ${antes3 - 1}, ou seja, ZERO filhotes)`
+      );
+    }
+    if (pool3.ativos.length > CONTEUDO.spawn.maxSimultaneos + 1) {
+      // +1 de folga: os "outros" ja estavam ali antes do teto encolher, o
+      // que a divisao nao pode fazer e SOMAR gente nova em cima disso.
+      falhar(0, `${onde}: a pool ficou com ${pool3.ativos.length} ativos, acima de qualquer leitura razoavel do teto — a divisao estourou`);
+    }
+    const problema3 = pool3.verificar();
+    if (problema3) falhar(0, `${onde}: pool inconsistente depois da divisao sem espaco: ${problema3}`);
+  } finally {
+    CONTEUDO.spawn.maxSimultaneos = maxOriginal3;
+  }
+
+  return (
+    `${tipo.emoji} ${tipo.nome}: filhos=${tipo.divisao.filhos} geracaoMaxima=${tipo.divisao.geracaoMaxima} — ` +
+    'divide uma vez, o filhote nao divide de novo, e a pool travada no teto nao estoura nem trava em loop'
+  );
+}
+
+// Tarefa 5, "uma [corrida] com todos misturados": uma avaliacao com
+// composicaoSpawn 'todos' (2o periodo em diante), HP segurado, tempo
+// suficiente para os 4 tipos nascerem de verdade pelo sorteio normal — nao
+// so por spawnInimigo(estado, id) explicito. Serve tambem de medida para a
+// pendencia 28 (pico de orbes de XP com a composicao nova: o Trabalho em
+// Grupo dobra o numero de mortes por "inimigo" quando divide).
+const TICKS_MISTURADO = 5400; // 90s: janela generosa pro sorteio pegar os 4 tipos e a rajada
+function checarComposicaoMisturada() {
+  const estado = novoEstado(SEMENTE + 503);
+  comecarAvaliacao(estado, 1, 0); // p2-av1: composicaoSpawn 'todos' (handoff da fase 09)
+  if (estado.run.avaliacao.composicaoSpawn !== 'todos') {
+    falhar(0, `composicao misturada: p2-av1 tem composicaoSpawn "${estado.run.avaliacao.composicaoSpawn}", esperava "todos"`);
+  }
+
+  const porTipo = {};
+  for (const tipo of CONTEUDO.inimigos) porTipo[tipo.id] = 0;
+  let viuFilhote = false;
+  let orbesPico = 0;
+
+  for (let tick = 1; tick <= TICKS_MISTURADO; tick += 1) {
+    botCircular(estado, tick);
+    estado.player.hp = estado.player.hpMax; // mede composicao e orbes, nao sobrevivencia
+    try {
+      atualizar(estado, PASSO);
+    } catch (e) {
+      falhar(tick, `excecao na corrida com composicao misturada: ${e && e.stack ? e.stack : e}`);
+    }
+    if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+    if (estado.xpOrbs.length > orbesPico) orbesPico = estado.xpOrbs.length;
+    for (const evento of estado.eventos) {
+      if (evento.tipo === 'inimigo-nasceu' && porTipo[evento.dados.tipo] !== undefined) {
+        porTipo[evento.dados.tipo] += 1;
+      }
+    }
+    estado.eventos.length = 0;
+    if (!viuFilhote) {
+      for (const inimigo of estado.enemies) {
+        if (inimigo.geracao > 0) {
+          viuFilhote = true;
+          break;
+        }
+      }
+    }
+  }
+
+  for (const tipo of CONTEUDO.inimigos) {
+    if (porTipo[tipo.id] === 0) {
+      falhar(
+        TICKS_MISTURADO,
+        `composicao misturada: ${tipo.emoji} ${tipo.id} nunca nasceu em ${(TICKS_MISTURADO * PASSO).toFixed(0)}s ` +
+          "com composicaoSpawn 'todos' — peso 0 na composicao, ou o sorteio esta excluindo o tipo"
+      );
+    }
+  }
+  if (!viuFilhote) {
+    falhar(TICKS_MISTURADO, "composicao misturada: nenhum filhote (geracao > 0) apareceu — a divisao natural nao rodou");
+  }
+
+  const pool = poolOrbes(estado);
+  return { porTipo, orbesPico, capacidadeOrbes: pool.capacidade, reciclados: pool.reciclados };
+}
+
+// O maior `nasc` vivo de um tipo agora — usado por checarRajadaIsolada() para
+// achar, depois de um tick com N nascimentos, EXATAMENTE quais objetos da
+// pool sao os recem-nascidos (nasc > este valor capturado ANTES do tick), sem
+// precisar mudar o payload do evento 'inimigo-nasceu' so para um teste.
+function maiorNascDoTipo(estado, tipoId) {
+  let maior = 0;
+  for (const e of poolInimigos(estado).ativos) {
+    if (e.tipo === tipoId && e.nasc > maior) maior = e.nasc;
+  }
+  return maior;
+}
+
+// Tarefa 1 do contrato, isolada de verdade: com a onda NORMAL desligada
+// (porOnda=0 na curva inteira, temporariamente), o unico jeito de alguem
+// nascer e o relogio proprio da rajada. Testar dentro da corrida normal
+// (como uma 1ª versao deste teste fez) nao discrimina nada: com porOnda ate
+// 8 e vários tipos concorrendo, o sorteio sozinho as vezes acerta 4
+// Notificacoes na MESMA onda por pura sorte — visto acontecendo mesmo com a
+// rajada mutada pra nascer 1 de cada vez. Isolar a onda normal e a unica
+// forma barata de provar que e o RELOGIO da rajada, nao a sorte do sorteio.
+//
+// Correcao pos-revisao (item 5): "nascer no mesmo tick" nao prova que o grupo
+// esta AGRUPADO NO ESPACO — antes desta correcao, cada spawnInimigo() dentro
+// da rajada sorteava o lado da borda de nOvo, e uma rajada de 4 podia cair em
+// 3 lados diferentes da arena (medido pelo revisor). Por isso, alem de contar
+// "4 no mesmo tick", este teste acha os objetos recem-nascidos NAQUELE tick
+// (via `nasc`, que so cresce) e mede a maior distancia entre pares — tem que
+// caber no espalhamento configurado (rajada.espalhamento, content.js), nao no
+// tamanho da arena inteira.
+function checarRajadaIsolada() {
+  const tipo = CONTEUDO.inimigos.find((t) => t.rajada);
+  if (!tipo) falhar(0, 'rajada: nenhum inimigo com `rajada` em content.js — a tarefa 1 da fase 09 nao foi feita');
+
+  const estado = novoEstado(SEMENTE + 508);
+  comecarAvaliacao(estado, 1, 0); // p2-av1: composicaoSpawn 'todos', o tipo esta nela
+  limparInimigos(estado);
+
+  const curva = CONTEUDO.spawn.curvas[CONTEUDO.spawn.curvaPadrao];
+  const porOndaOriginal = curva.map((p) => p.porOnda);
+  for (const ponto of curva) ponto.porOnda = 0;
+
+  let maiorNoMesmoTick = 0;
+  let totalNascido = 0;
+  let maiorDistanciaNoGrupo = -1;
+  let tickDoGrupoMedido = -1;
+  const ticksDeSobra = Math.ceil((tipo.rajada.intervalo + 2) * 60); // 1 rajada completa + folga
+  try {
+    for (let tick = 1; tick <= ticksDeSobra; tick += 1) {
+      estado.player.hp = estado.player.hpMax;
+      const nascAntes = maiorNascDoTipo(estado, tipo.id);
+      atualizarInimigos(estado, PASSO);
+      let nesteTick = 0;
+      for (const evento of estado.eventos) {
+        if (evento.tipo === 'inimigo-nasceu') {
+          if (evento.dados.tipo !== tipo.id) {
+            falhar(tick, `rajada: com a onda normal desligada, nasceu "${evento.dados.tipo}" — so a rajada podia nascer alguem`);
+          }
+          nesteTick += 1;
+        }
+      }
+      estado.eventos.length = 0;
+      if (nesteTick > maiorNoMesmoTick) maiorNoMesmoTick = nesteTick;
+      totalNascido += nesteTick;
+
+      if (nesteTick === tipo.rajada.tamanho && tickDoGrupoMedido === -1) {
+        const membros = poolInimigos(estado).ativos.filter((e) => e.tipo === tipo.id && e.nasc > nascAntes);
+        if (membros.length === tipo.rajada.tamanho) {
+          let maxDist = 0;
+          for (let a = 0; a < membros.length; a += 1) {
+            for (let b = a + 1; b < membros.length; b += 1) {
+              const d = Math.hypot(membros[a].x - membros[b].x, membros[a].y - membros[b].y);
+              if (d > maxDist) maxDist = d;
+            }
+          }
+          maiorDistanciaNoGrupo = maxDist;
+          tickDoGrupoMedido = tick;
+        }
+      }
+    }
+  } finally {
+    curva.forEach((ponto, i) => { ponto.porOnda = porOndaOriginal[i]; });
+  }
+
+  if (maiorNoMesmoTick !== tipo.rajada.tamanho) {
+    falhar(
+      0,
+      `rajada: com a onda normal desligada, o maior numero de ${tipo.id} nascidos NO MESMO tick foi ` +
+        `${maiorNoMesmoTick}, esperava exatamente ${tipo.rajada.tamanho} (rajada.tamanho)`
+    );
+  }
+  if (totalNascido < tipo.rajada.tamanho) {
+    falhar(0, `rajada: 0 nascimentos de ${tipo.id} com a onda normal desligada em ${(ticksDeSobra * PASSO).toFixed(1)}s — o relogio da rajada nao disparou`);
+  }
+  if (tickDoGrupoMedido === -1) {
+    falhar(0, `rajada: nunca consegui isolar os ${tipo.rajada.tamanho} nascidos de um UNICO grupo pelo \`nasc\` — nao deu pra medir o agrupamento espacial`);
+  }
+  const espalhamento = tipo.rajada.espalhamento || 0;
+  const limiteEspacial = 2 * espalhamento + 1; // +1px de folga de ponto flutuante
+  if (maiorDistanciaNoGrupo > limiteEspacial) {
+    falhar(
+      0,
+      `rajada: os ${tipo.rajada.tamanho} nascidos juntos (tick ${tickDoGrupoMedido}) ficaram a ate ` +
+        `${maiorDistanciaNoGrupo.toFixed(1)}px um do outro, esperava no maximo ${limiteEspacial}px ` +
+        `(2 x rajada.espalhamento=${espalhamento}) — o grupo nao esta agrupado na borda, cada um nasceu num lado`
+    );
+  }
+
+  return (
+    `${tipo.emoji} ${tipo.id}: com a onda normal desligada, a rajada sozinha nasceu ${maiorNoMesmoTick} de uma vez ` +
+    `a cada ~${tipo.rajada.intervalo}s (tamanho=${tipo.rajada.tamanho}), ate ${maiorDistanciaNoGrupo.toFixed(1)}px ` +
+    `de distancia entre pares do grupo (espalhamento=${espalhamento})`
+  );
+}
+
+// Correcao pos-revisao (item 4): prova que `ruido.frequencia` e Hz DE
+// VERDADE, nao so que existe. Jogador MUITO longe, na mesma linha horizontal
+// (mesmo truque de checarSeparacaoEntreTamanhos): a perseguicao vira quase
+// uma reta (angulo base ~0 o tempo inteiro, a curvatura de perseguir muda
+// menos de um milesimo de grau em px de movimento), entao o angulo medido do
+// vetor de movimento (atan2(e.vy, e.vx)) fica praticamente IGUAL ao desvio
+// senoidal sozinho — sem outro inimigo por perto, calcularSeparacao() nao
+// contribui nada a e.vx/e.vy. Mede-se o PERIODO desse desvio pelos
+// cruzamentos de zero e compara-se com 1/frequencia (Hz -> segundos): falha
+// com uma Notificacao "reta" (0 ou poucos cruzamentos: sem oscilacao pra
+// medir) e falha se a frequencia voltar a ser lida como rad/s (o periodo sai
+// ~6,3x maior que o esperado).
+function checarRuidoNotificacao() {
+  const tipo = CONTEUDO.inimigos.find((t) => t.ruido);
+  if (!tipo) falhar(0, 'ruido da notificacao: nenhum inimigo com `ruido` em content.js — a tarefa 1 (ruido) da fase 09 nao foi feita');
+
+  const estado = novoEstado(SEMENTE + 509);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+
+  const e = spawnInimigo(estado, tipo.id);
+  if (!e) falhar(0, 'ruido da notificacao: spawnInimigo devolveu null');
+
+  const px = 480;
+  const py = 270;
+  e.x = px;
+  e.y = py;
+  estado.player.x = px + 200000;
+  estado.player.y = py;
+
+  const DURACAO = 6; // s — muitos periodos com o bug corrigido (~0,71s cada), poucos com rad/s (~4,49s)
+  const TICKS_RUIDO = Math.round(DURACAO / PASSO);
+  const cruzamentos = [];
+  let anguloAnterior = null;
+  let tAnterior = 0;
+
+  for (let tick = 1; tick <= TICKS_RUIDO; tick += 1) {
+    // atualizarInimigos() nao avanca av.decorrido sozinho (quem faz isso e
+    // atualizarAvaliacao, nao chamada aqui) — sem isto `tempoDeVida`
+    // (av.decorrido - e.nascidoEm) ficaria travado em 0 pra sempre e o
+    // desvio senoidal nunca oscilaria (mesmo truque de passoOrbital()).
+    estado.run.avaliacao.decorrido += PASSO;
+    atualizarInimigos(estado, PASSO);
+    const t = tick * PASSO;
+    const angulo = Math.atan2(e.vy, e.vx);
+    if (anguloAnterior !== null && anguloAnterior * angulo < 0) {
+      // Interpolacao linear simples do instante exato do cruzamento de zero.
+      const fracao = Math.abs(anguloAnterior) / (Math.abs(anguloAnterior) + Math.abs(angulo));
+      cruzamentos.push(tAnterior + (t - tAnterior) * fracao);
+    }
+    anguloAnterior = angulo;
+    tAnterior = t;
+  }
+
+  if (cruzamentos.length < 2) {
+    falhar(
+      0,
+      `ruido da notificacao: o angulo de movimento cruzou zero ${cruzamentos.length}x em ${DURACAO}s — esperava ` +
+        'uma oscilacao senoidal (tipo.ruido); o desvio parece reto (amplitude 0 ou nao aplicado)'
+    );
+  }
+
+  const espacamentos = [];
+  for (let i = 1; i < cruzamentos.length; i += 1) espacamentos.push(cruzamentos[i] - cruzamentos[i - 1]);
+  const mediaEspacamento = espacamentos.reduce((a, b) => a + b, 0) / espacamentos.length;
+  const periodoMedido = mediaEspacamento * 2; // dois cruzamentos de zero por periodo completo
+
+  const periodoEsperado = 1 / tipo.ruido.frequencia; // Hz -> segundos
+  const TOLERANCIA = 0.25; // 25%: dt discreto, e a perseguicao nao e EXATAMENTE constante
+  if (Math.abs(periodoMedido - periodoEsperado) > periodoEsperado * TOLERANCIA) {
+    falhar(
+      0,
+      `ruido da notificacao: periodo medido do desvio foi ${periodoMedido.toFixed(3)}s, esperava ` +
+        `~${periodoEsperado.toFixed(3)}s (1/frequencia, ${tipo.ruido.frequencia}Hz) — a frequencia esta sendo ` +
+        'lida como rad/s, nao Hz?'
+    );
+  }
+
+  return `${tipo.emoji} ${tipo.id}: periodo medido do desvio ${periodoMedido.toFixed(3)}s (esperado ~${periodoEsperado.toFixed(3)}s a ${tipo.ruido.frequencia}Hz)`;
+}
+
+// Pendencia 17 do ESTADO.md: "separacao nao tem trilho automatico" — com
+// raios diferentes (o PDF e grande), confere que ela continua empurrando
+// tipos de tamanhos diferentes, do MESMO jeito que o handoff 02 mediu para
+// um tipo so ("com separacao, distancia minima 17,9px; com forca=0, 0,0px").
+// Cenario controlado (nao a corrida normal, que tem perseguicao e ruido
+// demais para isolar so a separacao): PDF e o menor tipo nascem no MESMO
+// ponto, o jogador tambem fica ali (perseguicao vira vetor zero, so a
+// separacao move os dois), e mede a distancia final com e sem
+// separacao.forca. Barata: ~90 ticks, 2 inimigos, sem loop O(n^2) nenhum.
+function checarSeparacaoEntreTamanhos() {
+  const onde = 'separacao entre tamanhos diferentes';
+  let grande = CONTEUDO.inimigos[0];
+  let pequeno = CONTEUDO.inimigos[0];
+  for (const tipo of CONTEUDO.inimigos) {
+    if (tipo.raio > grande.raio) grande = tipo;
+    if (tipo.raio < pequeno.raio) pequeno = tipo;
+  }
+  if (grande.raio === pequeno.raio) falhar(0, `${onde}: todos os tipos tem o mesmo raio — nada pra testar aqui`);
+
+  function medir(forcaLigada) {
+    const estado = novoEstado(SEMENTE + 506);
+    iniciarAvaliacao(estado);
+    limparInimigos(estado);
+    const a = spawnInimigo(estado, grande.id);
+    const b = spawnInimigo(estado, pequeno.id);
+    const px = 480;
+    const py = 270;
+    a.x = px; a.y = py;
+    b.x = px; b.y = py;
+    // Mesma velocidade nos dois: os TIPOS tem velocidades diferentes de
+    // proposito (design §8), e isso sozinho ja separaria os dois com
+    // forca=0 (cada um anda pro jogador no seu proprio ritmo) — o que
+    // contaminaria exatamente a comparacao que este teste quer isolar.
+    a.velocidade = 100;
+    b.velocidade = 100;
+    // E o mesmo comportamento de movimento: o tipo mais pequeno pode ser o
+    // 🔔 'errante' (ruido senoidal), que por si so ja desviaria os dois sem
+    // precisar de separacao nenhuma. So a direcao 'perseguir' — reta —
+    // isola exatamente o que este teste quer medir.
+    a.comportamento = 'perseguir';
+    b.comportamento = 'perseguir';
+    // O jogador fica LONGE, na mesma direcao pros dois: a perseguicao vira um
+    // arrasto quase paralelo (o angulo ate um jogador a 5000px muda menos de
+    // 1° entre dois pontos dezenas de px afastados) que translada os dois
+    // juntos sem mexer na distancia RELATIVA entre eles — so a separacao faz
+    // isso. Grudar o jogador em cima deles (dist=0) so funcionaria no
+    // primeiro tick: a partir do segundo, ja separados, a perseguicao
+    // puxaria os dois de volta um pro outro e mascararia a medida.
+    estado.player.x = px - 5000;
+    estado.player.y = py;
+    const forcaOriginal = CONTEUDO.separacao.forca;
+    CONTEUDO.separacao.forca = forcaLigada ? forcaOriginal : 0;
+    try {
+      for (let i = 0; i < 90; i += 1) atualizarInimigos(estado, PASSO); // 1,5s
+    } finally {
+      CONTEUDO.separacao.forca = forcaOriginal;
+    }
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  const com = medir(true);
+  const sem = medir(false);
+  const minima = grande.raio + pequeno.raio + CONTEUDO.separacao.folga;
+
+  if (sem > 1) falhar(0, `${onde}: SEM separacao os dois se afastaram ${sem.toFixed(1)}px — algo alem da separacao esta empurrando`);
+  if (!(com > sem + 1)) {
+    falhar(0, `${onde}: com separacao a distancia final foi ${com.toFixed(1)}px, sem foi ${sem.toFixed(1)}px — a separacao nao esta empurrando tipos de tamanhos diferentes`);
+  }
+  // Metade da distancia minima e uma barra baixa de proposito (a mola e
+  // suave, 1,5s pode nao bastar pra abrir a folga inteira) — o que importa e
+  // que ELA AGE, nao que resolva 100% no prazo.
+  if (com < minima * 0.5) {
+    falhar(0, `${onde}: com separacao ligada, ${grande.id} e ${pequeno.id} (raios ${grande.raio}/${pequeno.raio}) ficaram a so ${com.toFixed(1)}px (esperava pelo menos ${(minima * 0.5).toFixed(1)}px) — separacao fraca demais entre tamanhos`);
+  }
+
+  return `${grande.emoji}${grande.raio} x ${pequeno.emoji}${pequeno.raio}: com separacao ${com.toFixed(1)}px, sem separacao ${sem.toFixed(1)}px (minimo p/ encostar ${minima}px)`;
+}
+
+// Pendencia 32 do ESTADO.md: com um inimigo que so morre num contato so
+// (o Prazo, antes desta fase), o anel de cooldown por inimigo do orbital
+// (CONTEUDO.orbital.memoriaAlvos) nunca via muitos alvos DISTINTOS vivos ao
+// mesmo tempo — o pico medido na fase 05 era 5 de 160 slots. O PDF (tanque,
+// muito HP) e o primeiro inimigo que pode empilhar de verdade sob fogo
+// continuo. Enche a arena de PDFs de verdade (nao sinteticos) com a Caneta
+// Bic no nivel maximo e mede o pico real de entradas vivas no anel.
+const TICKS_ORBITAL_PDF = 3600; // 60s
+function medirPicoOrbitalComPdf() {
+  const estado = novoEstado(SEMENTE + 504);
+  iniciarAvaliacao(estado);
+  limparInimigos(estado);
+  const arma = equiparArma(estado, 'caneta');
+  const dados = dadosDaArma('caneta');
+  arma.nivel = dados.niveis.length;
+
+  const maxOriginal = CONTEUDO.spawn.maxSimultaneos;
+  CONTEUDO.spawn.maxSimultaneos = CONTEUDO.arena.limites.enemies; // nao deixa o teto de jogabilidade limitar a medida
+  let pico = 0;
+  try {
+    for (let tick = 1; tick <= TICKS_ORBITAL_PDF; tick += 1) {
+      botCircular(estado, tick);
+      estado.player.hp = estado.player.hpMax;
+      while (estado.enemies.length < CONTEUDO.arena.limites.enemies) {
+        if (!spawnInimigo(estado, 'pdf')) break;
+      }
+      try {
+        atualizar(estado, PASSO);
+      } catch (e) {
+        falhar(tick, `excecao medindo o pico orbital com PDF: ${e && e.stack ? e.stack : e}`);
+      }
+      if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+
+      const golpes = arma.golpes;
+      if (golpes) {
+        const agora = estado.run.avaliacao.decorrido;
+        let vivos = 0;
+        for (const item of golpes.itens) if (item.expiraEm > agora) vivos += 1;
+        if (vivos > pico) pico = vivos;
+      }
+    }
+  } finally {
+    CONTEUDO.spawn.maxSimultaneos = maxOriginal;
+  }
+
+  if (pico >= CONTEUDO.orbital.memoriaAlvos) {
+    falhar(
+      TICKS_ORBITAL_PDF,
+      `pico orbital com PDF: ${pico} entradas vivas simultaneas >= memoriaAlvos (${CONTEUDO.orbital.memoriaAlvos}) — ` +
+        'o anel de cooldown pode estourar em jogo real agora que existe inimigo tanque'
+    );
+  }
+  return { pico, capacidade: CONTEUDO.orbital.memoriaAlvos };
 }
 
 // Arma e dado: a entrada de content.js so vira tiro se `comportamento` apontar
@@ -808,6 +1498,91 @@ function checarGuardaDeGeracaoOrbital() {
         'esta comparando so a referencia, sem o `nasc` — guarda de geracao quebrada'
     );
   }
+}
+
+// Correcao pos-revisao (item 2): pool.liberar() e LIFO (reserva.push no
+// liberar, reserva.pop no obter seguinte) — como dividirSeAplicavel() chama
+// pool.obter() logo DEPOIS de pool.liberar(pai) (enemies.js, aplicarDano), o
+// PRIMEIRO filhote reaproveita o MESMO objeto do pai, so que com um `nasc`
+// novo. Referencias externas ao pai sobrevivem a divisao (arma.golpes da
+// Caneta, p.atingidos do perfurante) — este teste prova que elas NAO tratam
+// o filhote como o mesmo alvo: se `emCooldown()` comparasse so a referencia
+// (sem o `nasc`), o filhote nasceria imune ao proximo golpe da caneta so por
+// ter herdado o objeto do pai, que ela acabara de atingir.
+function checarFilhoteNaoHerdaImunidadeDeGolpe() {
+  const tipoDivisao = CONTEUDO.inimigos.find((t) => t.divisao);
+  if (!tipoDivisao) falhar(0, 'filhote e imunidade de golpe: nenhum inimigo com `divisao` em content.js');
+
+  const { estado, player, arma, nivel } = prepararCenarioOrbital(SEMENTE + 511);
+
+  const pai = spawnInimigo(estado, tipoDivisao.id);
+  if (!pai) falhar(0, 'filhote e imunidade de golpe: spawnInimigo devolveu null montando o pai');
+  const posPai = posicaoSatelite(player, arma, nivel, 0);
+  pai.x = posPai.x;
+  pai.y = posPai.y;
+  pai.hpMax = nivel.dano * 1000; // sobrevive de proposito ao primeiro golpe
+  pai.hp = pai.hpMax;
+
+  // Um golpe da caneta: entra em arma.golpes (ref=pai, nasc=pai.nasc,
+  // expiraEm no futuro) sem matar.
+  let golpeouPai = false;
+  for (let passos = 0; passos < 20 && !golpeouPai; passos += 1) {
+    passoOrbital(estado, PASSO);
+    for (const evento of estado.eventos) if (evento.tipo === 'arma-acerto') golpeouPai = true;
+    estado.eventos.length = 0;
+  }
+  if (!golpeouPai || !(pai.hp < pai.hpMax)) {
+    falhar(0, 'filhote e imunidade de golpe: a caneta nao acertou o pai em 20 ticks — cenario mal montado');
+  }
+  const nascDoPai = pai.nasc;
+
+  // Mata o pai pela porta de sempre (aplicarDano), direto — nao precisa de
+  // mais um golpe da caneta pra disparar a divisao.
+  aplicarDano(estado, pai, pai.hp);
+
+  const filhotes = poolInimigos(estado).ativos.filter((x) => x.tipo === tipoDivisao.id && x.geracao === 1);
+  if (filhotes.length === 0) falhar(0, 'filhote e imunidade de golpe: matar o pai nao produziu filhote nenhum');
+  const filhote = filhotes[0];
+  if (filhote !== pai) {
+    falhar(
+      0,
+      'filhote e imunidade de golpe: o primeiro filhote NAO reaproveitou o objeto do pai (a pool deixou de ser ' +
+        'LIFO?) — este teste depende desse reaproveitamento pra provar o que se propoe'
+    );
+  }
+  if (filhote.nasc === nascDoPai) {
+    falhar(
+      0,
+      `filhote e imunidade de golpe: o filhote reaproveitou o objeto do pai com o MESMO nasc (${nascDoPai}) — ` +
+        'pool.obter() nao renovou o `nasc`'
+    );
+  }
+
+  // Reposiciona o filhote exatamente onde a caneta esta AGORA: se
+  // emCooldown() comparasse so a referencia (sem o nasc), acharia a entrada
+  // ANTIGA do pai (mesmo `ref`, expiraEm no futuro) e o filhote atravessaria
+  // ileso.
+  const posAgora = posicaoSatelite(player, arma, nivel, 0);
+  filhote.x = posAgora.x;
+  filhote.y = posAgora.y;
+  filhote.hpMax = nivel.dano * 1000;
+  filhote.hp = filhote.hpMax;
+
+  let golpeouFilhote = false;
+  for (let passos = 0; passos < 20 && !golpeouFilhote; passos += 1) {
+    passoOrbital(estado, PASSO);
+    for (const evento of estado.eventos) if (evento.tipo === 'arma-acerto') golpeouFilhote = true;
+    estado.eventos.length = 0;
+  }
+  if (!golpeouFilhote || !(filhote.hp < filhote.hpMax)) {
+    falhar(
+      0,
+      'filhote e imunidade de golpe: o filhote que reaproveitou o objeto do pai NAO foi atingido pela caneta em ' +
+        '20 ticks — emCooldown() esta comparando so a referencia, sem o `nasc` (o filhote herdou a imunidade do pai)'
+    );
+  }
+
+  return `${tipoDivisao.emoji} ${tipoDivisao.id}: o 1o filhote reusa o objeto do pai (nasc ${nascDoPai}→${filhote.nasc}) e ainda assim leva o proximo golpe da caneta`;
 }
 
 // O cooldown por inimigo em si: um alvo IMORTAL e parado no ponto de contato
@@ -3782,14 +4557,16 @@ function tabelaDaRun(linhas) {
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
-// Antes de qualquer coisa que dispare: um `comportamento` digitado errado na
-// arma inicial mata o update com stack trace cru, e a mensagem limpa daqui e
-// que diz o que aconteceu.
+// Antes de qualquer coisa que dispare ou se mova: um `comportamento`
+// digitado errado (arma ou inimigo) mata o update com stack trace cru, e a
+// mensagem limpa daqui e que diz o que aconteceu.
+checarInimigosDoConteudo();
 checarArmasDoConteudo();
 checarNiveisDaArma();
 checarGuardaDeGeracao();
 checarMemoriaDePerfuracao();
 checarGuardaDeGeracaoOrbital();
+const filhoteSemImunidade = checarFilhoteNaoHerdaImunidadeDeGolpe();
 checarCooldownPorInimigoOrbital();
 checarCooldownComEnxameOrbital();
 checarFeixeContinuo();
@@ -3812,6 +4589,15 @@ checarSorteioDeModificadores();
 checarAnuncioECarta();
 checarProvaFinalSoDado();
 checarJubiladoNoMeioDaRun();
+checarTiposIsolados();
+const empurraoNaArena = checarEmpurraoNaArena();
+const empurraoCampoAberto = checarEmpurraoEmCampoAberto();
+const divisao = checarDivisaoTrabalhoEmGrupo();
+const separacaoTamanhos = checarSeparacaoEntreTamanhos();
+const rajada = checarRajadaIsolada();
+const ruidoNotificacao = checarRuidoNotificacao();
+const composicaoMisturada = checarComposicaoMisturada();
+const picoOrbitalPdf = medirPicoOrbitalComPdf();
 const modificadores = checarModificadores();
 // A semente da run da tabela: escolhida medindo, porque sorteia os 6
 // modificadores ao longo da run (SEMENTE+60 nao sorteia a Prova sem Consulta).
@@ -4022,6 +4808,20 @@ console.log(
     ` · ${relatorio.reg.amostras.length} amostras · ${relatorio.reg.cartas.length} cartas` +
     ` · texto ${Object.entries(relatorio.tamanhos).map(([e, n]) => `${e}=${(n / 1024).toFixed(0)}KB`).join(' ')}` +
     ` · corrida ${relatorio.msLigada}ms ligada / ${relatorio.msDesligada}ms desligada` +
+    // Fase 09: o bestiario completo.
+    `\n  divisao (Trabalho em Grupo): ${divisao}` +
+    `\n  filhote sem imunidade de golpe: ${filhoteSemImunidade}` +
+    `\n  empurrao do PDF (arena): ${empurraoNaArena}` +
+    `\n  empurrao do PDF (campo aberto): ${empurraoCampoAberto}` +
+    `\n  separacao entre tamanhos (pendencia 17): ${separacaoTamanhos}` +
+    `\n  rajada (Notificação): ${rajada}` +
+    `\n  ruido (Notificação): ${ruidoNotificacao}` +
+    `\n  composicao misturada (p2-av1, 'todos', 90s, HP segurado): nasceram ` +
+    Object.entries(composicaoMisturada.porTipo).map(([id, n]) => `${id}=${n}`).join(' ') +
+    ` · pico de orbes=${composicaoMisturada.orbesPico}/${composicaoMisturada.capacidadeOrbes}` +
+    ` reciclados=${composicaoMisturada.reciclados} (pendencia 28)` +
+    `\n  pico orbital com PDF real (Caneta nivel maximo, arena cheia de PDF, 60s): ` +
+    `${picoOrbitalPdf.pico} entradas vivas simultaneas de ${picoOrbitalPdf.capacidade} slots (pendencia 32)` +
     // Fase 08: cada modificador forcado contra a mesma semente sem ele, e a
     // run inteira — a tabela que a fase 13 le para balancear.
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +

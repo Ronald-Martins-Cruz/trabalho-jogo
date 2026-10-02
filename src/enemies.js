@@ -1,6 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { emitir } from './state.js';
-import { receberDano, soltarOrbeXp } from './player.js';
+import { limitarNaArena, receberDano, soltarOrbeXp } from './player.js';
 import { obterPool, obterScratch } from './pool.js';
 import { aoMatarInimigo } from './jokers.js';
 
@@ -19,7 +19,80 @@ export function atualizarInimigos(estado, dt) {
 
   atualizarSpawn(estado, pool, scratchInimigos, dt);
   moverInimigos(estado, pool, scratchInimigos, dt);
-  colidirComJogador(estado, pool);
+  colidirComJogador(estado, pool, dt);
+}
+
+// Registro de comportamentos de MOVIMENTO — o mesmo padrao "dado, nao
+// classe" que weapons.js usa para COMPORTAMENTOS de arma. Cada funcao recebe
+// (e, player, tempoDeVida) e devolve um vetor UNITARIO { x, y } de direcao;
+// moverInimigos() escala pela velocidade do inimigo. `tempoDeVida` e
+// segundos desde o nascimento (av.decorrido - e.nascidoEm), usado pelo ruido
+// senoidal da Notificacao para nao depender de estado.tempo (que anda
+// tambem na pausa).
+const MOVIMENTOS = {
+  perseguir: moverPerseguir,
+  errante: moverErrante,
+};
+
+function moverPerseguir(e, player) {
+  return direcaoPerseguicao(e, player);
+}
+
+// Vetor de direcao reaproveitado entre chamadas: moverInimigos() le x/y no
+// mesmo instante em que MOVIMENTOS[...] devolve e nunca guarda a referencia
+// de um inimigo para o proximo, entao um objeto so evita alocar um vetor por
+// inimigo por quadro (180-400 deles — regra 5 do CLAUDE.md, design §8 cita
+// "alocar por frame com 200+ inimigos" nomeadamente). moverErrante() escreve
+// nele DEPOIS de ler base.x/base.y para dentro de variaveis locais, entao a
+// mesma referencia servir de entrada e saida nao embaralha o calculo.
+const direcaoScratch = { x: 0, y: 0 };
+
+// 🔔 Notificacao: gira o ANGULO de perseguicao com uma senoide (nao soma um
+// vetor solto) para o desvio nunca reduzir a velocidade efetiva — um vetor
+// perpendicular somado encolheria a componente de avanco no pico do ruido;
+// girar o angulo mantem o modulo em 1 o tempo todo.
+//
+// Correcao pos-revisao: `ruidoFrequencia` e Hz (content.js e o validador
+// sempre disseram isso), e Hz vira radianos/s multiplicando por 2*PI — sem
+// isso 1,4 "Hz" andava a 1,4 RAD/s de verdade, um ciclo a cada ~4,49s em vez
+// de ~0,71s (a curva em S ficava lenta e previsivel, o oposto do que o
+// design pede).
+function moverErrante(e, player, tempoDeVida) {
+  const base = direcaoPerseguicao(e, player);
+  if (base.x === 0 && base.y === 0) return base;
+  const anguloBase = Math.atan2(base.y, base.x);
+  const desvio = e.ruidoAmplitude * Math.sin(2 * Math.PI * e.ruidoFrequencia * tempoDeVida + e.ruidoFase);
+  const angulo = anguloBase + desvio;
+  direcaoScratch.x = Math.cos(angulo);
+  direcaoScratch.y = Math.sin(angulo);
+  return direcaoScratch;
+}
+
+function direcaoPerseguicao(e, player) {
+  const dx = player.x - e.x;
+  const dy = player.y - e.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 0) {
+    direcaoScratch.x = 0;
+    direcaoScratch.y = 0;
+    return direcaoScratch;
+  }
+  direcaoScratch.x = dx / dist;
+  direcaoScratch.y = dy / dist;
+  return direcaoScratch;
+}
+
+// Para o smoke: todo inimigo de content.js precisa apontar para um
+// comportamento que exista aqui. Mesmo papel de verificarArmasDoConteudo em
+// weapons.js.
+export function verificarInimigosDoConteudo() {
+  for (const tipo of CONTEUDO.inimigos) {
+    if (!MOVIMENTOS[tipo.comportamento]) {
+      return `inimigo "${tipo.id}": comportamento "${tipo.comportamento}" nao registrado em enemies.js ` +
+        `(registrados: ${Object.keys(MOVIMENTOS).join(', ')})`;
+    }
+  }
+  return null;
 }
 
 // Unica porta para a pool de inimigos. O sincronizar() aqui e o que mantem a
@@ -38,6 +111,7 @@ function fabricarInimigo() {
     nasc: 0,
     tipo: '',
     emoji: '',
+    comportamento: '',
     x: 0,
     y: 0,
     vx: 0,
@@ -50,6 +124,13 @@ function fabricarInimigo() {
     xp: 0,
     empurraoX: 0,
     empurraoY: 0,
+    // Fase 09: campos opcionais por tipo, sempre presentes (numero finito
+    // ou string vazia em quem nao usa) para o objeto continuar monomorfico.
+    empurraoContato: 0, // px/s aplicados ao jogador em contato (📄 PDF)
+    ruidoAmplitude: 0, // rad — comportamento 'errante' (🔔 Notificacao)
+    ruidoFrequencia: 0, // Hz
+    ruidoFase: 0, // sorteada no nascimento (estado.rng), nao Math.random
+    geracao: 0, // 0 = nascido normal; N = filhote de N-esima divisao (📱)
     nascidoEm: 0, // avaliacao.decorrido do nascimento; o relatorio mede quanto cada um viveu
   };
 }
@@ -64,6 +145,7 @@ function contextoInimigos(estado) {
       decorridoAnterior: -1,
       avaliacaoId: null,
       grade: criarGrade(),
+      rajadas: {}, // relogio proprio por tipo com `rajada` (fase 09)
     };
   }
   return scratch.inimigos;
@@ -89,10 +171,11 @@ function atualizarSpawn(estado, pool, scratchInimigos, dt) {
   const av = estado.run.avaliacao;
 
   // Avaliacao nova (ou a mesma reiniciada, quando decorrido volta pra tras):
-  // o relogio de onda recomeca junto.
+  // os relogios de onda e de rajada recomecam junto.
   if (scratchInimigos.avaliacaoId !== av.id || av.decorrido < scratchInimigos.decorridoAnterior) {
     scratchInimigos.avaliacaoId = av.id;
     scratchInimigos.relogio = 0;
+    scratchInimigos.rajadas = {};
   }
   scratchInimigos.decorridoAnterior = av.decorrido;
 
@@ -104,17 +187,50 @@ function atualizarSpawn(estado, pool, scratchInimigos, dt) {
   // `dificuldade` ja traz o numero da avaliacao em content.js e o de qualquer
   // modificador que mexa nela (state.js, regrasDaAvaliacao).
   const dificuldade = CONTEUDO.ajuste.dificuldade * av.regras.dificuldade;
+  const composicao = composicaoDaAvaliacao(av);
 
   scratchInimigos.relogio += dt;
   const intervalo = Math.max(
     cfg.intervaloMinimo,
     valorNaCurva(curva, av.decorrido, 'intervalo') / dificuldade
   );
-  if (scratchInimigos.relogio < intervalo) return;
-  scratchInimigos.relogio -= intervalo;
+  if (scratchInimigos.relogio >= intervalo) {
+    scratchInimigos.relogio -= intervalo;
+    const quantidade = tamanhoDaOnda(estado.rng, curva, av.decorrido, dificuldade);
+    for (let i = 0; i < quantidade; i += 1) spawnInimigo(estado);
+  }
 
-  const quantidade = tamanhoDaOnda(estado.rng, curva, av.decorrido, dificuldade);
-  for (let i = 0; i < quantidade; i += 1) spawnInimigo(estado);
+  // Fora da onda normal, num relogio proprio por tipo: a rajada da
+  // Notificacao (design §8). So conta o tempo para tipos que estao na
+  // composicao desta avaliacao — sem isso p1-av1 ("so o Prazo") ganharia
+  // rajadas de um tipo que nem deveria poder nascer ali.
+  for (let i = 0; i < CONTEUDO.inimigos.length; i += 1) {
+    const tipo = CONTEUDO.inimigos[i];
+    if (!tipo.rajada || !(pesoNaComposicao(composicao, tipo.id) > 0)) continue;
+
+    if (scratchInimigos.rajadas[tipo.id] === undefined) {
+      scratchInimigos.rajadas[tipo.id] = tipo.rajada.intervalo / dificuldade;
+    }
+    scratchInimigos.rajadas[tipo.id] -= dt;
+    if (scratchInimigos.rajadas[tipo.id] > 0) continue;
+    scratchInimigos.rajadas[tipo.id] += Math.max(cfg.intervaloMinimo, tipo.rajada.intervalo / dificuldade);
+
+    spawnRajada(estado, tipo, tipo.rajada.tamanho);
+  }
+}
+
+// A composicao de spawn (quais tipos, com que peso) da avaliacao corrente —
+// CONTEUDO.spawn.composicoes[av.composicaoSpawn], com a mesma rede de
+// seguranca que curvaPadrao tem para quem chega aqui sem passar por uma
+// avaliacao de verdade (ex.: teste que monta `estado.run.avaliacao` na mao).
+function composicaoDaAvaliacao(av) {
+  const cfg = CONTEUDO.spawn;
+  return cfg.composicoes[av.composicaoSpawn] || cfg.composicoes[cfg.composicaoPadrao];
+}
+
+function pesoNaComposicao(composicao, id) {
+  const peso = composicao[id];
+  return typeof peso === 'number' ? peso : 0;
 }
 
 // Interpolacao linear entre os pontos-chave da curva. Antes do primeiro ponto
@@ -144,47 +260,75 @@ function tamanhoDaOnda(rng, curva, decorrido, dificuldade) {
 
 // Nasce na borda, fora da vista, ja com os stats do tipo sorteado. Devolve o
 // inimigo ou null quando o teto de simultaneos foi atingido. Fase 09 usa isto
-// para as rajadas da Notificacao e para os filhotes do Trabalho em Grupo.
+// para as rajadas da Notificacao (tipoId explicito).
 export function spawnInimigo(estado, tipoId = null) {
   const pool = poolInimigos(estado);
   if (pool.ativos.length >= CONTEUDO.spawn.maxSimultaneos) return null;
 
-  const tipo = tipoId === null ? sortearTipo(estado.rng) : acharTipo(tipoId);
+  const av = estado.run.avaliacao;
+  const tipo = tipoId === null ? sortearTipo(estado.rng, composicaoDaAvaliacao(av)) : acharTipo(tipoId);
   if (!tipo) return null;
 
-  // As regras da avaliacao (Professor Rigido, Sexta as 18h) multiplicam os
-  // numeros do tipo na hora do nascimento — e so aqui que eles entram.
-  const av = estado.run.avaliacao;
   const inimigo = pool.obter();
-  inimigo.tipo = tipo.id;
-  inimigo.emoji = tipo.emoji;
-  inimigo.hpMax = tipo.hp * av.regras.hpInimigo;
-  inimigo.hp = inimigo.hpMax;
-  inimigo.velocidade = tipo.velocidade * av.regras.velocidadeInimigo;
-  inimigo.dano = tipo.dano;
-  inimigo.raio = tipo.raio;
-  inimigo.xp = tipo.xp;
-  inimigo.vx = 0;
-  inimigo.vy = 0;
-  inimigo.empurraoX = 0;
-  inimigo.empurraoY = 0;
-  inimigo.nascidoEm = av.decorrido;
+  inicializarInimigo(inimigo, tipo, av, estado.rng);
   posicionarNaBorda(inimigo, estado.rng, av.arena);
   emitir(estado, 'inimigo-nasceu', { tipo: tipo.id });
   return inimigo;
 }
 
-function sortearTipo(rng) {
+// Escreve TODOS os campos de jogabilidade de um inimigo (nao mexe em
+// x/y — spawnInimigo poe na borda, dividirSeAplicavel poe no lugar da morte).
+// `overrides` e so usado pelos filhotes do Trabalho em Grupo: os fatores de
+// tipo.divisao E a geracao. Sem overrides, e exatamente o nascimento normal
+// (fatores 1, geracao 0) — um so caminho para as regras da avaliacao
+// (Professor Rigido, Sexta as 18h) entrarem, filhote ou nao.
+function inicializarInimigo(inimigo, tipo, av, rng, overrides = null) {
+  const hpFator = overrides ? overrides.hpFator : 1;
+  const velocidadeFator = overrides ? overrides.velocidadeFator : 1;
+  const raioFator = overrides ? overrides.raioFator : 1;
+  const xpFator = overrides ? overrides.xpFator : 1;
+  const danoFator = overrides ? overrides.danoFator : 1;
+
+  inimigo.tipo = tipo.id;
+  inimigo.emoji = tipo.emoji;
+  inimigo.comportamento = tipo.comportamento;
+  inimigo.hpMax = tipo.hp * hpFator * av.regras.hpInimigo;
+  inimigo.hp = inimigo.hpMax;
+  inimigo.velocidade = tipo.velocidade * velocidadeFator * av.regras.velocidadeInimigo;
+  inimigo.dano = tipo.dano * danoFator;
+  inimigo.raio = tipo.raio * raioFator;
+  inimigo.xp = tipo.xp * xpFator;
+  inimigo.empurraoContato = tipo.empurraoContato || 0;
+  inimigo.ruidoAmplitude = tipo.ruido ? tipo.ruido.amplitude : 0;
+  inimigo.ruidoFrequencia = tipo.ruido ? tipo.ruido.frequencia : 0;
+  // Fase sorteada no nascimento (nao no fabricarInimigo, que so roda na
+  // abertura da pool): cada Notificacao oscila fora de sincronia das outras,
+  // senao a rajada inteira balancaria junto como um bloco so.
+  inimigo.ruidoFase = tipo.ruido ? rng.float() * Math.PI * 2 : 0;
+  inimigo.geracao = overrides ? overrides.geracao : 0;
+  inimigo.vx = 0;
+  inimigo.vy = 0;
+  inimigo.empurraoX = 0;
+  inimigo.empurraoY = 0;
+  inimigo.nascidoEm = av.decorrido;
+}
+
+function sortearTipo(rng, composicao) {
   const tipos = CONTEUDO.inimigos;
   let total = 0;
-  for (let i = 0; i < tipos.length; i += 1) total += tipos[i].peso;
+  for (let i = 0; i < tipos.length; i += 1) total += pesoNaComposicao(composicao, tipos[i].id);
   if (total <= 0) return tipos[0] || null;
   let sorteio = rng.float() * total;
   for (let i = 0; i < tipos.length; i += 1) {
-    sorteio -= tipos[i].peso;
+    const peso = pesoNaComposicao(composicao, tipos[i].id);
+    if (peso <= 0) continue;
+    sorteio -= peso;
     if (sorteio <= 0) return tipos[i];
   }
-  return tipos[tipos.length - 1];
+  for (let i = tipos.length - 1; i >= 0; i -= 1) {
+    if (pesoNaComposicao(composicao, tipos[i].id) > 0) return tipos[i];
+  }
+  return tipos[0] || null;
 }
 
 function acharTipo(id) {
@@ -220,6 +364,62 @@ function posicionarNaBorda(inimigo, rng, arena) {
   }
 }
 
+// Correcao pos-revisao: a rajada nasce AGRUPADA no espaco, nao espalhada nos
+// 4 lados da arena — sorteia-se UM ponto de borda por rajada (pontoNaBorda) e
+// cada membro desliza ate `rajada.espalhamento` px dali, sempre COLADO na
+// mesma borda (posicionarNoGrupo). Antes, cada spawnInimigo() sorteava o lado
+// de novo, e uma rajada de 4 podia cair em 3 lados diferentes — indistinguivel
+// da onda normal para o jogador. spawnInimigo() continua sendo quem decide
+// stats e o teto de spawn.maxSimultaneos (aqui so a POSICAO e sobrescrita
+// depois); a arena usada e a da avaliacao corrente (av.arena), entao a Sala
+// Lotada encolhe o grupo junto com o resto do spawn.
+function spawnRajada(estado, tipo, quantidade) {
+  const av = estado.run.avaliacao;
+  const fora = CONTEUDO.arena.margemSpawn + tipo.raio;
+  const ancora = pontoNaBorda(estado.rng, av.arena, fora);
+  const espalhamento = (tipo.rajada && tipo.rajada.espalhamento) || 0;
+
+  for (let i = 0; i < quantidade; i += 1) {
+    const inimigo = spawnInimigo(estado, tipo.id);
+    if (inimigo) posicionarNoGrupo(inimigo, estado.rng, av.arena, ancora, fora, espalhamento);
+  }
+}
+
+// Mesma escolha de lado/coordenada de posicionarNaBorda, mas sorteada UMA vez
+// (por rajada, nao por inimigo) e guardando o lado — e o que deixa
+// posicionarNoGrupo saber em qual eixo espalhar os membros.
+function pontoNaBorda(rng, arena, fora) {
+  const { esquerda, topo, direita, base } = arena;
+  const lado = rng.int(0, 3);
+  switch (lado) {
+    case 0: // topo
+      return { lado, x: rng.range(esquerda - fora, direita + fora), y: topo - fora };
+    case 1: // direita
+      return { lado, x: direita + fora, y: rng.range(topo - fora, base + fora) };
+    case 2: // base
+      return { lado, x: rng.range(esquerda - fora, direita + fora), y: base + fora };
+    default: // esquerda
+      return { lado, x: esquerda - fora, y: rng.range(topo - fora, base + fora) };
+  }
+}
+
+// Desliza um membro da rajada ao redor da ancora, SO ao longo da borda (o
+// eixo perpendicular fica preso na mesma distancia da parede que
+// posicionarNaBorda usaria) — mantem o grupo "na borda", nao numa nuvem solta
+// dentro da arena, e clampado ao mesmo intervalo que o sorteio normal usaria
+// para essa borda.
+function posicionarNoGrupo(inimigo, rng, arena, ancora, fora, espalhamento) {
+  const { esquerda, topo, direita, base } = arena;
+  const offset = espalhamento > 0 ? rng.range(-espalhamento, espalhamento) : 0;
+  if (ancora.lado === 0 || ancora.lado === 2) { // topo/base: desliza em x
+    inimigo.x = Math.min(direita + fora, Math.max(esquerda - fora, ancora.x + offset));
+    inimigo.y = ancora.y;
+  } else { // esquerda/direita: desliza em y
+    inimigo.x = ancora.x;
+    inimigo.y = Math.min(base + fora, Math.max(topo - fora, ancora.y + offset));
+  }
+}
+
 // ---------------------------------------------------------------------- IA
 
 function moverInimigos(estado, pool, scratchInimigos, dt) {
@@ -232,26 +432,22 @@ function moverInimigos(estado, pool, scratchInimigos, dt) {
   const player = estado.player;
   const forca = CONTEUDO.separacao.forca;
   const descarte = CONTEUDO.spawn.margemDescarte;
-  const { esquerda, topo, direita, base } = estado.run.avaliacao.arena;
+  const av = estado.run.avaliacao;
+  const { esquerda, topo, direita, base } = av.arena;
 
   // De tras para frente: liberar() troca o ultimo elemento para o buraco, e
   // de tras para frente esse elemento ja foi visitado.
   for (let i = inimigos.length - 1; i >= 0; i -= 1) {
     const e = inimigos[i];
 
-    let dx = player.x - e.x;
-    let dy = player.y - e.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 0) {
-      dx /= dist;
-      dy /= dist;
-    } else {
-      dx = 0;
-      dy = 0;
-    }
+    // `comportamento` decide so a DIRECAO (perseguir vs errante); a mistura
+    // com a separacao (empurraoX/Y) e sempre a mesma, senao um inimigo
+    // erratico atravessaria o resto do bando.
+    const movimento = MOVIMENTOS[e.comportamento] || MOVIMENTOS.perseguir;
+    const dir = movimento(e, player, av.decorrido - e.nascidoEm);
 
-    e.vx = dx * e.velocidade + e.empurraoX * forca;
-    e.vy = dy * e.velocidade + e.empurraoY * forca;
+    e.vx = dir.x * e.velocidade + e.empurraoX * forca;
+    e.vy = dir.y * e.velocidade + e.empurraoY * forca;
     e.x += e.vx * dt;
     e.y += e.vy * dt;
 
@@ -334,27 +530,61 @@ function linhaDe(grade, y) {
 
 // -------------------------------------------------------------------- dano
 
-function colidirComJogador(estado, pool) {
+// Alem do dano por contato, o 📄 PDF de 300 Paginas EMPURRA o jogador
+// enquanto os corpos se sobrepoem (tipo.empurraoContato, px/s) — e o que
+// cumpre "bloqueia rota de fuga" (design §8) sem exigir IA nova nenhuma: o
+// corpo grande dele e o obstaculo.
+function colidirComJogador(estado, pool, dt) {
   const player = estado.player;
   if (!player.vivo) return;
 
   const inimigos = pool.ativos;
+  let empurraoX = 0;
+  let empurraoY = 0;
+  let houveDano = false;
+
   for (let i = 0; i < inimigos.length; i += 1) {
     const e = inimigos[i];
     const soma = e.raio + player.raio;
-    const dx = e.x - player.x;
-    const dy = e.y - player.y;
-    if (dx * dx + dy * dy > soma * soma) continue;
-    // Uma encostada por vez: com os i-frames ligados as outras nao valeriam
-    // nada mesmo.
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > soma * soma) continue;
+
+    if (e.empurraoContato > 0) {
+      const d = Math.sqrt(d2);
+      if (d > 0) {
+        empurraoX += (dx / d) * e.empurraoContato;
+        empurraoY += (dy / d) * e.empurraoContato;
+      } else {
+        // Sobreposicao exata: direcao arbitraria mas deterministica, so pra
+        // nao dividir por zero — nunca acontece na pratica (o inimigo chega
+        // perseguindo, nao nasce em cima do jogador).
+        empurraoX += e.empurraoContato;
+      }
+    }
+
+    // Uma encostada de DANO por vez: com os i-frames ligados as outras nao
+    // valeriam nada mesmo. O empurrao, acima, nao tem essa trava — e contato
+    // fisico, nao dano, e continua enquanto os corpos se sobrepuserem.
+    if (houveDano) continue;
     const hpAntes = player.hp;
     if (receberDano(estado, e.dano)) {
       // Daqui, e nao de receberDano(): player.js nao importa state.js. Fonte
       // de dano que chame receberDano() por outro caminho (chefe, modificador)
       // emite o seu — sem isso o relatorio a registra como fonte desconhecida.
       emitir(estado, 'jogador-dano', { fonte: e.tipo, dano: hpAntes - player.hp, hp: player.hp, x: e.x, y: e.y });
-      break;
+      houveDano = true;
     }
+  }
+
+  if (empurraoX !== 0 || empurraoY !== 0) {
+    player.x += empurraoX * dt;
+    player.y += empurraoY * dt;
+    // O push acontece FORA do passo normal de atualizarPlayer (que ja rodou
+    // este quadro, antes dos inimigos) — sem grampear aqui, o jogador ficaria
+    // fora da arena ate o proximo quadro clamar de novo.
+    limitarNaArena(player, estado.run.avaliacao.arena);
   }
 }
 
@@ -390,8 +620,58 @@ export function aplicarDano(estado, inimigo, dano) {
     xp: inimigo.xp,
     vida: estado.run.avaliacao.decorrido - inimigo.nascidoEm, // segundos entre nascer e morrer
   });
+
+  // Capturado ANTES de liberar: depois de pool.liberar(inimigo) o objeto pode
+  // ser reciclado por qualquer obter() seguinte (inclusive o dos proprios
+  // filhotes, mais abaixo) e passar a representar outra coisa.
+  const tipo = acharTipo(inimigo.tipo);
+  const x = inimigo.x;
+  const y = inimigo.y;
+  const geracao = inimigo.geracao;
+
   pool.liberar(inimigo);
+
+  // 📱 Trabalho em Grupo (ou qualquer tipo futuro com `divisao`): SO depois
+  // de liberar, nunca antes — pool.obter() dentro da divisao pode reciclar o
+  // objeto mais antigo da pool, e se a pool estiver cheia esse "mais antigo"
+  // poderia ser o proprio `inimigo` que este bloco ainda estivesse segurando.
+  // Liberado primeiro, ele volta pra `reserva` como qualquer outro objeto
+  // morto — reaproveita-lo num filhote e o caminho normal da pool, nao um
+  // caso especial.
+  if (tipo) dividirSeAplicavel(estado, pool, tipo, geracao, x, y);
   return true;
+}
+
+// Profundidade travada por tipo.divisao.geracaoMaxima (1 = filhote nao
+// divide de novo) e por CONTEUDO.spawn.maxSimultaneos, verificado ANTES de
+// cada obter(): com o pool no teto, uma morte simplesmente nao produz
+// filhote nenhum — recursao de divisao com pool cheio e o jeito mais curto
+// de travar o jogo (tarefa 3 do contrato da fase 09), entao o teto tem que
+// ganhar sempre, nunca so no primeiro filhote.
+function dividirSeAplicavel(estado, pool, tipo, geracao, x, y) {
+  const divisao = tipo.divisao;
+  if (!divisao || geracao >= divisao.geracaoMaxima) return;
+
+  const av = estado.run.avaliacao;
+  const overrides = {
+    hpFator: divisao.hpFator,
+    velocidadeFator: divisao.velocidadeFator,
+    raioFator: divisao.raioFator,
+    xpFator: divisao.xpFator,
+    danoFator: divisao.danoFator,
+    geracao: geracao + 1,
+  };
+
+  for (let i = 0; i < divisao.filhos; i += 1) {
+    if (pool.ativos.length >= CONTEUDO.spawn.maxSimultaneos) return;
+
+    const filhote = pool.obter();
+    inicializarInimigo(filhote, tipo, av, estado.rng, overrides);
+    const angulo = estado.rng.float() * Math.PI * 2;
+    filhote.x = x + Math.cos(angulo) * divisao.raioSpawn;
+    filhote.y = y + Math.sin(angulo) * divisao.raioSpawn;
+    emitir(estado, 'inimigo-nasceu', { tipo: tipo.id });
+  }
 }
 
 // Devolve todos os inimigos a pool. A fase 08 deve chamar isto em

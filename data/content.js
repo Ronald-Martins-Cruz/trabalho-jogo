@@ -456,9 +456,34 @@ export const CONTEUDO = {
     atrasoEntrada: 0.35,
   },
 
-  // Inimigos. Fase 02 entrega so o inimigo-base; a fase 09 acrescenta
-  // Notificacao, PDF de 300 Paginas e Trabalho em Grupo (design §8).
-  // `peso` e a chance relativa no sorteio de tipo da onda.
+  // Inimigos (design §8). Cada tipo aponta um `comportamento` de movimento
+  // registrado em MOVIMENTOS (enemies.js) — o mesmo padrao de "dado, nao
+  // classe" que armas.js usa para COMPORTAMENTOS. `peso` e a chance relativa
+  // de um sorteio SEM composicao por avaliacao (hoje so o relatorio mostra
+  // esse numero; quem decide o sorteio de verdade e `spawn.composicoes`,
+  // abaixo, que cada avaliacao referencia por `composicaoSpawn`).
+  //
+  // Campos opcionais, so quando o tipo precisa:
+  //   rajada     { intervalo, tamanho, espalhamento }  nasce em grupo, num
+  //              relogio PROPRIO (alem da onda normal), so quando o tipo esta
+  //              na composicao da avaliacao corrente — o grupo nasce num
+  //              UNICO ponto de borda sorteado por rajada, com cada membro
+  //              espalhado ate `espalhamento` px dali (px, opcional, default
+  //              0 = todos empilhados no mesmo ponto) — ver spawnRajada() e o
+  //              laco de rajadas em atualizarSpawn(), em enemies.js
+  //   empurraoContato  px/s de deslocamento aplicado ao jogador enquanto
+  //              encosta nele (alem do dano normal por contato)
+  //   ruido      { amplitude (rad), frequencia (Hz) }  desvio senoidal do
+  //              angulo de perseguicao — so o comportamento 'errante' le isto
+  //   divisao    { filhos, geracaoMaxima, hpFator, velocidadeFator,
+  //                raioFator, xpFator, danoFator, raioSpawn }  ao morrer com
+  //              `geracao` (campo de runtime, 0 no nascimento normal) menor
+  //              que geracaoMaxima, vira `filhos` copias menores no lugar da
+  //              morte, com geracao+1 — geracaoMaxima trava a profundidade
+  //              (1 = filhote nao divide de novo)
+  //
+  // Numeros de primeiro corte (fase 09), sem pressao de balanceamento fino —
+  // isso e fase 13. O que importa aqui e cada tipo ter um papel distinto.
   inimigos: [
     {
       id: 'prazo',
@@ -474,6 +499,78 @@ export const CONTEUDO = {
       raio: 11,
       xp: 1, // valor do orbe que ele derruba ao morrer
       peso: 1,
+      comportamento: 'perseguir',
+    },
+    {
+      id: 'notificacao',
+      nome: 'Notificação',
+      emoji: '🔔',
+      // Mais fragil que o Prazo (morre num tiro do Cafe nivel 1) e mais
+      // devagar que ele — o perigo dela e vir em rajada e ser dificil de
+      // prever, nao dano ou velocidade brutos.
+      hp: 9,
+      velocidade: 90, // px/s — abaixo do Prazo (115): "media" fica entre o Prazo e o PDF (55)
+      dano: 6,
+      raio: 10,
+      xp: 1,
+      peso: 0.5,
+      comportamento: 'errante',
+      // O angulo de perseguicao oscila +-0,85 rad (~49°) numa senoide de
+      // 1,4 Hz — rapido o suficiente para nao dar pra prever a rota olhando
+      // so a posicao atual, devagar o suficiente para nao virar um giro
+      // aleatorio sem leitura nenhuma.
+      ruido: { amplitude: 0.85, frequencia: 1.4 },
+      // Fora da onda normal: a cada ~13s (dividido pela dificuldade, como o
+      // resto do spawn) nascem 4 de uma vez, perto uma da outra na borda —
+      // a "rajada" do design §8. `espalhamento` (px) e o quanto cada membro
+      // desliza do ponto de borda sorteado para o grupo (spawnRajada, em
+      // enemies.js); 40px mantem as 4 visivelmente juntas sem empilhar no
+      // mesmo pixel. So dispara quando notificacao esta na composicao da
+      // avaliacao corrente (enemies.js atualizarSpawn).
+      rajada: { intervalo: 13, tamanho: 4, espalhamento: 40 },
+    },
+    {
+      id: 'pdf',
+      nome: 'PDF de 300 Páginas',
+      emoji: '📄',
+      // Tanque: 5x o HP do Prazo, metade da velocidade. O raio grande (24,
+      // o dobro do Prazo) e o que faz ele "bloquear rota de fuga" so de
+      // estar no caminho — ver separacao.gradePasso abaixo, que teve que
+      // crescer para caber esse raio nas 9 celulas vizinhas da grade.
+      hp: 70,
+      velocidade: 55, // px/s — ~29% do teto do jogador: da pra fugir andando, nao parado
+      dano: 11,
+      raio: 24,
+      xp: 4,
+      peso: 0.3,
+      comportamento: 'perseguir',
+      // px/s de deslocamento aplicado ao jogador enquanto os dois corpos se
+      // sobrepoem (colidirComJogador, enemies.js) — empurra pra fora do
+      // caminho dele em vez de so descontar HP, cumprindo o "bloqueia rota
+      // de fuga" do design sem exigir IA nova nenhuma.
+      empurraoContato: 95,
+    },
+    {
+      id: 'trabalhoGrupo',
+      nome: 'Trabalho em Grupo',
+      emoji: '📱',
+      hp: 20,
+      velocidade: 100,
+      dano: 7,
+      raio: 13,
+      xp: 2,
+      peso: 0.35,
+      comportamento: 'perseguir',
+      divisao: {
+        filhos: 2,
+        geracaoMaxima: 1, // filhote (geracao 1) nao divide de novo
+        hpFator: 0.45,
+        velocidadeFator: 1.2, // os filhotes saem mais rapidos — "punem dano em area"
+        raioFator: 0.65,
+        xpFator: 0.5,
+        danoFator: 0.75,
+        raioSpawn: 16, // px do centro da morte ate cada filhote, pra nao nascerem empilhados
+      },
     },
   ],
 
@@ -505,6 +602,31 @@ export const CONTEUDO = {
     porOndaMaximo: 8,
     maxSimultaneos: 180, // teto de jogabilidade, bem abaixo de arena.limites.enemies
     margemDescarte: 320, // px alem da borda: inimigo que passa disso volta pra pool
+
+    // Composicao de spawn por avaliacao (fase 09): quais tipos podem nascer
+    // e com que peso, no MESMO formato ponderado de `inimigos[].peso` (o
+    // sorteio soma os pesos dos tipos presentes e escolhe proporcional —
+    // tipo ausente do mapa tem peso 0, nunca nasce). Cada avaliacao de
+    // `periodos` aponta uma composicao pelo nome (`composicaoSpawn`), do
+    // mesmo jeito que ja aponta uma curva por `curvaPadrao`/`curvas`.
+    // `composicaoPadrao` e so a rede de seguranca de quem chama spawnInimigo
+    // fora de uma avaliacao de verdade (ex.: um teste que nao passou por
+    // comecarAvaliacao) — a run real sempre tem `composicaoSpawn` valido,
+    // e o validador exige isso de cada avaliacao.
+    composicaoPadrao: 'p1',
+    composicoes: {
+      // 1a avaliacao da run: so o Prazo de Entrega, pelo mesmo motivo de ela
+      // nao sortear modificador (state.js/handoff 08) — ensina o jogo base
+      // com os numeros que as fases 01-07 mediram.
+      p1: { prazo: 1 },
+      // Resto do 1o periodo: Notificacao entra na 2a avaliacao...
+      p1Notificacao: { prazo: 1, notificacao: 0.5 },
+      // ...e o PDF entra so na Prova Final, o "modificador pesado" do 1o
+      // periodo (design §2).
+      p1Final: { prazo: 1, notificacao: 0.6, pdf: 0.3 },
+      // 2o periodo em diante: os 4 tipos, pesos fixos (fase 13 balanceia).
+      todos: { prazo: 1, notificacao: 0.6, pdf: 0.3, trabalhoGrupo: 0.35 },
+    },
   },
 
   // Empurrao suave entre inimigos sobrepostos. Sem isso o bando vira uma
@@ -512,7 +634,10 @@ export const CONTEUDO = {
   separacao: {
     forca: 150, // px/s no maximo da sobreposicao
     folga: 3, // px somados aos raios: comecam a se empurrar um pouco antes de encostar
-    gradePasso: 48, // lado da celula da grade espacial que evita o O(n^2)
+    // 2 x maior raio de inimigo + folga e o minimo que o validador aceita
+    // (armadilha documentada no handoff 02/05). O PDF de 300 Paginas (raio
+    // 24, fase 09) empurrou isso de 48 para 56: 2*24+3=51 <= 56.
+    gradePasso: 56,
   },
 
   // As REGRAS de uma avaliacao sem modificador nenhum. Toda avaliacao nasce
@@ -609,6 +734,8 @@ export const CONTEUDO = {
   //                   ondas E multiplica o tamanho da onda, entao o ritmo de
   //                   nascimento cresce com o QUADRADO (1,3 da ~1,7x inimigos)
   //   modificadores   quantos o anuncio sorteia (design §9: 1-2)
+  //   composicaoSpawn nome de uma entrada em spawn.composicoes (fase 09):
+  //                   quais tipos de inimigo podem nascer nesta avaliacao
   //
   // A 1ª avaliacao da run nao sorteia modificador: ela ensina o jogo base, e e
   // nela que os numeros medidos das fases 01-07 continuam valendo. A Prova
@@ -621,27 +748,27 @@ export const CONTEUDO = {
       id: 'periodo-1',
       nome: '1º Período',
       avaliacoes: [
-        { id: 'p1-av1', nome: 'Avaliação 1', materia: 'Cálculo I', tipo: 'comum', duracao: 60, dificuldade: 1, modificadores: 0 },
-        { id: 'p1-av2', nome: 'Avaliação 2', materia: 'Algoritmos', tipo: 'comum', duracao: 60, dificuldade: 1.05, modificadores: 1 },
-        { id: 'p1-final', nome: 'Prova Final', materia: 'Física Experimental', tipo: 'final', duracao: 75, dificuldade: 1.15, modificadores: 2 },
+        { id: 'p1-av1', nome: 'Avaliação 1', materia: 'Cálculo I', tipo: 'comum', duracao: 60, dificuldade: 1, modificadores: 0, composicaoSpawn: 'p1' },
+        { id: 'p1-av2', nome: 'Avaliação 2', materia: 'Algoritmos', tipo: 'comum', duracao: 60, dificuldade: 1.05, modificadores: 1, composicaoSpawn: 'p1Notificacao' },
+        { id: 'p1-final', nome: 'Prova Final', materia: 'Física Experimental', tipo: 'final', duracao: 75, dificuldade: 1.15, modificadores: 2, composicaoSpawn: 'p1Final' },
       ],
     },
     {
       id: 'periodo-2',
       nome: '2º Período',
       avaliacoes: [
-        { id: 'p2-av1', nome: 'Avaliação 1', materia: 'Estruturas de Dados', tipo: 'comum', duracao: 65, dificuldade: 1.1, modificadores: 1 },
-        { id: 'p2-av2', nome: 'Avaliação 2', materia: 'Álgebra Linear', tipo: 'comum', duracao: 65, dificuldade: 1.15, modificadores: 1 },
-        { id: 'p2-final', nome: 'Prova Final', materia: 'Cálculo II', tipo: 'final', duracao: 80, dificuldade: 1.25, modificadores: 2 },
+        { id: 'p2-av1', nome: 'Avaliação 1', materia: 'Estruturas de Dados', tipo: 'comum', duracao: 65, dificuldade: 1.1, modificadores: 1, composicaoSpawn: 'todos' },
+        { id: 'p2-av2', nome: 'Avaliação 2', materia: 'Álgebra Linear', tipo: 'comum', duracao: 65, dificuldade: 1.15, modificadores: 1, composicaoSpawn: 'todos' },
+        { id: 'p2-final', nome: 'Prova Final', materia: 'Cálculo II', tipo: 'final', duracao: 80, dificuldade: 1.25, modificadores: 2, composicaoSpawn: 'todos' },
       ],
     },
     {
       id: 'periodo-3',
       nome: '3º Período',
       avaliacoes: [
-        { id: 'p3-av1', nome: 'Avaliação 1', materia: 'Banco de Dados', tipo: 'comum', duracao: 70, dificuldade: 1.2, modificadores: 1 },
-        { id: 'p3-av2', nome: 'Avaliação 2', materia: 'Probabilidade e Estatística', tipo: 'comum', duracao: 70, dificuldade: 1.25, modificadores: 1 },
-        { id: 'p3-final', nome: 'Prova Final', materia: 'Compiladores', tipo: 'final', duracao: 85, dificuldade: 1.35, modificadores: 2 },
+        { id: 'p3-av1', nome: 'Avaliação 1', materia: 'Banco de Dados', tipo: 'comum', duracao: 70, dificuldade: 1.2, modificadores: 1, composicaoSpawn: 'todos' },
+        { id: 'p3-av2', nome: 'Avaliação 2', materia: 'Probabilidade e Estatística', tipo: 'comum', duracao: 70, dificuldade: 1.25, modificadores: 1, composicaoSpawn: 'todos' },
+        { id: 'p3-final', nome: 'Prova Final', materia: 'Compiladores', tipo: 'final', duracao: 85, dificuldade: 1.35, modificadores: 2, composicaoSpawn: 'todos' },
       ],
     },
   ],
@@ -1151,6 +1278,80 @@ export function validarConteudo(conteudo = CONTEUDO) {
       if (typeof inimigo.emoji !== 'string' || inimigo.emoji === '') {
         erros.push(`${c}.emoji: ausente ou vazio`);
       }
+      // `comportamento` e um nome de funcao de movimento registrada em
+      // MOVIMENTOS (enemies.js) — o mesmo split de responsabilidade de
+      // `armas[].comportamento`: content.js so sabe que a string existe,
+      // quem confere se ela esta registrada de verdade e o smoke
+      // (verificarInimigosDoConteudo), nunca este validador (importar
+      // enemies.js aqui fecharia um ciclo com content.js).
+      if (typeof inimigo.comportamento !== 'string' || inimigo.comportamento === '') {
+        erros.push(`${c}.comportamento: ausente ou vazio — precisa nomear uma funcao de enemies.js`);
+      }
+      if (inimigo.empurraoContato !== undefined) {
+        exigeNumero(inimigo.empurraoContato, `${c}.empurraoContato`, { min: 0 });
+      }
+      if (inimigo.ruido !== undefined && exigeObjeto(inimigo.ruido, `${c}.ruido`)) {
+        exigeNumero(inimigo.ruido.amplitude, `${c}.ruido.amplitude`, { min: 0, max: Math.PI });
+        // Hz de verdade (enemies.js multiplica por 2*PI antes de usar como
+        // angular): minimo de 1/60 Hz = 1 ciclo a cada 60s, ainda faz sentido
+        // como piso — abaixo disso o desvio praticamente nao oscila dentro
+        // de uma avaliacao. Sem maximo declarado: nao ha tipo hoje perto de
+        // um limite pratico (fase 13 mede se precisar).
+        exigeNumero(inimigo.ruido.frequencia, `${c}.ruido.frequencia`, { min: 1 / 60 });
+      }
+      if (inimigo.rajada !== undefined && exigeObjeto(inimigo.rajada, `${c}.rajada`)) {
+        exigeNumero(inimigo.rajada.intervalo, `${c}.rajada.intervalo`, { min: 1 / 60 });
+        if (exigeNumero(inimigo.rajada.tamanho, `${c}.rajada.tamanho`, { min: 1 }) && !Number.isInteger(inimigo.rajada.tamanho)) {
+          erros.push(`${c}.rajada.tamanho: ${inimigo.rajada.tamanho} precisa ser inteiro`);
+        }
+        if (inimigo.rajada.espalhamento !== undefined) {
+          exigeNumero(inimigo.rajada.espalhamento, `${c}.rajada.espalhamento`, { min: 0 });
+        }
+      }
+      if (inimigo.divisao !== undefined && exigeObjeto(inimigo.divisao, `${c}.divisao`)) {
+        const d = inimigo.divisao;
+        if (exigeNumero(d.filhos, `${c}.divisao.filhos`, { min: 1 }) && !Number.isInteger(d.filhos)) {
+          erros.push(`${c}.divisao.filhos: ${d.filhos} precisa ser inteiro`);
+        }
+        if (exigeNumero(d.geracaoMaxima, `${c}.divisao.geracaoMaxima`, { min: 0 }) && !Number.isInteger(d.geracaoMaxima)) {
+          erros.push(`${c}.divisao.geracaoMaxima: ${d.geracaoMaxima} precisa ser inteiro`);
+        }
+        exigeNumero(d.velocidadeFator, `${c}.divisao.velocidadeFator`, { min: 0.01 });
+        exigeNumero(d.xpFator, `${c}.divisao.xpFator`, { min: 0 });
+        exigeNumero(d.danoFator, `${c}.divisao.danoFator`, { min: 0 });
+        exigeNumero(d.raioSpawn, `${c}.divisao.raioSpawn`, { min: 0 });
+        // hpFator e raioFator precisam deixar o filhote VIAVEL: hp e raio
+        // minimos sao 1, os mesmos que o validador exige da entrada base —
+        // um filhote com raio < 1 ou hp < 1 nasceria fora das regras que o
+        // resto do jogo assume de todo inimigo.
+        //
+        // Esta conta so olha UMA geracao (tipo.hp * hpFator), mas isso cobre
+        // QUALQUER geracaoMaxima da forma como enemies.js calcula hoje:
+        // inicializarInimigo() sempre multiplica a partir do tipo BASE
+        // (tipo.hp), nunca do hp ja reduzido do pai — um neto (geracaoMaxima
+        // >= 2) usaria o MESMO hpFator sobre o MESMO tipo.hp, nao um fator ao
+        // quadrado. Se um dia isso mudar para compor fatores entre geracoes,
+        // esta validacao precisa mudar junto (fica registrado para a fase 13
+        // no handoff da revisao pos-fase-09).
+        if (exigeNumero(d.hpFator, `${c}.divisao.hpFator`, { min: 0.01 }) && typeof inimigo.hp === 'number') {
+          const hpFilhote = inimigo.hp * d.hpFator;
+          if (hpFilhote < 1) {
+            erros.push(`${c}.divisao.hpFator: ${d.hpFator} da um filhote com ${hpFilhote.toFixed(2)} de HP (minimo 1)`);
+          }
+        }
+        // raioFator nao tem maximo aqui: um filhote MAIOR que o pai (fator >
+        // 1) e viavel por si so, mas so "cabe" na grade espacial se
+        // separacao.gradePasso continuar >= 2 x MAIOR raio + folga — e esse
+        // maior raio precisa contar o filhote, nao so os tipos base. Ver
+        // `maiorRaio` no bloco de `separacao` abaixo, que agora inclui
+        // `raio * divisao.raioFator` de quem tem `divisao`.
+        if (exigeNumero(d.raioFator, `${c}.divisao.raioFator`, { min: 0.01 }) && typeof inimigo.raio === 'number') {
+          const raioFilhote = inimigo.raio * d.raioFator;
+          if (raioFilhote < 1) {
+            erros.push(`${c}.divisao.raioFator: ${d.raioFator} da um filhote com raio ${raioFilhote.toFixed(2)} (minimo 1)`);
+          }
+        }
+      }
     });
     const somaPesos = conteudo.inimigos.reduce(
       (soma, inimigo) => soma + (typeof inimigo.peso === 'number' ? inimigo.peso : 0),
@@ -1211,6 +1412,31 @@ export function validarConteudo(conteudo = CONTEUDO) {
         });
       }
     }
+
+    // Composicao de spawn por avaliacao (fase 09): mesmo padrao de
+    // curvaPadrao/curvas, mas para QUAIS tipos podem nascer e com que peso.
+    const idsInimigo = new Set(
+      Array.isArray(conteudo.inimigos) ? conteudo.inimigos.map((i) => i && i.id).filter(Boolean) : []
+    );
+    if (exigeObjeto(conteudo.spawn.composicoes, 'spawn.composicoes')) {
+      const padrao = conteudo.spawn.composicaoPadrao;
+      if (!conteudo.spawn.composicoes[padrao]) {
+        erros.push(`spawn.composicaoPadrao: "${padrao}" nao existe em spawn.composicoes`);
+      }
+      for (const [nome, pesos] of Object.entries(conteudo.spawn.composicoes)) {
+        const c = `spawn.composicoes.${nome}`;
+        if (!exigeObjeto(pesos, c)) continue;
+        let soma = 0;
+        for (const [tipoId, peso] of Object.entries(pesos)) {
+          if (!idsInimigo.has(tipoId)) {
+            erros.push(`${c}.${tipoId}: "${tipoId}" nao e um id em inimigos`);
+            continue;
+          }
+          if (exigeNumero(peso, `${c}.${tipoId}`, { min: 0 })) soma += peso;
+        }
+        if (soma <= 0) erros.push(`${c}: soma dos pesos e 0 — nenhum tipo nasceria nesta avaliacao`);
+      }
+    }
   }
 
   // Separacao entre inimigos.
@@ -1227,8 +1453,15 @@ export function validarConteudo(conteudo = CONTEUDO) {
       let maiorRaio = 0;
       if (Array.isArray(conteudo.inimigos)) {
         for (const inimigo of conteudo.inimigos) {
-          if (inimigo && typeof inimigo.raio === 'number' && inimigo.raio > maiorRaio) {
-            maiorRaio = inimigo.raio;
+          if (!inimigo || typeof inimigo.raio !== 'number') continue;
+          if (inimigo.raio > maiorRaio) maiorRaio = inimigo.raio;
+          // Um filhote com raioFator > 1 nasce MAIOR que o pai — ele tambem
+          // precisa caber nas 9 celulas vizinhas da grade, senao a regra
+          // abaixo aprovaria um raioFator que na pratica quebra a separacao
+          // (correcao pos-revisao da fase 09).
+          if (inimigo.divisao && typeof inimigo.divisao.raioFator === 'number') {
+            const raioFilhote = inimigo.raio * inimigo.divisao.raioFator;
+            if (raioFilhote > maiorRaio) maiorRaio = raioFilhote;
           }
         }
       }
@@ -1275,6 +1508,11 @@ export function validarConteudo(conteudo = CONTEUDO) {
         }
         if (exigeNumero(av.modificadores, `${c}.modificadores`, { min: 0 }) && !Number.isInteger(av.modificadores)) {
           erros.push(`${c}.modificadores: ${av.modificadores} precisa ser inteiro`);
+        }
+        if (typeof av.composicaoSpawn !== 'string' || av.composicaoSpawn === '') {
+          erros.push(`${c}.composicaoSpawn: ausente ou vazio`);
+        } else if (conteudo.spawn && conteudo.spawn.composicoes && !conteudo.spawn.composicoes[av.composicaoSpawn]) {
+          erros.push(`${c}.composicaoSpawn: "${av.composicaoSpawn}" nao existe em spawn.composicoes`);
         }
       });
     });
