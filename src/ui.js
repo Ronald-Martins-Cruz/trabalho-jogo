@@ -21,6 +21,7 @@ export function criarUi(doc) {
     hud: doc.getElementById('hud'),
     pausa: doc.getElementById('pausa'),
     hpBarra: doc.getElementById('hp-barra'),
+    hpFantasma: doc.getElementById('hp-fantasma'),
     hpTexto: doc.getElementById('hp-texto'),
     xpBarra: doc.getElementById('xp-barra'),
     nivel: doc.getElementById('nivel'),
@@ -46,7 +47,10 @@ export function criarUi(doc) {
     botaoResultado: doc.getElementById('botao-resultado'),
     botaoJubilado: doc.getElementById('botao-jubilado'),
     hudCoringas: doc.getElementById('hud-coringas'),
+    hudGrupoCoringas: doc.getElementById('hud-grupo-coringas'),
+    hudGrupoModificadores: doc.getElementById('hud-grupo-modificadores'),
     loja: doc.getElementById('loja'),
+    lojaDicaCompra: doc.getElementById('loja-dica-compra'),
     lojaCreditos: doc.getElementById('loja-creditos'),
     lojaItens: doc.getElementById('loja-itens'),
     lojaCoringas: doc.getElementById('loja-coringas'),
@@ -65,6 +69,7 @@ export function criarUi(doc) {
     anuncioSemModificador: doc.getElementById('anuncio-sem-modificador'),
     botaoComecar: doc.getElementById('botao-comecar'),
     tcc: doc.getElementById('tcc'),
+    tccDescricao: doc.getElementById('tcc-descricao'),
     botaoTcc: doc.getElementById('botao-tcc'),
     botaoMudo: doc.getElementById('botao-mudo'),
     // Fase 10: a barra da Banca no HUD, as telas de fim e o recorde no menu.
@@ -114,6 +119,76 @@ export function criarUi(doc) {
     if (!no) return;
     no.classList.toggle(nome, ligada);
   };
+
+  // Fase 12: os tempos das transicoes moram em content.js (juice.css) e o CSS
+  // so os le como variaveis. A apresentacao da Banca na tela do TCC sai dos
+  // numeros de banca.fases, e e fixa: escrita uma vez.
+  aplicarVariaveisCss(doc.documentElement);
+  texto(el.tccDescricao, textoDaBancaNoTcc());
+
+  // Recomeca a animacao de entrada (CSS, classe `entrando`) de um bloco que ja
+  // esta na tela: tirar a classe, forcar o layout e devolver. Para a 2a carta
+  // de uma fila e para o reroll da loja, que trocam o conteudo sem a tela
+  // sumir e voltar.
+  function reiniciarEntrada(no) {
+    if (!no || !no.classList) return;
+    no.classList.remove('entrando');
+    void no.offsetWidth;
+    no.classList.add('entrando');
+  }
+
+  // ------------------------------------------------------- chips do HUD
+  // Coringas da run e modificadores da avaliacao, um chip por item, montados
+  // uma vez (o teto de coringas da loja; o maior `modificadores` de
+  // periodos) e so trocando de conteudo. O nome e a descricao ficam num
+  // tooltip de CSS (:hover): e so leitura, nao move cursor nenhum nem decide
+  // acao, entao nao precisa passar pelo estado (pendencia 26).
+  function montarChips(container, quantos) {
+    const chips = [];
+    if (!container) return chips;
+    for (let i = 0; i < quantos; i += 1) {
+      const chip = span('hud-chip');
+      const emoji = span('hud-chip-emoji');
+      const dica = span('hud-tooltip');
+      const nome = span('hud-tooltip-nome');
+      const descricao = span('hud-tooltip-descricao');
+      dica.append(nome, descricao);
+      chip.append(emoji, dica);
+      container.appendChild(chip);
+      chips.push({ chip, emoji, nome, descricao, gasto: false });
+    }
+    return chips;
+  }
+
+  let maxModificadores = 0;
+  for (const periodo of CONTEUDO.periodos) {
+    for (const av of periodo.avaliacoes) if (av.modificadores > maxModificadores) maxModificadores = av.modificadores;
+  }
+  const chipsCoringas = montarChips(el.hudCoringas, CONTEUDO.loja.teto);
+  const chipsModificadores = montarChips(el.hudModificadores, maxModificadores);
+
+  // `dados(i, saida)` preenche `saida` ({ emoji, nome, descricao, gasto }) e a
+  // devolve, ou devolve null. Devolve quantos chips ficaram visiveis.
+  const CHIP = { emoji: '', nome: '', descricao: '', gasto: false };
+
+  function sincronizarChips(chips, dados) {
+    let visiveis = 0;
+    for (let i = 0; i < chips.length; i += 1) {
+      const c = chips[i];
+      const d = dados(i, CHIP);
+      visivel(c.chip, d !== null);
+      if (d === null) continue;
+      visiveis += 1;
+      escrever(c.emoji, d.emoji);
+      escrever(c.nome, d.nome);
+      escrever(c.descricao, d.descricao);
+      if (c.gasto !== d.gasto) {
+        c.gasto = d.gasto;
+        classe(c.chip, 'gasto', d.gasto);
+      }
+    }
+    return visiveis;
+  }
 
   // As opcoes da carta sao montadas UMA vez, na abertura, e depois so trocam
   // de texto. Nada de innerHTML a cada carta: o DOM fica estavel, os
@@ -185,6 +260,9 @@ export function criarUi(doc) {
 
     if (versaoDesenhada !== cartas.versao) {
       versaoDesenhada = cartas.versao;
+      // As cartas entram deslizando a cada sorteio novo, inclusive a 2a de
+      // uma fila (a tela nao some entre as duas).
+      reiniciarEntrada(el.cartaOpcoes);
       for (let i = 0; i < opcoes.length; i += 1) {
         const opcao = opcoes[i];
         const dados = cartas.opcoes[i];
@@ -299,6 +377,8 @@ export function criarUi(doc) {
     ligarAcao(el.botaoSeguir, acoes.seguir, acoes.apontarSeguir);
   }
 
+  let vitrineDesenhada = '';
+
   function sincronizarLoja(estado) {
     const loja = estado.loja;
     const run = estado.run;
@@ -309,6 +389,13 @@ export function criarUi(doc) {
     texto(el.lojaCreditos, `${simbolo} ${run.creditos}`);
     texto(el.lojaContagem, `${run.coringas.length}/${CONTEUDO.loja.teto}`);
     texto(el.lojaAviso, loja.aviso ? t.avisos[loja.aviso] || '' : '');
+    texto(el.lojaDicaCompra, dicaDaLoja(loja.quantidade));
+    // Uma vitrine nova (abertura ou reroll) entra deslizando como as cartas.
+    const vitrine = `${loja.abertaEm}:${loja.rerolls}:${loja.gratis}`;
+    if (vitrine !== vitrineDesenhada) {
+      vitrineDesenhada = vitrine;
+      reiniciarEntrada(el.lojaItens);
+    }
 
     for (let i = 0; i < itensLoja.length; i += 1) {
       const no = itensLoja[i];
@@ -622,17 +709,26 @@ export function criarUi(doc) {
     sincronizarRelatorio(estado);
 
     const p = estado.player;
-    largura(el.hpBarra, p.hpMax > 0 ? p.hp / p.hpMax : 0);
+    const hp = p.hpMax > 0 ? p.hp / p.hpMax : 0;
+    // As duas com a mesma largura: o CSS da a barra uma transicao curta e ao
+    // fantasma uma longa e atrasada (juice.css), e o pedaco perdido aparece
+    // entre as duas.
+    largura(el.hpBarra, hp);
+    largura(el.hpFantasma, hp);
     texto(el.hpTexto, `${Math.ceil(p.hp)}/${p.hpMax}`);
     largura(el.xpBarra, p.xpProximo > 0 ? p.xp / p.xpProximo : 0);
     texto(el.nivel, String(p.nivel));
-    texto(el.hudCoringas, emojisDosCoringas(estado.run.coringas));
 
     const av = estado.run.avaliacao;
+    const run = estado.run;
+    classe(el.hud, 'translucido', emJogo && hudCobreAlguem(estado));
+    const comCoringa = sincronizarChips(chipsCoringas, (i, saida) => chipDoCoringa(run.coringas[i], saida));
+    visivel(el.hudGrupoCoringas, comCoringa > 0);
     // A regra `coringas` 0 (Prova sem Consulta) esmaece os coringas no HUD:
     // o jogador ve que continuam dele, e que nao valem nesta prova.
     classe(el.hudCoringas, 'desligados', coringasDesligados(estado));
-    texto(el.hudModificadores, emojisDosModificadores(av.modificadores));
+    const comModificador = sincronizarChips(chipsModificadores, (i, saida) => chipDoModificador(av.modificadores[i], saida));
+    visivel(el.hudGrupoModificadores, comModificador > 0);
     // O TCC nao tem cronometro: o relogio conta a defesa para cima.
     texto(el.timer, formatarTempo(av.banca ? av.decorrido : av.restante));
     texto(el.avaliacaoNome, nomeDaAvaliacao(av));
@@ -770,17 +866,65 @@ export function dadosDoModificador(id, lista = CONTEUDO.modificadores) {
   return null;
 }
 
-// "🪑 🕕": os modificadores da avaliacao, no HUD.
-export function emojisDosModificadores(ids, lista = CONTEUDO.modificadores) {
-  const partes = [];
-  for (const id of ids) {
-    const dados = dadosDoModificador(id, lista);
-    if (dados) partes.push(dados.emoji);
-  }
-  return partes.join(' ');
+
+// O chip do HUD de um coringa da run (instancia) ou de um modificador (id):
+// preenche `saida` e a devolve, ou devolve null (slot vazio).
+export function chipDoCoringa(inst, saida, lista = CONTEUDO.coringas) {
+  const dados = inst ? dadosDoCoringa(inst.id, lista) : null;
+  if (!dados) return null;
+  saida.emoji = dados.emoji;
+  saida.nome = dados.nome;
+  saida.descricao = dados.descricao;
+  saida.gasto = Boolean(inst.gasto);
+  return saida;
 }
 
-// "🔋 📚 🏥": os coringas da run, no canto do HUD.
+export function chipDoModificador(id, saida, lista = CONTEUDO.modificadores) {
+  const dados = dadosDoModificador(id, lista);
+  if (!dados) return null;
+  saida.emoji = dados.emoji;
+  saida.nome = dados.nome;
+  saida.descricao = dados.descricao;
+  saida.gasto = false;
+  return saida;
+}
+
+// O topo do HUD esta em cima de alguem? O jogador ou A Banca com a borda de
+// cima do emoji na faixa juice.hud.faixaTopo (px do canvas). Pendencias 63/79:
+// a arena nao muda, o HUD e que sai da frente.
+export function hudCobreAlguem(estado, faixa = CONTEUDO.juice.hud.faixaTopo, v = CONTEUDO.visual) {
+  const p = estado.player;
+  if (p.vivo && p.y - v.tamanhoEmojiJogador / 2 < faixa) return true;
+  const b = estado.run.avaliacao.banca;
+  return b !== null && b.estado !== ESTADOS_BANCA.DERROTADA && b.y - v.banca.tamanhoEmoji / 2 < faixa;
+}
+
+// "1 · 2 · 3 compram": as teclas que valem NESTA loja (pendencia 57).
+export function dicaDaLoja(quantidade, textos = CONTEUDO.textos.loja, separador = CONTEUDO.textos.resultado.separador) {
+  const teclas = [];
+  for (let i = 1; i <= quantidade; i += 1) teclas.push(String(i));
+  return preencher(textos.dicaCompra, { teclas: teclas.join(separador) });
+}
+
+// A apresentacao da Banca na tela do TCC, com os numeros de banca.fases: o
+// numero de rodadas e o HP (em %) em que ela endurece (pendencia 79).
+export function textoDaBancaNoTcc(banca = CONTEUDO.banca, modelo = CONTEUDO.textos.banca.descricao) {
+  return preencher(modelo, { fases: banca.fases.length, limiar: Math.round(banca.fases[0].ate * 100) });
+}
+
+// Escreve cada variavel de juice.css no :root (style.css so as le). Devolve
+// quantas escreveu; sem `style` (node, DOM falso) nao faz nada.
+export function aplicarVariaveisCss(raiz, css = CONTEUDO.juice.css) {
+  if (!raiz || !raiz.style || typeof raiz.style.setProperty !== 'function') return 0;
+  let n = 0;
+  for (const nome of Object.keys(css)) {
+    raiz.style.setProperty(nome, css[nome]);
+    n += 1;
+  }
+  return n;
+}
+
+// "🔋 📚 🏥": os coringas da run, em linha (a tabela da run do smoke).
 export function emojisDosCoringas(coringas, lista = CONTEUDO.coringas) {
   const partes = [];
   for (const inst of coringas) {

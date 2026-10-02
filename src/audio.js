@@ -24,9 +24,10 @@ export function duracaoDoSom(som) {
 // content.js (audio.sons[nome]):
 //   1. maxPorQuadro: de N eventos do mesmo tipo no quadro, so os N primeiros
 //      tocam. Matar 30 inimigos num quadro nao vira um estalo distorcido;
-//   2. intervaloMin: dois disparos do mesmo tipo nao se aproximam mais que isso
-//      no relogio do audio, nem entre quadros (a regra 1 sozinha deixaria 2
-//      estalos por quadro, 120 por segundo);
+//   2. intervaloMin: dois QUADROS que tocam o mesmo tipo ficam pelo menos isso
+//      separados no relogio do audio (a regra 1 sozinha deixaria 2 estalos por
+//      quadro, 120 por segundo). Dentro do quadro ela nao vale: as vozes do
+//      mesmo quadro saem juntas, ou separadas pela `defasagem` do som;
 //   3. maxVozesSimultaneas: com o teto de vozes vivas, o som comum e cortado.
 //      O prioritario (nivel, dano, fanfarras, aviso) passa sempre.
 // A regra 1 olha o que o consumidor ve, nao o que aconteceu: se emitir() cortou
@@ -77,8 +78,12 @@ export function criarAudio({ criarContexto, mudoInicial = false, aoMudar = null,
   let bufferRuido = null;
   let indisponivel = false;
   let mudo = !!mudoInicial;
+  // O rng do audio (ruido branco e o trecho dele que cada voz toca), a parte:
+  // o audio nunca consome o da simulacao.
+  let rng = null;
   const limitador = criarLimitador(cfg);
   const tocados = Object.create(null);
+  const noQuadro = Object.create(null); // vozes de cada som no quadro atual (defasagem)
 
   function volumeAlvo() {
     return mudo ? 0 : cfg.volumeGeral;
@@ -96,16 +101,23 @@ export function criarAudio({ criarContexto, mudoInicial = false, aoMudar = null,
     mestre = ctx.createGain();
     mestre.gain.value = volumeAlvo();
     // Rede de seguranca contra distorcao: se varias vozes somarem alto, o
-    // compressor segura em vez de estourar.
+    // limitador segura em vez de estourar. Configurado por content.js
+    // (audio.limitador): com os padroes do navegador o compressor comprimiria
+    // tudo e somaria ~+10 dB de ganho de compensacao (pendencia 82).
     if (ctx.createDynamicsCompressor) {
       const compressor = ctx.createDynamicsCompressor();
+      const l = cfg.limitador;
+      compressor.threshold.value = l.limiar;
+      compressor.knee.value = l.joelho;
+      compressor.ratio.value = l.razao;
+      compressor.attack.value = l.ataque;
+      compressor.release.value = l.soltura;
       mestre.connect(compressor);
       compressor.connect(ctx.destination);
     } else {
       mestre.connect(ctx.destination);
     }
-    // Ruido branco de um rng a parte: o audio nunca consome o da simulacao.
-    const rng = criarRng(cfg.sementeRuido);
+    rng = criarRng(cfg.sementeRuido);
     const n = Math.max(1, Math.floor(ctx.sampleRate * cfg.duracaoBufferRuido));
     bufferRuido = ctx.createBuffer(1, n, ctx.sampleRate);
     const dados = bufferRuido.getChannelData(0);
@@ -135,10 +147,14 @@ export function criarAudio({ criarContexto, mudoInicial = false, aoMudar = null,
     const fim = t0 + c.inicio + c.duracao;
     const ini = t0 + c.inicio;
     let fonte;
+    // Onde o ruido comeca no buffer: sorteado, para duas vozes do mesmo som nao
+    // tocarem o mesmo trecho e somarem em fase (pendencia 83).
+    let trecho = 0;
     if (c.onda === 'ruido') {
       fonte = ctx.createBufferSource();
       fonte.buffer = bufferRuido;
       fonte.loop = c.duracao > cfg.duracaoBufferRuido;
+      if (!fonte.loop) trecho = rng.range(0, cfg.duracaoBufferRuido - c.duracao);
     } else {
       fonte = ctx.createOscillator();
       fonte.type = c.onda;
@@ -160,13 +176,17 @@ export function criarAudio({ criarContexto, mudoInicial = false, aoMudar = null,
     }
     saida.connect(ganho);
     ganho.connect(mestre);
-    fonte.start(ini);
-    fonte.stop(fim + 0.02);
+    if (c.onda === 'ruido') fonte.start(ini, trecho);
+    else fonte.start(ini);
+    fonte.stop(fim + cfg.caudaParada);
   }
 
-  function tocar(nome) {
-    const t0 = ctx.currentTime;
-    for (const c of cfg.sons[nome].camadas) camada(c, t0);
+  // `vez`: quantas vozes deste som ja sairam neste quadro. A 2a em diante
+  // comeca `defasagem` s depois da anterior — dois estalos, nao um mais alto.
+  function tocar(nome, vez) {
+    const som = cfg.sons[nome];
+    const t0 = ctx.currentTime + vez * (som.defasagem || 0);
+    for (const c of som.camadas) camada(c, t0);
     tocados[nome] = (tocados[nome] || 0) + 1;
   }
 
@@ -175,7 +195,11 @@ export function criarAudio({ criarContexto, mudoInicial = false, aoMudar = null,
   function consumir(eventos) {
     if (mudo || !ctx || ctx.state === 'suspended' || eventos.length === 0) return 0;
     const nomes = planejarSons(eventos, limitador, ctx.currentTime);
-    for (const nome of nomes) tocar(nome);
+    for (const nome of nomes) noQuadro[nome] = 0;
+    for (const nome of nomes) {
+      tocar(nome, noQuadro[nome]);
+      noQuadro[nome] += 1;
+    }
     return nomes.length;
   }
 

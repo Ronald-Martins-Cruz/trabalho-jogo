@@ -48,12 +48,13 @@ export const CONTEUDO = {
   },
 
   // Aparencia do canvas. O CSS cuida das telas em DOM; aqui so o que o
-  // render.js desenha. Fase 12 (juice) acrescenta shake e flashes.
+  // render.js desenha. O fundo (cor por periodo) e os efeitos da fase 12
+  // (tremor, particulas, numeros, flashes) moram em `juice`, logo abaixo.
   visual: {
-    corFundo: '#0d0f1a',
-    corGrade: 'rgba(120, 140, 255, 0.07)',
     corBorda: 'rgba(120, 140, 255, 0.35)',
-    gradePasso: 60,
+    // O fillStyle de todo emoji. Tem que ser opaco: o navegador aplica o alfa
+    // do fillStyle ao emoji colorido (com o das carteiras, 0,08, o bando sumia).
+    corEmoji: '#ffffff',
     fonteEmoji: '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif',
     tamanhoEmojiJogador: 30,
     corSombraPausa: 'rgba(5, 6, 14, 0.6)',
@@ -68,7 +69,10 @@ export const CONTEUDO = {
     emojiSateliteFator: 2.2, // tamanho do emoji = raioColisao da caneta orbital x este fator
     corOndaTelegrafo: 'rgba(255, 210, 90, 0.55)', // anel do telegrafo do Resumo (comportamento ondaArea)
     corFeixe: 'rgba(255, 235, 59, 0.32)', // faixa translucida do Marca-texto (comportamento feixe)
-    corForaArena: 'rgba(0, 0, 0, 0.55)', // o que fica fora da arena encolhida (regras.arena < 1)
+    // O que fica fora da arena encolhida (regras.arena < 1). Fase 12: desenhado
+    // POR CIMA dos inimigos (pendencia 63) — quem nasce na faixa de fora aparece
+    // apagado ate cruzar a parede, e nao "pela metade dentro da tela".
+    corForaArena: 'rgba(0, 0, 0, 0.78)',
     // A Banca (fase 10). O emoji e maior que o corpo de colisao (banca.raio):
     // o raio fica preso pela regra da grade de separacao (separacao.gradePasso)
     // e o tamanho na tela e o que diz "chefe".
@@ -90,6 +94,164 @@ export const CONTEUDO = {
       faixaTextoY: 0.36, // fracao da altura do canvas onde a faixa do texto comeca
       faixaTextoAltura: 0.22, // fracao da altura do canvas
       pulsoTransicao: 6, // Hz do pulso da aura durante a transicao
+    },
+  },
+
+  // Juice (fase 12): tudo que o render.js e o CSS fazem para o jogo "sentir"
+  // os golpes. NADA aqui mexe na simulacao: os efeitos leem a fila de eventos
+  // e o estado, vivem fora de `estado` (render.js, criarEfeitos) e sorteiam com
+  // um rng proprio (`semente`), como o ruido do audio. O relogio dos efeitos e
+  // estado.tempo, em passos de loop.passo: a partida e identica com e sem eles.
+  juice: {
+    semente: 12,
+    // Screen shake: translacao do contexto no desenho, nunca posicao de
+    // entidade. Cada evento da lista leva o tremor a pelo menos aquele numero
+    // de px (o maior ganha, nao somam: uma rajada de golpes nao vira terremoto);
+    // depois ele cai exponencialmente (`decaimento`, 1/s) ate `minimo`.
+    tremor: {
+      eventos: {
+        'jogador-dano': 6,
+        'banca-padrao': 3, // cada golpe da Banca (leque, investida, horda)
+        'banca-transicao': 8,
+        'banca-derrotada': 12,
+        jubilado: 10,
+      },
+      maximo: 14, // px
+      decaimento: 9, // 1/s: 6px viram 0,4px em 0,3s
+      minimo: 0.3, // px: abaixo disso o tremor zera
+    },
+    // Particulas de morte, da pool de render.js (criarPool, capacidade
+    // arena.limites.particles). Cada entrada de `porTipo` (id de inimigo ou da
+    // Banca) sobrescreve so os campos que traz; o resto vem de `padrao`.
+    particulas: {
+      composicao: 'lighter', // soma luz: as faiscas brilham sobre o fundo escuro
+      maxPorQuadro: 220, // teto de particulas novas por quadro (horda + explosao)
+      padrao: {
+        quantidade: 8,
+        cores: ['#ffffff'],
+        velocidadeMin: 50, // px/s
+        velocidadeMax: 170,
+        vidaMin: 0.25, // s
+        vidaMax: 0.55,
+        tamanhoMin: 2, // px do lado do quadradinho
+        tamanhoMax: 4,
+        atrito: 3.5, // 1/s
+      },
+      porTipo: {
+        prazo: { quantidade: 8, cores: ['#ff4d5e', '#ff8a96', '#ffd0d5'] },
+        notificacao: { quantidade: 6, cores: ['#ffd23f', '#fff1a8', '#ffb627'] },
+        pdf: { quantidade: 14, cores: ['#f4f6ff', '#c9d2ea', '#8fa2d6'], velocidadeMax: 140, tamanhoMax: 5 },
+        trabalhoGrupo: { quantidade: 9, cores: ['#56c8ff', '#9ee6ff', '#2f6dff'] },
+        banca: {
+          quantidade: 70,
+          cores: ['#ffd36b', '#ff5d7a', '#7aa2ff', '#ffffff'],
+          velocidadeMin: 80,
+          velocidadeMax: 380,
+          vidaMin: 0.6,
+          vidaMax: 1.2,
+          tamanhoMax: 6,
+          atrito: 2,
+        },
+      },
+      // O jubilado: o jogador se desfaz onde caiu (aparece por baixo da tela
+      // de jubilado, durante o fade dela).
+      jogador: {
+        quantidade: 40,
+        cores: ['#8fd6ff', '#ffffff', '#ff5d7a'],
+        velocidadeMin: 60,
+        velocidadeMax: 260,
+        vidaMin: 0.5,
+        vidaMax: 1,
+        tamanhoMax: 5,
+        atrito: 2.5,
+      },
+    },
+    // Numeros de dano subindo. Nao existe critico no jogo, entao nao ha estilo
+    // de critico. Agrupamento: um golpe que cai a menos de `raioAgrupar` px de
+    // um numero com menos de `janelaAgrupar` s de vida SOMA nele (e o numero da
+    // um "pulo") em vez de nascer outro — e o que faz o Marca-texto, que acerta
+    // todo tick, virar um numero que cresce, e uma horda virar poucos numeros.
+    numeros: {
+      max: 48, // pool de numeros vivos
+      novosPorQuadro: 10, // depois disso, golpes em lugar novo nao viram numero neste quadro
+      raioAgrupar: 26, // px
+      janelaAgrupar: 0.22, // s
+      vida: 0.65, // s
+      subida: 46, // px/s
+      desvioNascimento: 14, // px acima do ponto do golpe
+      inicioFade: 0.55, // fracao da vida em que o numero comeca a sumir
+      pop: 0.45, // escala extra no nascimento e a cada soma
+      popDuracao: 0.12, // s
+      fonte: 'bold 14px ui-monospace, "Cascadia Mono", Consolas, monospace',
+      fonteJogador: 'bold 17px ui-monospace, "Cascadia Mono", Consolas, monospace',
+      cor: '#fff4cf',
+      corJogador: '#ff6b86', // o dano que o JOGADOR toma, em cima dele
+      corContorno: 'rgba(8, 8, 18, 0.85)',
+      larguraContorno: 3,
+    },
+    // Flash de golpe: o inimigo que perdeu HP neste quadro e redesenhado em
+    // modo aditivo (clareia o proprio emoji) e "incha" um pouco. No jogador, o
+    // mesmo, mais uma vinheta vermelha nas bordas da tela.
+    flash: {
+      duracao: 0.12, // s
+      alpha: 0.85, // forca da passada aditiva no inicio do flash
+      escalaPop: 0.18, // o emoji cresce ate 18% no golpe
+      jogadorDuracao: 0.2,
+      vinhetaDanoDuracao: 0.35,
+      corVinhetaDano: 'rgba(255, 30, 60, 0.55)',
+    },
+    // O chao da sala: piso em grade e fileiras de carteiras, uma paleta por
+    // periodo (o 1o claro, o 3o sombrio) e uma para o TCC. A vinheta escurece
+    // as bordas; raios em fracao da meia-diagonal do canvas.
+    fundo: {
+      passoPiso: 60, // px entre as linhas do piso
+      // px. A mesa e o assento logo atras dela.
+      carteira: { passoX: 96, passoY: 72, largura: 40, altura: 18, assentoLargura: 20, assentoAltura: 8, assentoDistancia: 5 },
+      vinhetaRaioInterno: 0.5,
+      vinhetaRaioExterno: 1,
+    },
+    paletas: [
+      // 1o periodo: comeco do semestre, sala clara.
+      { fundo: '#232a4a', piso: 'rgba(160, 180, 255, 0.09)', carteira: 'rgba(170, 190, 255, 0.08)', vinheta: 'rgba(4, 5, 14, 0.4)' },
+      // 2o: fim de tarde.
+      { fundo: '#201838', piso: 'rgba(200, 150, 255, 0.08)', carteira: 'rgba(210, 160, 255, 0.07)', vinheta: 'rgba(6, 3, 14, 0.55)' },
+      // 3o: madrugada antes da prova.
+      { fundo: '#180c14', piso: 'rgba(255, 110, 130, 0.07)', carteira: 'rgba(255, 120, 140, 0.06)', vinheta: 'rgba(0, 0, 0, 0.72)' },
+    ],
+    paletaTcc: { fundo: '#15110a', piso: 'rgba(255, 200, 100, 0.07)', carteira: 'rgba(255, 210, 130, 0.06)', vinheta: 'rgba(0, 0, 0, 0.75)' },
+    // Aviso de spawn: um brilho na parede, no ponto por onde o inimigo recem-
+    // nascido (fora da arena visivel) vai entrar. Nasce junto com ele — ele
+    // leva ~1,3s para cruzar arena.margemSpawn — e some em `duracao`.
+    avisoSpawn: {
+      duracao: 0.9, // s de vida do inimigo em que o aviso aparece
+      raio: 36, // px
+      alphaMax: 0.75,
+      corCentro: 'rgba(255, 150, 90, 0.9)',
+      corBorda: 'rgba(255, 150, 90, 0)',
+    },
+    // O topo do HUD cobre a faixa de cima da arena: com o jogador ou A Banca
+    // nela (px do canvas, pela borda de cima do emoji), ele fica translucido.
+    hud: { faixaTopo: 90 },
+    // As transicoes das telas em DOM. ui.js escreve cada uma como variavel CSS
+    // no :root e o style.css so as usa: o numero mora aqui, nao no CSS.
+    css: {
+      '--fade-tela': '200ms',
+      '--deslize-carta': '320ms',
+      '--deslize-distancia': '3em',
+      '--atraso-entre-cartas': '70ms',
+      '--carimbo': '420ms',
+      '--atraso-carimbo': '220ms',
+      '--carimbo-escala': '2.6',
+      '--carimbo-giro': '-7deg',
+      '--tween-hp': '140ms',
+      '--tween-hp-fantasma': '450ms',
+      '--atraso-hp-fantasma': '300ms',
+      '--tween-xp': '160ms',
+      '--pulso-timer': '1s',
+      '--pulso-timer-escala': '1.12',
+      '--tooltip': '120ms', // o tooltip dos coringas do HUD
+      '--hud-fade': '150ms',
+      '--hud-translucido': '0.3', // opacidade do topo do HUD com alguem embaixo
     },
   },
 
@@ -1085,12 +1247,37 @@ export const CONTEUDO = {
     chaveMudo: 'semana-de-provas/mudo',
     // Limitador de vozes. Os tres numeros valem por TIPO de som:
     //   maxPorQuadro   quantos o consumidor da fila deixa tocar por quadro;
-    //   intervaloMin   s de relogio de audio entre dois disparos do mesmo tipo;
+    //   intervaloMin   s de relogio de audio entre dois QUADROS que tocam o
+    //                  mesmo tipo. Dentro de um quadro quem manda e
+    //                  maxPorQuadro: as vozes do mesmo quadro saem juntas
+    //                  (ou separadas por `defasagem`, se o som tiver);
     //   prioritario    nunca e cortado pelo teto de vozes simultaneas.
+    //   defasagem      (opcional) s entre a 1a e a 2a voz do mesmo som no mesmo
+    //                  quadro. Sem ela as duas comecam no mesmo instante, com o
+    //                  mesmo trecho de ruido, e somam em fase: viram UM estalo
+    //                  com o dobro da amplitude, nao dois (pendencia 83).
     // Os numeros se somam: 30 mortes num quadro viram no maximo `maxPorQuadro`.
     maxVozesSimultaneas: 16,
     // Rampa curta para o volume geral nao estalar ao mudar.
     rampaGeral: 0.02,
+    // s que cada fonte continua ligada depois do fim do envelope: o decay
+    // exponencial chega perto de zero no fim, e parar a fonte exatamente ali
+    // corta o rabo dele com um clique.
+    caudaParada: 0.02,
+    // A saida passa por um DynamicsCompressor configurado como LIMITADOR, a
+    // rede de seguranca contra muitas vozes somadas (pendencia 82). Com os
+    // padroes do navegador (limiar -24 dB, joelho 30, razao 12) ele comprime
+    // tudo e ainda aplica ~+10 dB de ganho de compensacao automatico: o jogo
+    // soaria bem mais alto que volumeGeral e "bombearia". Com limiar -1 dB e
+    // joelho 0, abaixo de -1 dBFS ele nao faz nada; o ganho de compensacao que
+    // a especificacao calcula fica em ~+0,6 dB.
+    limitador: {
+      limiar: -1, // dB
+      joelho: 0, // dB
+      razao: 20,
+      ataque: 0.002, // s
+      soltura: 0.1, // s
+    },
     // Semente do buffer de ruido branco: um rng a parte, que nunca toca o da
     // simulacao (o audio nao pode mudar a partida).
     sementeRuido: 7,
@@ -1141,6 +1328,7 @@ export const CONTEUDO = {
         maxPorQuadro: 2,
         intervaloMin: 0.03,
         prioritario: false,
+        defasagem: 0.018, // a 2a morte do quadro e um 2o estalo, nao o 1o mais alto
         camadas: [
           { onda: 'ruido', inicio: 0, duracao: 0.05, ataque: 0.001, volume: 0.3, filtro: { tipo: 'highpass', freq: 2500 } },
           { onda: 'square', freq: 240, freqFim: 90, inicio: 0, duracao: 0.05, ataque: 0.001, volume: 0.12 },
@@ -1234,6 +1422,11 @@ export const CONTEUDO = {
     banca: {
       transicao: 'A Banca se reúne', // o texto grande da pausa entre fases
       fase: 'Fase {n} — {nome}', // embaixo dele, e no HUD ao lado da barra
+      // A apresentacao dela na tela do TCC. {fases} e {limiar} saem de
+      // banca.fases (pendencia 79: o index.html repetia os numeros).
+      descricao:
+        '{fases} rodadas: com {limiar}% da vida, ela endurece. Faz perguntas em leque, chama reforços e, ' +
+        'na última rodada, avança sobre você. Tudo o que ela vai fazer aparece antes no chão: linhas, faixa ou círculos.',
     },
     jubilado: {
       onde: 'Caiu em {avaliacao} — {periodo}.',
@@ -1272,6 +1465,9 @@ export const CONTEUDO = {
       vender: 'vender por',
       gasto: 'já usado',
       semCoringa: 'vazio',
+      // A dica de teclado da loja: as teclas saem de quantos itens ela tem
+      // NESTA visita (3, ou 4 com B/A) — pendencia 57.
+      dicaCompra: '{teclas} compram',
       avisos: {
         semCreditos: 'Créditos insuficientes.',
         cheio: 'Você já tem o máximo de coringas. Venda um primeiro.',
@@ -1990,7 +2186,17 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(a.rampaGeral, 'audio.rampaGeral', { min: 0, max: 1 });
     exigeNumero(a.sementeRuido, 'audio.sementeRuido', { min: 0 });
     exigeNumero(a.duracaoBufferRuido, 'audio.duracaoBufferRuido', { min: 0.1, max: 5 });
+    exigeNumero(a.caudaParada, 'audio.caudaParada', { min: 0, max: 0.5 });
     exigeTexto(a.chaveMudo, 'audio.chaveMudo');
+    // O compressor da saida e um limitador: limiar perto de 0 dBFS, sem joelho.
+    // Limiar baixo volta a comprimir tudo e a somar ganho de compensacao.
+    if (exigeObjeto(a.limitador, 'audio.limitador')) {
+      exigeNumero(a.limitador.limiar, 'audio.limitador.limiar', { min: -6, max: 0 });
+      exigeNumero(a.limitador.joelho, 'audio.limitador.joelho', { min: 0, max: 6 });
+      exigeNumero(a.limitador.razao, 'audio.limitador.razao', { min: 10, max: 20 });
+      exigeNumero(a.limitador.ataque, 'audio.limitador.ataque', { min: 0, max: 0.05 });
+      exigeNumero(a.limitador.soltura, 'audio.limitador.soltura', { min: 0.01, max: 1 });
+    }
     const ondas = ['sine', 'square', 'triangle', 'sawtooth', 'ruido'];
     const filtros = ['lowpass', 'highpass', 'bandpass'];
     if (exigeObjeto(a.sons, 'audio.sons') && exigeObjeto(a.eventos, 'audio.eventos')) {
@@ -2002,6 +2208,7 @@ export function validarConteudo(conteudo = CONTEUDO) {
         if (!exigeObjeto(som, c0)) continue;
         exigeNumero(som.maxPorQuadro, `${c0}.maxPorQuadro`, { min: 1 });
         exigeNumero(som.intervaloMin, `${c0}.intervaloMin`, { min: 0 });
+        if (som.defasagem !== undefined) exigeNumero(som.defasagem, `${c0}.defasagem`, { min: 0.005, max: 0.1 });
         if (typeof som.prioritario !== 'boolean') erros.push(`${c0}.prioritario: esperava booleano`);
         if (!Object.values(a.eventos).includes(nome)) erros.push(`${c0}: nenhum evento de audio.eventos toca este som`);
         if (!Array.isArray(som.camadas) || som.camadas.length === 0) {
@@ -2358,6 +2565,152 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
   }
 
+  // Juice (fase 12). So aparencia, mas um numero podre aqui vira NaN no
+  // desenho, ou uma particula que nunca morre e enche a pool.
+  if (exigeObjeto(conteudo.juice, 'juice')) {
+    const j = conteudo.juice;
+    exigeNumero(j.semente, 'juice.semente', { min: 0 });
+    // O emoji herda o alfa do fillStyle: a cor dele tem que ser opaca.
+    const corEmoji = conteudo.visual && conteudo.visual.corEmoji;
+    if (typeof corEmoji !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(corEmoji)) {
+      erros.push(`visual.corEmoji: esperava uma cor opaca #rrggbb, veio ${JSON.stringify(corEmoji)} (o alfa dela apagaria todo emoji)`);
+    }
+    const exigeCor = (valor, caminho) => {
+      if (typeof valor !== 'string' || !/^(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))$/.test(valor)) {
+        erros.push(`${caminho}: esperava uma cor #hex ou rgb()/rgba(), veio ${JSON.stringify(valor)}`);
+      }
+    };
+    if (exigeObjeto(j.tremor, 'juice.tremor')) {
+      const t = j.tremor;
+      exigeNumero(t.maximo, 'juice.tremor.maximo', { min: 0, max: 40 });
+      exigeNumero(t.decaimento, 'juice.tremor.decaimento', { min: 0.5 });
+      exigeNumero(t.minimo, 'juice.tremor.minimo', { min: 0, max: 5 });
+      if (exigeObjeto(t.eventos, 'juice.tremor.eventos')) {
+        for (const [evento, px] of Object.entries(t.eventos)) exigeNumero(px, `juice.tremor.eventos.${evento}`, { min: 0, max: 40 });
+      }
+    }
+    // Uma rajada de particulas e `padrao` sobrescrito por campo: o validador
+    // confere a COMBINACAO, que e o que o render usa.
+    const exigeRajada = (r, caminho) => {
+      const base = (j.particulas && j.particulas.padrao) || {};
+      const m = { ...base, ...r };
+      exigeNumero(m.quantidade, `${caminho}.quantidade`, { min: 0, max: 200 });
+      exigeNumero(m.velocidadeMin, `${caminho}.velocidadeMin`, { min: 0 });
+      exigeNumero(m.velocidadeMax, `${caminho}.velocidadeMax`, { min: Number.isFinite(m.velocidadeMin) ? m.velocidadeMin : 0 });
+      exigeNumero(m.vidaMin, `${caminho}.vidaMin`, { min: 0.01, max: 5 });
+      exigeNumero(m.vidaMax, `${caminho}.vidaMax`, { min: Number.isFinite(m.vidaMin) ? m.vidaMin : 0.01, max: 5 });
+      exigeNumero(m.tamanhoMin, `${caminho}.tamanhoMin`, { min: 0.5 });
+      exigeNumero(m.tamanhoMax, `${caminho}.tamanhoMax`, { min: Number.isFinite(m.tamanhoMin) ? m.tamanhoMin : 0.5, max: 20 });
+      exigeNumero(m.atrito, `${caminho}.atrito`, { min: 0 });
+      if (!Array.isArray(m.cores) || m.cores.length === 0) erros.push(`${caminho}.cores: esperava uma lista nao vazia`);
+      else m.cores.forEach((c, i) => exigeCor(c, `${caminho}.cores[${i}]`));
+    };
+    if (exigeObjeto(j.particulas, 'juice.particulas')) {
+      const p = j.particulas;
+      exigeNumero(p.maxPorQuadro, 'juice.particulas.maxPorQuadro', { min: 1 });
+      if (!['source-over', 'lighter'].includes(p.composicao)) erros.push(`juice.particulas.composicao: "${p.composicao}" (use source-over ou lighter)`);
+      if (exigeObjeto(p.padrao, 'juice.particulas.padrao')) exigeRajada({}, 'juice.particulas.padrao');
+      if (exigeObjeto(p.jogador, 'juice.particulas.jogador')) exigeRajada(p.jogador, 'juice.particulas.jogador');
+      if (exigeObjeto(p.porTipo, 'juice.particulas.porTipo')) {
+        // Um id que nao existe e uma explosao que nunca acontece (typo calado).
+        const ids = new Set((Array.isArray(conteudo.inimigos) ? conteudo.inimigos : []).map((t) => t && t.id));
+        if (conteudo.banca && conteudo.banca.id) ids.add(conteudo.banca.id);
+        for (const [id, r] of Object.entries(p.porTipo)) {
+          if (!ids.has(id)) erros.push(`juice.particulas.porTipo.${id}: nao e id de inimigo nem da Banca`);
+          if (exigeObjeto(r, `juice.particulas.porTipo.${id}`)) exigeRajada(r, `juice.particulas.porTipo.${id}`);
+        }
+      }
+      const limite = conteudo.arena && conteudo.arena.limites && conteudo.arena.limites.particles;
+      if (typeof limite === 'number' && p.maxPorQuadro > limite) {
+        erros.push(`juice.particulas.maxPorQuadro: ${p.maxPorQuadro} passa a pool inteira (arena.limites.particles ${limite})`);
+      }
+    }
+    if (exigeObjeto(j.numeros, 'juice.numeros')) {
+      const n = j.numeros;
+      exigeNumero(n.max, 'juice.numeros.max', { min: 1, max: 256 });
+      exigeNumero(n.novosPorQuadro, 'juice.numeros.novosPorQuadro', { min: 1 });
+      exigeNumero(n.raioAgrupar, 'juice.numeros.raioAgrupar', { min: 0 });
+      exigeNumero(n.janelaAgrupar, 'juice.numeros.janelaAgrupar', { min: 0 });
+      exigeNumero(n.vida, 'juice.numeros.vida', { min: 0.05, max: 5 });
+      exigeNumero(n.subida, 'juice.numeros.subida', { min: 0 });
+      exigeNumero(n.desvioNascimento, 'juice.numeros.desvioNascimento', { min: 0 });
+      exigeNumero(n.inicioFade, 'juice.numeros.inicioFade', { min: 0, max: 0.99 });
+      exigeNumero(n.pop, 'juice.numeros.pop', { min: 0, max: 2 });
+      exigeNumero(n.popDuracao, 'juice.numeros.popDuracao', { min: 0.01 });
+      exigeNumero(n.larguraContorno, 'juice.numeros.larguraContorno', { min: 0 });
+      exigeTexto(n.fonte, 'juice.numeros.fonte');
+      exigeTexto(n.fonteJogador, 'juice.numeros.fonteJogador');
+      for (const k of ['cor', 'corJogador', 'corContorno']) exigeCor(n[k], `juice.numeros.${k}`);
+      if (Number.isFinite(n.janelaAgrupar) && Number.isFinite(n.vida) && n.janelaAgrupar >= n.vida) {
+        erros.push('juice.numeros.janelaAgrupar: precisa ser menor que a vida do numero (senao ele nunca para de somar)');
+      }
+    }
+    if (exigeObjeto(j.flash, 'juice.flash')) {
+      const f = j.flash;
+      exigeNumero(f.duracao, 'juice.flash.duracao', { min: 0.02, max: 1 });
+      exigeNumero(f.alpha, 'juice.flash.alpha', { min: 0, max: 1 });
+      exigeNumero(f.escalaPop, 'juice.flash.escalaPop', { min: 0, max: 1 });
+      exigeNumero(f.jogadorDuracao, 'juice.flash.jogadorDuracao', { min: 0.02, max: 1 });
+      exigeNumero(f.vinhetaDanoDuracao, 'juice.flash.vinhetaDanoDuracao', { min: 0, max: 2 });
+      exigeCor(f.corVinhetaDano, 'juice.flash.corVinhetaDano');
+    }
+    if (exigeObjeto(j.fundo, 'juice.fundo')) {
+      const f = j.fundo;
+      exigeNumero(f.passoPiso, 'juice.fundo.passoPiso', { min: 8 });
+      exigeNumero(f.vinhetaRaioInterno, 'juice.fundo.vinhetaRaioInterno', { min: 0, max: 2 });
+      exigeNumero(f.vinhetaRaioExterno, 'juice.fundo.vinhetaRaioExterno', {
+        min: Number.isFinite(f.vinhetaRaioInterno) ? f.vinhetaRaioInterno + 0.01 : 0,
+        max: 3,
+      });
+      if (exigeObjeto(f.carteira, 'juice.fundo.carteira')) {
+        exigeNumero(f.carteira.passoX, 'juice.fundo.carteira.passoX', { min: 16 });
+        exigeNumero(f.carteira.passoY, 'juice.fundo.carteira.passoY', { min: 16 });
+        exigeNumero(f.carteira.largura, 'juice.fundo.carteira.largura', { min: 1, max: f.carteira.passoX });
+        exigeNumero(f.carteira.altura, 'juice.fundo.carteira.altura', { min: 1, max: f.carteira.passoY });
+        exigeNumero(f.carteira.assentoLargura, 'juice.fundo.carteira.assentoLargura', { min: 0, max: f.carteira.largura });
+        exigeNumero(f.carteira.assentoAltura, 'juice.fundo.carteira.assentoAltura', { min: 0 });
+        exigeNumero(f.carteira.assentoDistancia, 'juice.fundo.carteira.assentoDistancia', { min: 0 });
+        if (f.carteira.altura + f.carteira.assentoDistancia + f.carteira.assentoAltura > f.carteira.passoY) {
+          erros.push('juice.fundo.carteira: mesa + assento passam do passoY (as fileiras se encostam)');
+        }
+      }
+    }
+    // "Uma mudanca de paleta por periodo": uma paleta para cada periodo da run.
+    const exigePaleta = (p, caminho) => {
+      if (!exigeObjeto(p, caminho)) return;
+      for (const k of ['fundo', 'piso', 'carteira', 'vinheta']) exigeCor(p[k], `${caminho}.${k}`);
+    };
+    if (!Array.isArray(j.paletas)) erros.push('juice.paletas: esperava um array');
+    else {
+      const periodos = Array.isArray(conteudo.periodos) ? conteudo.periodos.length : 0;
+      if (j.paletas.length < periodos) erros.push(`juice.paletas: ${j.paletas.length} paletas para ${periodos} periodos`);
+      j.paletas.forEach((p, i) => exigePaleta(p, `juice.paletas[${i}]`));
+    }
+    exigePaleta(j.paletaTcc, 'juice.paletaTcc');
+    if (exigeObjeto(j.avisoSpawn, 'juice.avisoSpawn')) {
+      const a = j.avisoSpawn;
+      exigeNumero(a.duracao, 'juice.avisoSpawn.duracao', { min: 0.1, max: 3 });
+      exigeNumero(a.raio, 'juice.avisoSpawn.raio', { min: 1 });
+      exigeNumero(a.alphaMax, 'juice.avisoSpawn.alphaMax', { min: 0, max: 1 });
+      exigeCor(a.corCentro, 'juice.avisoSpawn.corCentro');
+      exigeCor(a.corBorda, 'juice.avisoSpawn.corBorda');
+    }
+    if (exigeObjeto(j.hud, 'juice.hud')) {
+      const altura = conteudo.arena && conteudo.arena.altura;
+      exigeNumero(j.hud.faixaTopo, 'juice.hud.faixaTopo', { min: 0, max: typeof altura === 'number' ? altura / 2 : Infinity });
+    }
+    // Variaveis CSS: nome com "--" e valor numerico com unidade (o smoke
+    // confere que o style.css usa cada uma, e so as daqui).
+    if (exigeObjeto(j.css, 'juice.css')) {
+      for (const [nome, valor] of Object.entries(j.css)) {
+        if (!/^--[a-z0-9-]+$/.test(nome)) erros.push(`juice.css: "${nome}" nao e nome de variavel CSS (--assim)`);
+        if (typeof valor !== 'string' || !/^-?\d+(\.\d+)?(ms|s|em|px|deg)?$/.test(valor)) {
+          erros.push(`juice.css.${nome}: "${valor}" nao e um numero CSS (200ms, 1.12, 0.5em)`);
+        }
+      }
+    }
+  }
+
   // Textos que a UI monta com numeros. Faltar um deles nao quebra nada: sai
   // "undefined" na tela de resultado, que e pior.
   if (exigeObjeto(conteudo.textos, 'textos')) {
@@ -2375,7 +2728,7 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
     if (exigeObjeto(conteudo.textos.loja, 'textos.loja')) {
       const t = conteudo.textos.loja;
-      for (const campo of ['rerolar', 'gratis', 'seguir', 'vendido', 'vazio', 'vender', 'gasto', 'semCoringa']) {
+      for (const campo of ['rerolar', 'gratis', 'seguir', 'vendido', 'vazio', 'vender', 'gasto', 'semCoringa', 'dicaCompra']) {
         if (typeof t[campo] !== 'string' || t[campo] === '') erros.push(`textos.loja.${campo}: ausente ou vazio`);
       }
       if (exigeObjeto(t.avisos, 'textos.loja.avisos')) {
@@ -2393,7 +2746,7 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
     // Fase 10: telas de fim e a Banca.
     const CAMPOS_DE_TEXTO = {
-      banca: ['transicao', 'fase'],
+      banca: ['transicao', 'fase', 'descricao'],
       jubilado: ['onde', 'faltavaTempo', 'faltavaBanca', 'restamVarias', 'restaUma', 'soTcc', 'ultimaEtapa'],
       colacao: ['tcc', 'media', 'conceito', 'semCoringa', 'novoRecorde', 'recorde'],
       recorde: ['menu'],

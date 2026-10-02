@@ -10,47 +10,61 @@
   <div class="cena">
     <canvas id="palco" width="960" height="540"></canvas>
 
-    <!-- HUD: sempre montado, escondido fora da avaliação. -->
+    <!-- HUD: sempre montado, escondido fora da avaliação. Compacto no topo
+         (a arena e A Banca não passam por baixo dele) e os coringas e
+         modificadores no rodapé, cada linha com rótulo. -->
     <div id="hud" class="camada hud oculto">
+      <!-- XP: a barra fina na beira de cima, como em todo survivor. -->
+      <div class="barra barra-xp">
+        <div id="xp-barra" class="preenchimento"></div>
+      </div>
       <div class="hud-topo">
-        <div class="hud-identificacao">
-          <span id="periodo-nome" class="periodo">1º Período</span>
-          <span id="avaliacao-nome" class="avaliacao">Avaliação 1</span>
+        <div class="hud-esquerda">
+          <div class="hud-identificacao">
+            <span id="periodo-nome" class="periodo">1º Período</span>
+            <span id="avaliacao-nome" class="avaliacao">Avaliação 1</span>
+          </div>
+          <!-- O fantasma fica para trás e alcança a barra devagar: o dano
+               aparece como um pedaço que se desfaz, não como um salto. -->
+          <div class="barra barra-hp">
+            <div id="hp-fantasma" class="fantasma"></div>
+            <div id="hp-barra" class="preenchimento"></div>
+            <span id="hp-texto" class="barra-texto">100/100</span>
+          </div>
         </div>
-        <div id="timer" class="timer">1:00</div>
+        <div class="hud-centro">
+          <div id="timer" class="timer">1:00</div>
+          <!-- A Banca: só no TCC. As marcas de fase são montadas por ui.js a
+               partir de content.js (banca.fases). -->
+          <div id="banca-hud" class="banca-hud oculto">
+            <div class="banca-cabecalho">
+              <span id="banca-nome" class="banca-nome">📋 A Banca</span>
+              <span id="banca-fase" class="banca-fase">Fase 1</span>
+            </div>
+            <div class="barra barra-banca">
+              <div id="banca-barra" class="preenchimento"></div>
+              <div id="banca-marcas" class="banca-marcas"></div>
+            </div>
+          </div>
+        </div>
         <div class="hud-nivel">
           <span class="rotulo">Nível</span>
           <span id="nivel" class="valor">1</span>
         </div>
       </div>
-
-      <!-- A Banca: só no TCC. As marcas de fase são montadas por ui.js a partir
-           de content.js (banca.fases). -->
-      <div id="banca-hud" class="banca-hud oculto">
-        <div class="banca-cabecalho">
-          <span id="banca-nome" class="banca-nome">📋 A Banca</span>
-          <span id="banca-fase" class="banca-fase">Fase 1</span>
+      <!-- Rodapé: os coringas da run e os modificadores desta avaliação, um
+           chip por item, com nome e descrição ao passar o mouse. Os chips são
+           montados uma vez por ui.js; cada grupo some quando está vazio. -->
+      <div class="hud-rodape">
+        <div id="hud-grupo-coringas" class="hud-grupo">
+          <span class="hud-rotulo">Coringas</span>
+          <div id="hud-coringas" class="hud-chips"></div>
         </div>
-        <div class="barra barra-banca">
-          <div id="banca-barra" class="preenchimento"></div>
-          <div id="banca-marcas" class="banca-marcas"></div>
-        </div>
-      </div>
-
-      <div class="hud-barras">
-        <div class="barra barra-xp">
-          <div id="xp-barra" class="preenchimento"></div>
-        </div>
-        <div class="barra barra-hp">
-          <div id="hp-barra" class="preenchimento"></div>
-          <span id="hp-texto" class="barra-texto">100/100</span>
+        <div id="hud-grupo-modificadores" class="hud-grupo hud-grupo-mods">
+          <span class="hud-rotulo">Modificadores</span>
+          <div id="hud-modificadores" class="hud-chips"></div>
         </div>
       </div>
-      <!-- Os coringas da run, em emoji. Vazio sem coringa. Esmaecidos quando a
-           avaliação os desliga (Prova sem Consulta). -->
-      <div id="hud-coringas" class="hud-coringas"></div>
-      <!-- Os modificadores desta avaliação, em emoji: o lembrete do anúncio. -->
-      <div id="hud-modificadores" class="hud-modificadores"></div>
     </div>
 
     <!-- Anúncio: antes de cada avaliação. Os slots de modificador são montados
@@ -78,9 +92,9 @@
         <span class="tcc-banca-emoji">📋</span>
         <div class="tcc-banca-texto">
           <p class="tcc-banca-nome">A Banca</p>
-          <p class="tcc-banca-descricao">Duas rodadas: da metade da vida dela em diante, ela endurece.
-            Faz perguntas em leque, chama reforços e, na segunda rodada, avança sobre você.
-            Tudo o que ela vai fazer aparece antes no chão: linhas, faixa ou círculos.</p>
+          <!-- Montado por ui.js a partir de content.js (textos.banca.descricao,
+               com o número de rodadas e o limiar da virada). -->
+          <p id="tcc-descricao" class="tcc-banca-descricao"></p>
         </div>
       </div>
       <p class="decomposicao">Sem cronômetro: a defesa acaba quando ela cair — ou você.</p>
@@ -97,7 +111,7 @@
       <p id="colacao-tcc" class="subtitulo">TCC aprovado pela Banca</p>
       <div class="nota-caixa colacao-caixa">
         <span id="colacao-media" class="nota-valor">0,0</span>
-        <span id="colacao-conceito" class="nota-conceito">Conceito geral</span>
+        <span id="colacao-conceito" class="nota-conceito carimbo">Conceito geral</span>
       </div>
       <div id="colacao-boletins" class="colacao-boletins"></div>
       <p class="colacao-rotulo">Coringas na formatura</p>
@@ -157,7 +171,7 @@
       <h2 class="titulo-resultado">Aprovado</h2>
       <div class="nota-caixa">
         <span id="resultado-nota" class="nota-valor">0,0</span>
-        <span id="resultado-conceito" class="nota-conceito">Conceito F</span>
+        <span id="resultado-conceito" class="nota-conceito carimbo">Conceito F</span>
       </div>
       <p id="resultado-decomposicao" class="decomposicao">—</p>
       <p id="resultado-creditos" class="creditos">◉ 0 créditos</p>
@@ -190,7 +204,8 @@
       <p class="loja-rotulo">Seus coringas <span id="loja-contagem">0/5</span> · clique para vender</p>
       <div id="loja-coringas" class="loja-coringas"></div>
       <p id="loja-aviso" class="loja-aviso"></p>
-      <p class="dica">1 · 2 · 3 · 4 compram · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
+      <!-- As teclas de compra saem de quantos itens a loja tem (ui.js). -->
+      <p class="dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
     </div>
 
     <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. Onde caiu e quanto

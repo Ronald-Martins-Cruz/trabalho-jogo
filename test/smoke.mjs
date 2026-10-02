@@ -98,12 +98,19 @@ import {
   rotuloDoReroll,
   textoOndeCaiu,
   textoQuantoFaltava,
+  aplicarVariaveisCss,
+  chipDoCoringa,
+  chipDoModificador,
+  dicaDaLoja,
+  hudCobreAlguem,
+  textoDaBancaNoTcc,
 } from '../src/ui.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import {
   aplicarDano,
   atualizarInimigos,
   spawnInimigo,
+  spawnTipo,
   poolInimigos,
   limparInimigos,
   verificarInimigosDoConteudo,
@@ -128,6 +135,7 @@ import {
   xpParaSubir,
 } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
+import { criarEfeitos, desenhar, flashDoInimigo, pontoDeEntrada } from '../src/render.js';
 import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
 import { analisarAvaliacao, ESCOPOS, gerarRelatorio, nomeFonte } from '../src/relatorio.js';
 
@@ -4790,7 +4798,14 @@ function contextoFalso(estadoInicial = 'running', { resumeAcorda = true } = {}) 
         if (reg.ganhoMestre === null) reg.ganhoMestre = g;
         return g;
       },
-      createDynamicsCompressor() { reg.compressores += 1; return { connect() {} }; },
+      // Fase 12: com os AudioParams do limitador (pendencia 82), que o
+      // sintetizador agora configura.
+      createDynamicsCompressor() {
+        reg.compressores += 1;
+        const c = { threshold: param(), knee: param(), ratio: param(), attack: param(), release: param(), connect() {} };
+        reg.compressor = c;
+        return c;
+      },
       createBuffer(c, n) {
         const dados = new Float32Array(n);
         reg.buffers.push(dados);
@@ -4802,7 +4817,7 @@ function contextoFalso(estadoInicial = 'running', { resumeAcorda = true } = {}) 
         return o;
       },
       createBufferSource() {
-        const n = { buffer: null, loop: false, connect() {}, start(t) { n.t0 = t; }, stop(t) { n.t1 = t; } };
+        const n = { buffer: null, loop: false, connect() {}, start(t, trecho = 0) { n.t0 = t; n.trecho = trecho; }, stop(t) { n.t1 = t; } };
         reg.ruidos.push(n);
         return n;
       },
@@ -4900,6 +4915,33 @@ function checarAudio() {
   const ruidoBranco = f1.reg.buffers[0];
   if (!ruidoBranco || !ruidoBranco.some((v) => v > 0.5) || !ruidoBranco.some((v) => v < -0.5) || ruidoBranco.some((v) => Math.abs(v) > 1)) falhar(0, 'audio: o buffer de ruido branco nao e ruido');
   if (f1.reg.compressores !== 1) falhar(0, 'audio: sem o compressor de seguranca na saida');
+  // Pendencia 82 (fase 12): o compressor e o limitador de content.js, e nao o
+  // padrao do navegador (que comprime tudo e soma ~+10 dB de compensacao).
+  // E com outro cfg (numeros que nao sao os de content.js), para um numero
+  // escrito direto no audio.js nao passar por coincidencia.
+  const cfgOutro = structuredClone(A);
+  cfgOutro.limitador = { limiar: -2, joelho: 1, razao: 15, ataque: 0.004, soltura: 0.2 };
+  cfgOutro.caudaParada = 0.07;
+  const fOutro = contextoFalso();
+  const audioOutro = criarAudio({ criarContexto: fOutro.fabrica, cfg: cfgOutro });
+  audioOutro.destravar();
+  const paresDoLimitador = [['threshold', 'limiar'], ['knee', 'joelho'], ['ratio', 'razao'], ['attack', 'ataque'], ['release', 'soltura']];
+  for (const [reg, cfgLimitador] of [[f1.reg, A.limitador], [fOutro.reg, cfgOutro.limitador]]) {
+    for (const [param, chave] of paresDoLimitador) {
+      if (reg.compressor[param].value !== cfgLimitador[chave]) {
+        falhar(0, `audio: o compressor saiu com ${param}=${reg.compressor[param].value}, o cfg pede ${cfgLimitador[chave]} (pendencia 82)`);
+      }
+    }
+  }
+  // Pendencia 84: a cauda de cada fonte e a do cfg.
+  audioOutro.consumir(eventosDe('jogador-dano', 1));
+  const fontesOutro = [...fOutro.reg.osciladores, ...fOutro.reg.ruidos];
+  const camadasDano = A.sons.dano.camadas;
+  const ligadasOutro = fontesOutro.map((f) => f.t1 - f.t0).sort((a, b) => a - b);
+  const esperadasOutro = camadasDano.map((c) => c.duracao + cfgOutro.caudaParada).sort((a, b) => a - b);
+  if (fontesOutro.length !== camadasDano.length || ligadasOutro.some((d, i) => Math.abs(d - esperadasOutro[i]) > 1e-9)) {
+    falhar(0, `audio: com caudaParada ${cfgOutro.caudaParada} as fontes ficaram ligadas ${ligadasOutro.map((d) => d.toFixed(3))}s (pendencia 84)`);
+  }
   for (const nome of NOMES) {
     const tipo = Object.keys(A.eventos).find((k) => A.eventos[k] === nome);
     f1.reg.osciladores.length = 0;
@@ -4915,7 +4957,27 @@ function checarAudio() {
     for (const f of fontesDoSom) {
       if (!(f.t1 > f.t0) || f.t0 < f1.reg.ctx.currentTime) falhar(0, `audio: "${nome}" agendou start ${f.t0} / stop ${f.t1} fora de ordem`);
     }
+    // Pendencia 84: cada fonte para `caudaParada` s depois do fim da camada.
+    const ligadas = fontesDoSom.map((f) => f.t1 - f.t0).sort((a, b) => a - b);
+    const esperadas = camadas.map((c) => c.duracao + A.caudaParada).sort((a, b) => a - b);
+    if (ligadas.some((d, i) => Math.abs(d - esperadas[i]) > 1e-9)) {
+      falhar(0, `audio: "${nome}" deixou as fontes ligadas ${ligadas.map((d) => d.toFixed(3))}s, content.js pede duracao + ${A.caudaParada}s`);
+    }
   }
+  // Pendencia 83: duas mortes no mesmo quadro sao dois estalos — a 2a voz sai
+  // `defasagem` s depois da 1a e de outro trecho do ruido —, e nao um estalo so
+  // com o dobro da amplitude.
+  f1.reg.osciladores.length = 0;
+  f1.reg.ruidos.length = 0;
+  f1.reg.ctx.currentTime += 5;
+  if (audio.consumir(eventosDe('inimigo-morto', 2)) !== 2) falhar(0, 'audio: duas mortes no quadro nao tocaram dois estalos');
+  const defasagem = A.sons.morte.defasagem;
+  const [r1, r2] = f1.reg.ruidos;
+  const [o1, o2] = f1.reg.osciladores;
+  if (!(defasagem > 0) || !r2 || !o2 || Math.abs(r2.t0 - r1.t0 - defasagem) > 1e-9 || Math.abs(o2.t0 - o1.t0 - defasagem) > 1e-9) {
+    falhar(0, `audio: as duas mortes do quadro comecaram em ${r1 && r1.t0} e ${r2 && r2.t0}, esperava ${defasagem}s entre elas (pendencia 83)`);
+  }
+  if (r1.trecho === r2.trecho) falhar(0, `audio: as duas mortes do quadro tocaram o mesmo trecho do ruido (${r1.trecho}): somam em fase (pendencia 83)`);
   // 3. Suspenso (autoplay): o gesto acorda; enquanto suspenso, nada toca.
   const f2 = contextoFalso('suspended');
   criarAudio({ criarContexto: f2.fabrica }).destravar();
@@ -5060,6 +5122,593 @@ function checarTelasDeFim() {
   if (!sairDoResultado(estado) || estado.tela !== TELAS.MENU) falhar(0, `jubilado no TCC: o boletim levou a "${estado.tela}"`);
   if (estado.recorde.formaturas !== 0) falhar(0, 'jubilado no TCC contou como formatura');
   return `"${textoOndeCaiu(r)} ${faltava}"`;
+}
+
+// ---------------------------------------------------------------- fase 12
+
+// Um CanvasRenderingContext2D de mentira: guarda o que o render pediu. Tem
+// so o que render.js usa — um metodo novo la sem par aqui estoura o teste, e
+// e assim que se descobre. As posicoes de texto e retangulo saem ja com a
+// translacao/escala do contexto aplicadas (rotacao fica de fora: so os avisos
+// da Banca e o feixe giram, e nenhum dos dois escreve texto).
+function ctx2dFalso() {
+  const reg = { fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0 };
+  let fonte = '';
+  const t = [1, 0, 0, 1, 0, 0];
+  const ctx = {
+    reg,
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    lineCap: 'butt',
+    lineJoin: 'miter',
+    globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
+    textAlign: 'start',
+    textBaseline: 'alphabetic',
+    get font() { return fonte; },
+    set font(v) { fonte = v; reg.fontes += 1; },
+    setTransform(a, b, c, d, e, f) {
+      t[0] = a; t[1] = b; t[2] = c; t[3] = d; t[4] = e; t[5] = f;
+      reg.transformacoes.push([a, b, c, d, e, f]);
+    },
+    translate(x, y) { t[4] += t[0] * x; t[5] += t[3] * y; },
+    rotate() {},
+    save() {},
+    restore() {},
+    beginPath() {},
+    moveTo() {},
+    lineTo() {},
+    arc() {},
+    rect() {},
+    fill() {},
+    stroke() {},
+    strokeRect() {},
+    strokeText() {},
+    fillRect(x, y, w, h) {
+      reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha });
+    },
+    fillText(texto, x, y) {
+      reg.textos.push({ texto, x: t[0] * x + t[4], y: t[3] * y + t[5], fonte, cor: ctx.fillStyle, comp: ctx.globalCompositeOperation, alpha: ctx.globalAlpha });
+    },
+    drawImage(img, x, y) {
+      reg.copias.push({ img, x: t[0] * x + t[4], y: t[3] * y + t[5], alpha: ctx.globalAlpha });
+    },
+    createRadialGradient() {
+      reg.gradientes += 1;
+      return { addColorStop() {} };
+    },
+    limpar() {
+      reg.fontes = 0;
+      reg.textos.length = 0;
+      reg.retangulos.length = 0;
+      reg.transformacoes.length = 0;
+      reg.copias.length = 0;
+    },
+  };
+  return ctx;
+}
+
+// Um quadro como o de main.js: desenha, e so depois a fila e esvaziada.
+function quadro(estado, ctx, fx) {
+  ctx.limpar();
+  desenhar(estado, ctx, fx);
+  estado.eventos.length = 0;
+}
+
+// Avanca o relogio dos efeitos sem simular nada (o relogio deles e
+// estado.tempo, e cada quadro anda no maximo loop.maxPassosPorFrame passos).
+function quadrosVazios(estado, ctx, fx, segundos) {
+  const passoQuadro = PASSO * CONTEUDO.loop.maxPassosPorFrame;
+  for (let t = 0; t < segundos; t += passoQuadro) {
+    estado.tempo += passoQuadro;
+    quadro(estado, ctx, fx);
+  }
+}
+
+// O criterio central da fase: o juice nao vaza para a simulacao. A mesma
+// partida, com e sem desenho a cada 2 ticks (um quadro de 30 fps), tem que
+// terminar com o estado INTEIRO igual, byte a byte — rng, posicoes, HP, a fila,
+// a telemetria. E a partida tem que ter tido juice de verdade.
+function checarJuiceForaDaSimulacao() {
+  const corrida = (desenhando) => {
+    const estado = novoEstado(SEMENTE + 1201);
+    comecarRun(estado);
+    const ctx = ctx2dFalso();
+    const fx = criarEfeitos();
+    const visto = { particulas: 0, numeros: 0, tremor: 0, avisos: 0, flashes: 0, emojis: 0 };
+    for (let t = 1; t <= TICKS; t += 1) {
+      botCircular(estado, t);
+      atualizar(estado, PASSO);
+      if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+      if (t % 2 !== 0) continue;
+      if (desenhando) {
+        quadro(estado, ctx, fx);
+        visto.particulas = Math.max(visto.particulas, fx.particulas.ativos.length);
+        visto.numeros = Math.max(visto.numeros, fx.numeros.ativos.length);
+        visto.tremor = Math.max(visto.tremor, fx.tremor);
+        visto.avisos += fx.diag.avisos;
+        visto.flashes += ctx.reg.textos.filter((x) => x.comp === 'lighter').length;
+        // O navegador aplica o alfa do fillStyle ao emoji colorido: todo emoji
+        // sai com visual.corEmoji (opaca), e nao com a cor da ultima coisa
+        // pintada (as carteiras do chao, a 0,08, apagavam o bando inteiro).
+        const apagado = ctx.reg.textos.find((x) => x.fonte.includes(CONTEUDO.visual.fonteEmoji) && x.cor !== CONTEUDO.visual.corEmoji);
+        if (apagado) falhar(t, `juice: o emoji ${apagado.texto} foi desenhado com fillStyle "${apagado.cor}", e nao visual.corEmoji`);
+        visto.emojis += ctx.reg.textos.length;
+      } else {
+        estado.eventos.length = 0;
+      }
+    }
+    return { json: JSON.stringify(estado), estado, fx, visto };
+  };
+  const com = corrida(true);
+  const sem = corrida(false);
+  if (com.json !== sem.json) {
+    let i = 0;
+    while (i < com.json.length && com.json[i] === sem.json[i]) i += 1;
+    falhar(
+      0,
+      `juice: a partida mudou com o desenho ligado (rng ${com.estado.rng.s}/${sem.estado.rng.s}, mortos ` +
+        `${com.estado.run.avaliacao.kills}/${sem.estado.run.avaliacao.kills}); primeira diferenca no JSON: ` +
+        `...${com.json.slice(Math.max(0, i - 60), i + 40)}`
+    );
+  }
+  const v = com.visto;
+  if (!(v.particulas > 0) || !(v.numeros > 0) || !(v.tremor > 0) || !(v.avisos > 0) || !(v.flashes > 0) || !(v.emojis > 0)) {
+    falhar(0, `juice: a partida de teste nao exercitou os efeitos (${JSON.stringify(v)}), o teste perdeu o sentido`);
+  }
+  // A pool da fase 02: nada alocado depois da abertura, invariantes de pe.
+  const pools = [
+    ['particulas', com.fx.particulas, CONTEUDO.arena.limites.particles],
+    ['numeros', com.fx.numeros, CONTEUDO.juice.numeros.max],
+  ];
+  for (const [nome, pool, teto] of pools) {
+    const erro = pool.verificar();
+    if (erro || pool.criados !== teto) falhar(0, `juice: a pool de ${nome} tem ${pool.criados} objetos (teto ${teto})${erro ? `: ${erro}` : ''}`);
+  }
+  return { kills: com.estado.run.avaliacao.kills, ...v };
+}
+
+// Particulas de morte: a quantidade e as cores de cada tipo saem de
+// content.js, a pool nao cresce, todas morrem, e o teto por quadro segura uma
+// horda.
+function checarParticulas() {
+  const estado = avaliacaoCom(SEMENTE + 1202, []);
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  quadro(estado, ctx, fx);
+  const P = CONTEUDO.juice.particulas;
+  const combinada = (id) => ({ ...P.padrao, ...(P.porTipo[id] || {}) });
+  let esperado = 0;
+  const cores = new Set();
+  for (const tipo of CONTEUDO.inimigos) {
+    const r = combinada(tipo.id);
+    for (let i = 0; i < 2; i += 1) {
+      const e = spawnInimigo(estado, tipo.id);
+      e.x = 200 + i * 100;
+      e.y = 200;
+      aplicarDano(estado, e, 1e9);
+      esperado += r.quantidade;
+    }
+    for (const c of r.cores) cores.add(c);
+  }
+  quadro(estado, ctx, fx);
+  const ativas = fx.particulas.ativos;
+  if (ativas.length !== esperado) falhar(0, `particulas: 2 mortes de cada tipo fizeram ${ativas.length} faiscas, content.js pede ${esperado}`);
+  if (ativas.some((p) => !cores.has(p.cor))) falhar(0, 'particulas: uma faisca saiu com cor que nao esta em content.js');
+  for (const tipo of CONTEUDO.inimigos) {
+    const r = combinada(tipo.id);
+    if (!ativas.some((p) => r.cores.includes(p.cor))) falhar(0, `particulas: nenhuma faisca com as cores de "${tipo.id}"`);
+  }
+  // Desenhadas (o quadradinho, com a cor dela) e todas mortas ao fim da vida.
+  if (!ctx.reg.retangulos.some((q) => cores.has(q.cor))) falhar(0, 'particulas: nenhuma faisca foi desenhada');
+  const vidaMax = Math.max(P.padrao.vidaMax, ...Object.values(P.porTipo).map((r) => r.vidaMax || 0));
+  quadrosVazios(estado, ctx, fx, vidaMax + 0.1);
+  if (fx.particulas.ativos.length !== 0) falhar(0, `particulas: ${fx.particulas.ativos.length} faiscas passaram da vida maxima (${vidaMax}s) e nao morreram`);
+  // Horda: 60 do tipo de mais faiscas no mesmo quadro passam do teto por quadro.
+  const farto = CONTEUDO.inimigos.reduce((m, t) => (combinada(t.id).quantidade > combinada(m.id).quantidade ? t : m));
+  const horda = [];
+  for (let i = 0; i < 60; i += 1) horda.push(spawnInimigo(estado, farto.id));
+  for (const e of horda) aplicarDano(estado, e, 1e9);
+  quadro(estado, ctx, fx);
+  const naHorda = fx.particulas.ativos.length;
+  if (naHorda > P.maxPorQuadro || naHorda === 0 || fx.diag.particulasDescartadas === 0) {
+    falhar(0, `particulas: 60 mortes num quadro fizeram ${naHorda} faiscas (teto ${P.maxPorQuadro}), ${fx.diag.particulasDescartadas} descartadas`);
+  }
+  const erro = fx.particulas.verificar();
+  if (erro || fx.particulas.criados !== CONTEUDO.arena.limites.particles) falhar(0, `particulas: a pool cresceu ou quebrou (${fx.particulas.criados}) ${erro || ''}`);
+  // A Banca tem a explosao dela.
+  quadrosVazios(estado, ctx, fx, vidaMax + 0.1);
+  emitir(estado, 'inimigo-morto', { tipo: CONTEUDO.banca.id, x: 480, y: 270, xp: 0, vida: 1 });
+  quadro(estado, ctx, fx);
+  const daBanca = fx.particulas.ativos.length;
+  if (daBanca !== combinada(CONTEUDO.banca.id).quantidade) {
+    falhar(0, `particulas: a Banca explodiu em ${daBanca} faiscas, content.js pede ${combinada(CONTEUDO.banca.id).quantidade}`);
+  }
+  return `particulas: ${esperado} faiscas para 2 mortes de cada tipo · 60 ${farto.emoji} num quadro -> ${naHorda} (teto ${P.maxPorQuadro}) · Banca ${daBanca}`;
+}
+
+// Numeros de dano: agrupam no mesmo lugar, respeitam o teto por quadro, e o
+// do jogador sai em cima dele.
+function checarNumerosDeDano() {
+  const N = CONTEUDO.juice.numeros;
+  const estado = avaliacaoCom(SEMENTE + 1203, []);
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  quadro(estado, ctx, fx);
+  // 40 golpes de 2,5 no mesmo ponto (a menos de raioAgrupar), num quadro.
+  for (let i = 0; i < 40; i += 1) emitir(estado, 'arma-acerto', { arma: 'teste', x: 300 + (i % 3), y: 200, dano: 2.5, efetivo: 2.5, matou: false });
+  quadro(estado, ctx, fx);
+  if (fx.numeros.ativos.length !== 1 || Math.abs(fx.numeros.ativos[0].valor - 100) > 1e-9) {
+    falhar(0, `numeros: 40 golpes no mesmo lugar viraram ${fx.numeros.ativos.length} numeros (${fx.numeros.ativos.map((n) => n.valor)}), esperava 1 com 100`);
+  }
+  if (!ctx.reg.textos.some((x) => x.texto === '100' && x.fonte === N.fonte)) falhar(0, 'numeros: o "100" nao foi desenhado com a fonte de content.js');
+  // 30 golpes espalhados (mais longe que raioAgrupar um do outro): o teto de
+  // numeros novos por quadro segura a poluicao.
+  const antes = fx.numeros.ativos.length;
+  for (let i = 0; i < 30; i += 1) emitir(estado, 'arma-acerto', { arma: 'teste', x: 40 + i * (N.raioAgrupar + 4), y: 420, dano: 3, efetivo: 3, matou: false });
+  quadro(estado, ctx, fx);
+  const novos = fx.numeros.ativos.length - antes;
+  if (novos !== N.novosPorQuadro) falhar(0, `numeros: 30 golpes espalhados fizeram ${novos} numeros novos, o teto por quadro e ${N.novosPorQuadro}`);
+  // Passada a janela de agrupamento, um golpe no mesmo ponto e numero novo.
+  quadrosVazios(estado, ctx, fx, N.janelaAgrupar + 0.05);
+  const vivos = fx.numeros.ativos.length;
+  emitir(estado, 'arma-acerto', { arma: 'teste', x: 300, y: 200, dano: 1, efetivo: 1, matou: false });
+  quadro(estado, ctx, fx);
+  if (fx.numeros.ativos.length !== vivos + 1) falhar(0, 'numeros: depois da janela, o golpe no mesmo ponto ainda somou no numero velho');
+  // O dano que o jogador toma: em cima dele, na cor e fonte proprias.
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 8, hp: 92, x: 0, y: 0 });
+  quadro(estado, ctx, fx);
+  const doJogador = fx.numeros.ativos.find((n) => n.jogador);
+  if (!doJogador || doJogador.x0 !== estado.player.x || doJogador.valor !== 8) falhar(0, 'numeros: o dano do jogador nao virou um numero em cima dele');
+  if (!ctx.reg.textos.some((x) => x.texto === '8' && x.fonte === N.fonteJogador)) falhar(0, 'numeros: o dano do jogador nao foi desenhado com a fonte dele');
+  // Todos somem ao fim da vida.
+  quadrosVazios(estado, ctx, fx, N.vida + 0.1);
+  if (fx.numeros.ativos.length !== 0) falhar(0, `numeros: ${fx.numeros.ativos.length} numeros passaram da vida e nao sumiram`);
+  return `numeros de dano: 40 golpes no mesmo ponto -> 1 numero (100) · 30 espalhados -> ${novos} (teto por quadro)`;
+}
+
+// Flash de golpe: acende no inimigo que perdeu HP, apaga depois de
+// flash.duracao, e NAO acende no filhote que reusa o objeto do pai
+// (pendencia 67: a identidade e o par objeto + nasc).
+function checarFlashDeGolpe() {
+  const F = CONTEUDO.juice.flash;
+  const grupo = CONTEUDO.inimigos.find((t) => t.divisao);
+  const estado = avaliacaoCom(SEMENTE + 1204, []);
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  const pai = spawnInimigo(estado, grupo.id);
+  pai.x = 300;
+  pai.y = 300;
+  quadro(estado, ctx, fx);
+  if (flashDoInimigo(fx, pai, estado.tempo) !== 0) falhar(0, 'flash: o inimigo intacto ja nasceu piscando');
+  aplicarDano(estado, pai, 1);
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fx);
+  if (!(flashDoInimigo(fx, pai, estado.tempo) > 0)) falhar(0, 'flash: o inimigo que perdeu HP nao piscou');
+  const aditivo = ctx.reg.textos.some((x) => x.texto === pai.emoji && x.comp === 'lighter' && Math.abs(x.x - pai.x - fx.tremorX) < 1e-6 && Math.abs(x.y - pai.y - fx.tremorY) < 1e-6);
+  if (!aditivo) falhar(0, 'flash: o golpe nao redesenhou o emoji em modo aditivo no lugar do inimigo');
+  quadrosVazios(estado, ctx, fx, F.duracao + 0.05);
+  if (flashDoInimigo(fx, pai, estado.tempo) !== 0) falhar(0, `flash: ainda piscando depois de ${F.duracao}s`);
+  // O pai morre; o 1o filhote e o MESMO objeto (pool LIFO), com nasc novo e
+  // menos HP do que o pai tinha no ultimo quadro.
+  const nascDoPai = pai.nasc;
+  aplicarDano(estado, pai, 1e9);
+  if (!pai.ativo || pai.nasc === nascDoPai || !estado.enemies.includes(pai)) {
+    falhar(0, 'flash: o 1o filhote nao reusou o objeto do pai, o teste da pendencia 67 perdeu o sentido');
+  }
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fx);
+  if (flashDoInimigo(fx, pai, estado.tempo) !== 0) falhar(0, 'flash: o filhote que reusa o objeto do pai nasceu piscando (pendencia 67: compare objeto + nasc)');
+  // O jogador: o golpe acende o flash dele e a vinheta vermelha.
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 95, x: 0, y: 0 });
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fx);
+  if (!(fx.flashJogador > 0) || !(fx.vinhetaDano > 0)) falhar(0, 'flash: o dano no jogador nao acendeu o flash e a vinheta');
+  if (!ctx.reg.textos.some((x) => x.texto === CONTEUDO.jogador.emoji && x.comp === 'lighter')) falhar(0, 'flash: o jogador golpeado nao foi redesenhado em modo aditivo');
+  return `flash: acende no golpe, apaga em ${F.duracao}s, o filhote que reusa o objeto do pai nasce sem flash`;
+}
+
+// Screen shake: translacao do contexto, nunca posicao de entidade. O maior
+// evento ganha (nao somam), cai ate zero, e fica fora das telas sem arena.
+function checarTremor() {
+  const T = CONTEUDO.juice.tremor;
+  const estado = avaliacaoCom(SEMENTE + 1205, []);
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  quadro(estado, ctx, fx);
+  const x0 = estado.player.x;
+  const y0 = estado.player.y;
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 95, x: 0, y: 0 });
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 90, x: 0, y: 0 });
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fx);
+  const esperado = Math.min(T.maximo, T.eventos['jogador-dano']);
+  if (Math.abs(fx.tremor - esperado) > 1e-9) falhar(0, `tremor: dois danos no quadro deram ${fx.tremor}px, esperava ${esperado} (o maior ganha, nao somam)`);
+  if ((fx.tremorX === 0 && fx.tremorY === 0) || Math.abs(fx.tremorX) > fx.tremor || Math.abs(fx.tremorY) > fx.tremor) {
+    falhar(0, `tremor: deslocamento (${fx.tremorX}, ${fx.tremorY}) para um tremor de ${fx.tremor}px`);
+  }
+  if (!ctx.reg.transformacoes.some((m) => m[0] === 1 && m[3] === 1 && m[4] === fx.tremorX && m[5] === fx.tremorY)) {
+    falhar(0, 'tremor: o mundo nao foi desenhado com a translacao do tremor');
+  }
+  const jogadorDesenhado = ctx.reg.textos.find((x) => x.texto === CONTEUDO.jogador.emoji);
+  if (!jogadorDesenhado || Math.abs(jogadorDesenhado.x - (x0 + fx.tremorX)) > 1e-6) falhar(0, 'tremor: o jogador nao foi desenhado deslocado junto com o mundo');
+  if (estado.player.x !== x0 || estado.player.y !== y0) falhar(0, 'tremor: a posicao do jogador mudou (o tremor tem que ser so desenho)');
+  // Cai ate zero — e o jogador nao saiu do lugar em nenhum quadro do tremor.
+  quadrosVazios(estado, ctx, fx, 2);
+  if (fx.tremor !== 0 || fx.tremorX !== 0 || fx.tremorY !== 0) falhar(0, `tremor: 2s depois ainda treme ${fx.tremor}px`);
+  if (estado.player.x !== x0 || estado.player.y !== y0) falhar(0, 'tremor: a posicao do jogador mudou durante o tremor (o tremor tem que ser so desenho)');
+  // Todos os eventos juntos: o maior.
+  for (const evento of Object.keys(T.eventos)) emitir(estado, evento, { fase: 0, padrao: 'leque' });
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fx);
+  const maior = Math.min(T.maximo, Math.max(...Object.values(T.eventos)));
+  if (Math.abs(fx.tremor - maior) > 1e-9) falhar(0, `tremor: todos os eventos juntos deram ${fx.tremor}px, esperava ${maior}`);
+  // O teto (tremor.maximo), com um cfg em que ele fica abaixo do evento.
+  const cfgTeto = structuredClone(CONTEUDO.juice);
+  cfgTeto.tremor.maximo = T.eventos['jogador-dano'] / 2;
+  const fxTeto = criarEfeitos(cfgTeto);
+  quadro(estado, ctx, fxTeto);
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 85, x: 0, y: 0 });
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fxTeto);
+  if (fxTeto.tremor !== cfgTeto.tremor.maximo) falhar(0, `tremor: com teto ${cfgTeto.tremor.maximo}px o dano tremeu ${fxTeto.tremor}px`);
+  // Sem arena (a loja), nada treme.
+  irParaTela(estado, TELAS.LOJA);
+  quadro(estado, ctx, fx);
+  if (ctx.reg.transformacoes.some((m) => m[4] !== 0 || m[5] !== 0)) falhar(0, 'tremor: a loja (sem arena) foi desenhada deslocada');
+  return `tremor: dano ${esperado}px, o maior evento ganha (${maior}px, teto ${T.maximo}), zero em 2s, so translacao`;
+}
+
+// Aviso de spawn: brilho na parede por onde o recem-nascido vai entrar,
+// enquanto ele ainda esta fora da arena — e nada para quem nasce dentro.
+function checarAvisoDeSpawn() {
+  const A = CONTEUDO.juice.avisoSpawn;
+  const sala = CONTEUDO.modificadores.find((m) => m.fatores && m.fatores.arena < 1);
+  const casos = [['arena inteira', []], [`${sala.emoji} ${sala.nome}`, [sala.id]]];
+  const entrada = { x: 0, y: 0 };
+  const medidas = [];
+  for (const [rotulo, mods] of casos) {
+    const estado = avaliacaoCom(SEMENTE + 1206, mods);
+    const arena = estado.run.avaliacao.arena;
+    const ctx = ctx2dFalso();
+    const fx = criarEfeitos();
+    quadro(estado, ctx, fx);
+    const e = spawnInimigo(estado, CONTEUDO.inimigos[0].id);
+    const p = estado.player;
+    quadro(estado, ctx, fx);
+    if (fx.diag.avisos !== 1) falhar(0, `aviso de spawn (${rotulo}): o inimigo recem-nascido fora da arena acendeu ${fx.diag.avisos} avisos`);
+    const dentro = e.x >= arena.esquerda && e.x <= arena.direita && e.y >= arena.topo && e.y <= arena.base;
+    if (dentro) falhar(0, `aviso de spawn (${rotulo}): o inimigo nasceu dentro da arena, o teste perdeu o sentido`);
+    if (!pontoDeEntrada(e.x, e.y, p.x, p.y, arena, entrada)) falhar(0, `aviso de spawn (${rotulo}): sem ponto de entrada`);
+    const naParede =
+      Math.abs(entrada.x - arena.esquerda) < 1e-6 || Math.abs(entrada.x - arena.direita) < 1e-6 ||
+      Math.abs(entrada.y - arena.topo) < 1e-6 || Math.abs(entrada.y - arena.base) < 1e-6;
+    // Na parede E no caminho dele ate o jogador (colinear com o segmento).
+    const cruz = (entrada.x - e.x) * (p.y - e.y) - (entrada.y - e.y) * (p.x - e.x);
+    if (!naParede || Math.abs(cruz) > 1e-6 * Math.hypot(p.x - e.x, p.y - e.y) ** 2) {
+      falhar(0, `aviso de spawn (${rotulo}): o brilho em (${entrada.x.toFixed(1)}, ${entrada.y.toFixed(1)}) nao esta na parede, no caminho do inimigo`);
+    }
+    const desenhado = ctx.reg.retangulos.some(
+      (q) => Math.abs(q.x + A.raio - (entrada.x + fx.tremorX)) < 1e-6 && Math.abs(q.y + A.raio - (entrada.y + fx.tremorY)) < 1e-6
+    );
+    if (!desenhado) falhar(0, `aviso de spawn (${rotulo}): o brilho nao foi desenhado no ponto de entrada`);
+    medidas.push(`${rotulo}: inimigo em (${e.x.toFixed(0)}, ${e.y.toFixed(0)}), brilho em (${entrada.x.toFixed(0)}, ${entrada.y.toFixed(0)})`);
+    // Passada a duracao, apaga.
+    e.nascidoEm = estado.run.avaliacao.decorrido - A.duracao - 0.01;
+    quadro(estado, ctx, fx);
+    if (fx.diag.avisos !== 0) falhar(0, `aviso de spawn (${rotulo}): o aviso continua aceso depois de ${A.duracao}s`);
+    // Quem nasce dentro da arena (filhote do 📱) nao acende nada.
+    e.nascidoEm = estado.run.avaliacao.decorrido;
+    e.x = (arena.esquerda + arena.direita) / 2 + 50;
+    e.y = (arena.topo + arena.base) / 2;
+    quadro(estado, ctx, fx);
+    if (fx.diag.avisos !== 0) falhar(0, `aviso de spawn (${rotulo}): o inimigo nascido dentro da arena acendeu aviso`);
+  }
+  return `aviso de spawn: ${medidas.join(' · ')}`;
+}
+
+// Pendencia 29: o orbe que derivou para fora da arena e desenhado na borda;
+// a simulacao (a posicao dele) nao muda.
+function checarOrbeNaArena() {
+  const estado = avaliacaoCom(SEMENTE + 1207, []);
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  const orbe = soltarOrbeXp(estado, 100, 100, 1);
+  orbe.x = -29;
+  orbe.y = 100;
+  quadro(estado, ctx, fx);
+  const arena = estado.run.avaliacao.arena;
+  const desenhado = ctx.reg.textos.find((x) => x.texto === CONTEUDO.xpOrbe.emoji);
+  const minimo = arena.esquerda + CONTEUDO.xpOrbe.raio + fx.tremorX;
+  if (!desenhado || desenhado.x < minimo - 1e-6) falhar(0, `orbe: o orbe em x=-29 foi desenhado em x=${desenhado && desenhado.x}, fora da arena (pendencia 29)`);
+  if (orbe.x !== -29) falhar(0, 'orbe: o desenho mexeu na posicao do orbe');
+  return `orbe (pendencia 29): em x=-29 na simulacao, desenhado em x=${desenhado.x}`;
+}
+
+// Pendencia 16: a fonte muda por tamanho, nao por emoji. 400 inimigos (o
+// teto da pool), num tipo so e nos 4 misturados.
+function checarFontesPorQuadro() {
+  const medir = (tipos) => {
+    const estado = avaliacaoCom(SEMENTE + 1208, []);
+    const ctx = ctx2dFalso();
+    const fx = criarEfeitos();
+    for (let i = 0; i < CONTEUDO.arena.limites.enemies; i += 1) {
+      spawnTipo(estado, tipos[i % tipos.length], 40 + (i % 20) * 44, 40 + Math.floor(i / 20) * 24);
+    }
+    quadro(estado, ctx, fx);
+    const desenhados = ctx.reg.textos.filter((x) => tipos.some((t) => t.emoji === x.texto));
+    if (desenhados.length !== CONTEUDO.arena.limites.enemies) falhar(0, `fontes: ${desenhados.length} inimigos desenhados de ${CONTEUDO.arena.limites.enemies}`);
+    // Agrupar por tamanho nao pode mudar o tamanho de ninguem.
+    for (const x of desenhados) {
+      const tipo = tipos.find((t) => t.emoji === x.texto);
+      if (!x.fonte.startsWith(`${tipo.raio * CONTEUDO.visual.emojiInimigoFator}px `)) falhar(0, `fontes: ${tipo.emoji} desenhado com "${x.fonte}"`);
+    }
+    return ctx.reg.fontes;
+  };
+  const umTipo = medir([CONTEUDO.inimigos[0]]);
+  const misturados = medir(CONTEUDO.inimigos);
+  // Um tipo: a fonte dele e a do jogador. Misturados: uma por tamanho, mais a do jogador.
+  const tamanhos = new Set(CONTEUDO.inimigos.map((t) => t.raio)).size;
+  if (umTipo > 2 || misturados > tamanhos + 1) {
+    falhar(0, `fontes: ${umTipo} trocas de ctx.font num quadro com 400 de um tipo, ${misturados} com os 4 tipos misturados (pendencia 16: troca por tamanho, nao por inimigo)`);
+  }
+  return `fontes (pendencia 16): ${umTipo} trocas de ctx.font num quadro com 400 de um tipo, ${misturados} com os 4 tipos misturados`;
+}
+
+// Uma paleta por periodo (o 1o claro, o 3o sombrio) e outra no TCC.
+function checarPaletas() {
+  const fundos = [];
+  for (let p = 0; p < CONTEUDO.periodos.length; p += 1) {
+    const estado = avaliacaoCom(SEMENTE + 1209, [], [], p, 0);
+    const ctx = ctx2dFalso();
+    quadro(estado, ctx, criarEfeitos());
+    fundos.push(ctx.reg.retangulos[0].cor);
+    if (fundos[p] !== CONTEUDO.juice.paletas[p].fundo) falhar(0, `paletas: o ${p + 1}o periodo pintou o fundo ${fundos[p]}, content.js pede ${CONTEUDO.juice.paletas[p].fundo}`);
+  }
+  const tcc = estadoNoTcc(SEMENTE + 1210);
+  const ctx = ctx2dFalso();
+  quadro(tcc, ctx, criarEfeitos());
+  fundos.push(ctx.reg.retangulos[0].cor);
+  if (fundos[fundos.length - 1] !== CONTEUDO.juice.paletaTcc.fundo) falhar(0, 'paletas: o TCC nao usou a paleta dele');
+  if (new Set(fundos).size !== fundos.length) falhar(0, `paletas: periodos com o mesmo fundo (${fundos.join(', ')})`);
+  // No navegador o chao e as vinhetas viram camadas pintadas UMA vez por
+  // paleta e copiadas por quadro (o node acima pinta direto, sem camada).
+  const camadas = [];
+  const fxCam = criarEfeitos();
+  fxCam.criarCamada = (w, h) => {
+    const c = { width: w, height: h, ctx2d: ctx2dFalso() };
+    c.getContext = () => c.ctx2d;
+    camadas.push(c);
+    return c;
+  };
+  const est = avaliacaoCom(SEMENTE + 1212, []);
+  const ctxCam = ctx2dFalso();
+  for (let i = 0; i < 5; i += 1) {
+    est.tempo += PASSO;
+    quadro(est, ctxCam, fxCam);
+  }
+  if (camadas.length !== 3) falhar(0, `paletas: 5 quadros na mesma paleta pintaram ${camadas.length} camadas, esperava 3 (chao, vinheta, dano) uma vez so`);
+  if (camadas[0].ctx2d.reg.retangulos[0].cor !== CONTEUDO.juice.paletas[0].fundo) falhar(0, 'paletas: a camada do chao nao foi pintada com o fundo da paleta');
+  const copiadas = ctxCam.reg.copias.map((c) => c.img);
+  if (!copiadas.includes(camadas[0]) || !copiadas.includes(camadas[1])) falhar(0, 'paletas: o quadro nao copiou as camadas do chao e da vinheta');
+  est.run.periodoIndex = CONTEUDO.periodos.length - 1;
+  quadro(est, ctxCam, fxCam);
+  if (camadas.length !== 5 || camadas[3].ctx2d.reg.retangulos[0].cor !== CONTEUDO.juice.paletas[CONTEUDO.periodos.length - 1].fundo) {
+    falhar(0, `paletas: a troca de periodo deixou ${camadas.length} camadas (esperava 5: chao e vinheta novos)`);
+  }
+  return `paletas: ${fundos.join(' → ')} (TCC); chao e vinhetas pintados uma vez por paleta`;
+}
+
+// Os tempos das transicoes moram em content.js (juice.css) e o style.css so
+// os le: toda var(--x) do CSS e definida no proprio CSS ou em juice.css, e
+// toda variavel de juice.css e usada (e nao redefinida no CSS).
+function checarVariaveisCss() {
+  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  const usadas = new Set([...css.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1]));
+  const definidas = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const doConteudo = Object.keys(CONTEUDO.juice.css);
+  for (const nome of usadas) {
+    if (!definidas.has(nome) && !doConteudo.includes(nome)) falhar(0, `css: style.css usa var(${nome}), que nao esta em juice.css nem no proprio CSS`);
+  }
+  for (const nome of doConteudo) {
+    if (!usadas.has(nome)) falhar(0, `css: juice.css define ${nome} e o style.css nao usa`);
+    if (definidas.has(nome)) falhar(0, `css: ${nome} e definida no style.css — o numero tem que morar so em content.js`);
+  }
+  const escritas = {};
+  const n = aplicarVariaveisCss({ style: { setProperty: (k, v) => { escritas[k] = v; } } });
+  if (n !== doConteudo.length || doConteudo.some((k) => escritas[k] !== CONTEUDO.juice.css[k])) falhar(0, 'css: aplicarVariaveisCss nao escreveu todas as variaveis de juice.css');
+  if (aplicarVariaveisCss(null) !== 0 || aplicarVariaveisCss({}) !== 0) falhar(0, 'css: aplicarVariaveisCss sem :root deveria nao fazer nada');
+  return `css: ${doConteudo.length} variaveis de juice.css, todas usadas pelo style.css`;
+}
+
+// HUD e textos (pendencias 57, 64, 79): puros, sem DOM.
+function checarHudETextos() {
+  const sep = CONTEUDO.textos.resultado.separador;
+  for (const faixa of CONTEUDO.nota.faixas) {
+    const n = faixa.itensLoja;
+    const teclas = Array.from({ length: n }, (_, i) => String(i + 1)).join(sep);
+    const dica = dicaDaLoja(n);
+    if (dica !== preencher(CONTEUDO.textos.loja.dicaCompra, { teclas })) falhar(0, `loja: com ${n} itens a dica diz "${dica}" (pendencia 57)`);
+  }
+  if (dicaDaLoja(3).includes('4')) falhar(0, 'loja: a dica de 3 itens oferece a tecla 4 (pendencia 57)');
+  const fases = CONTEUDO.banca.fases;
+  const texto = textoDaBancaNoTcc();
+  if (!texto.includes(`${Math.round(fases[0].ate * 100)}%`) || !texto.includes(String(fases.length))) {
+    falhar(0, `tcc: a apresentacao da Banca nao traz os numeros de banca.fases: "${texto}"`);
+  }
+  const outra = { fases: [{ ate: 0.4 }, { ate: 0.2 }, { ate: 0 }] };
+  if (!textoDaBancaNoTcc(outra).includes('40%') || !textoDaBancaNoTcc(outra).includes('3')) falhar(0, 'tcc: o texto da Banca nao acompanha banca.fases');
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  if (/1 · 2 · 3 · 4 compram/.test(html)) falhar(0, 'index.html: a dica fixa "1 · 2 · 3 · 4 compram" voltou (pendencia 57)');
+  if (/metade da vida/.test(html)) falhar(0, 'index.html: a tela do TCC repete o limiar da Banca em texto fixo (pendencia 79)');
+  // Os chips do HUD: nome e descricao de content.js, o Atestado gasto marcado.
+  const chip = { emoji: '', nome: '', descricao: '', gasto: false };
+  const coringa = CONTEUDO.coringas[0];
+  if (chipDoCoringa({ id: coringa.id, gasto: true }, chip) !== chip || chip.nome !== coringa.nome || chip.descricao !== coringa.descricao || !chip.gasto) {
+    falhar(0, 'hud: o chip do coringa nao traz nome, descricao e gasto de content.js');
+  }
+  if (chipDoCoringa(undefined, chip) !== null || chipDoModificador('', chip) !== null) falhar(0, 'hud: slot vazio deveria dar chip nulo');
+  const mod = CONTEUDO.modificadores[0];
+  if (chipDoModificador(mod.id, chip) !== chip || chip.nome !== mod.nome || chip.gasto) falhar(0, 'hud: o chip do modificador nao traz o nome de content.js');
+  // O topo do HUD sai da frente do jogador e da Banca (pendencias 63/79).
+  const faixa = CONTEUDO.juice.hud.faixaTopo;
+  const meioJogador = CONTEUDO.visual.tamanhoEmojiJogador / 2;
+  const meioBanca = CONTEUDO.visual.banca.tamanhoEmoji / 2;
+  const tcc = estadoNoTcc(SEMENTE + 1211);
+  const b = tcc.run.avaliacao.banca;
+  tcc.player.y = faixa + meioJogador + 1;
+  b.y = faixa + meioBanca + 1;
+  if (hudCobreAlguem(tcc)) falhar(0, 'hud: o HUD ficou translucido sem ninguem embaixo dele');
+  tcc.player.y = faixa;
+  if (!hudCobreAlguem(tcc)) falhar(0, 'hud: o jogador na faixa de cima ficou por baixo do HUD opaco');
+  tcc.player.y = faixa + meioJogador + 1;
+  b.y = faixa;
+  if (!hudCobreAlguem(tcc)) falhar(0, 'hud: A Banca na faixa de cima ficou por baixo do HUD opaco (pendencia 79)');
+  return `hud/textos: dica da loja por quantidade de itens (${[...new Set(CONTEUDO.nota.faixas.map((f) => f.itensLoja))].join(' ou ')}), Banca no TCC "${texto.slice(0, 38)}..."`;
+}
+
+// O validador conhece o bloco novo: typo de id, paleta faltando, variavel
+// CSS torta, limitador de audio que volta a comprimir tudo.
+function checarValidadorDoJuice() {
+  const casos = [
+    ['um tipo de particula que nao existe', (c) => { c.juice.particulas.porTipo.naoExiste = { quantidade: 3 }; }, 'porTipo.naoExiste'],
+    ['menos paletas que periodos', (c) => { c.juice.paletas.pop(); }, 'juice.paletas'],
+    ['variavel CSS sem --', (c) => { c.juice.css.fade = '200ms'; }, 'juice.css'],
+    ['valor CSS que nao e numero', (c) => { c.juice.css['--fade-tela'] = 'rapido'; }, '--fade-tela'],
+    ['particula com vida negativa', (c) => { c.juice.particulas.padrao.vidaMin = -1; }, 'vidaMin'],
+    ['numero que nunca para de somar', (c) => { c.juice.numeros.janelaAgrupar = 5; }, 'janelaAgrupar'],
+    ['limitador com limiar de compressor', (c) => { c.audio.limitador.limiar = -24; }, 'limiar'],
+    ['defasagem absurda', (c) => { c.audio.sons.morte.defasagem = 2; }, 'defasagem'],
+  ];
+  for (const [nome, mexer, trecho] of casos) {
+    const clone = structuredClone(CONTEUDO);
+    mexer(clone);
+    if (!validarConteudo(clone).erros.some((e) => e.includes(trecho))) falhar(0, `validador: aceitou ${nome}`);
+  }
+  return `validador: ${casos.length} conteudos podres de juice/audio recusados`;
+}
+
+function checarJuice() {
+  const partes = [
+    checarValidadorDoJuice(),
+    checarParticulas(),
+    checarNumerosDeDano(),
+    checarFlashDeGolpe(),
+    checarTremor(),
+    checarAvisoDeSpawn(),
+    checarOrbeNaArena(),
+    checarFontesPorQuadro(),
+    checarPaletas(),
+    checarVariaveisCss(),
+    checarHudETextos(),
+  ];
+  const c = checarJuiceForaDaSimulacao();
+  return (
+    `partida de 60s identica com e sem desenho (o estado inteiro; ${c.kills} mortos, pico de ${c.particulas} faiscas e ` +
+    `${c.numeros} numeros, tremor ate ${c.tremor}px, ${c.avisos} avisos de spawn e ${c.flashes} flashes desenhados, somados quadro a quadro)` +
+    partes.map((p) => `\n    ${p}`).join('')
+  );
 }
 
 // ------------------------------------------------------ fase 08: a run
@@ -5440,6 +6089,8 @@ const telasDeFim = checarTelasDeFim();
 // Fase 11: o audio e a morte simultanea (pendencia 73).
 const morteSimultanea = checarMorteSimultanea();
 const audioDoJogo = checarAudio();
+// Fase 12: o juice (render.js) e o HUD, e a prova de que nao mexem na partida.
+const juice = checarJuice();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -5687,6 +6338,7 @@ console.log(
     `\n  jubilado no TCC: ${telasDeFim}` +
     `\n  morte simultanea (pendencia 73): ${morteSimultanea}` +
     `\n  audio (fase 11): ${audioDoJogo}` +
+    `\n  juice (fase 12): ${juice}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +
