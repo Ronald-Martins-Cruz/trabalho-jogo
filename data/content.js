@@ -285,8 +285,16 @@ export const CONTEUDO = {
   // na media de 16 sementes (canto, desvio e circular). A curva nao mudou no
   // ajuste; quem subiu foi o numero de inimigos. Medido junto com
   // jogador.raioColeta: os dois numeros so fazem sentido em par.
+  //
+  // Fase 13: a tabela parava no 77 (do nivel 11 em diante todo nivel custava
+  // 77), e no 3º periodo o jogador chegava ao nivel 15-17 aos 60s, com todas
+  // as armas quase no maximo. Os 9 valores novos (nivel 11 -> 20) so encarecem
+  // o fim da curva: os niveis 1-11 continuam iguais, e com eles o alvo do
+  // design e as medidas acima. O nivel 20 e o teto util (4 armas x 5 niveis);
+  // dali em diante toda carta e o Lanche (+25 HP), entao subir rapido demais
+  // no fim do jogo vira cura. Medido no `npm run sim` (handoff 13).
   xp: {
-    porNivel: [5, 9, 14, 20, 27, 35, 44, 54, 65, 77],
+    porNivel: [5, 9, 14, 20, 27, 35, 44, 54, 65, 77, 90, 104, 119, 135, 152, 170, 189, 209, 230],
   },
 
   // Orbe de XP: nasce onde o inimigo morreu, com o valor `xp` daquele tipo de
@@ -341,7 +349,7 @@ export const CONTEUDO = {
     // 179,8 (min 156, max 219). Mantido em 2/5 porque concentra a build sem
     // custar sobrevivencia nem esconder arma fraca (a pior das 4, Marca-texto,
     // fica em 45% da melhor — ver o bloco de armas abaixo).
-    // Nao e balanceamento final (isso e fase 13).
+    // A fase 13 nao mexeu nestes pesos nem os remediu.
     pesoArmaNova: 2,
     pesoArmaNivel: 5,
     // Segundos, depois de a carta abrir (e de cada carta seguinte da fila),
@@ -459,9 +467,20 @@ export const CONTEUDO = {
   // inimigo novo (mais HP, mais rapido, nascendo mais longe da borda) o
   // Marca-texto caiu para 83 (32%) e so a LARGURA do feixe o trouxe de volta
   // — dano e alcance quase nao mexiam no numero (122->150 de dano: 83->82),
-  // porque ele so pega quem esta na frente do movimento. Nao e o
-  // balanceamento final (isso e fase 13), e o piso de "nenhuma arma
-  // obviamente inutil".
+  // porque ele so pega quem esta na frente do movimento. Isto e o piso de
+  // "nenhuma arma obviamente inutil".
+  //
+  // Fase 13 (npm run sim, handoff 13): numa run de verdade o Cafe fazia
+  // 65-70% do dano e Caneta e Resumo 4-6% cada, mesmo equipadas em 70-98%
+  // das avaliacoes — os bots que fogem nunca deixam ninguem chegar ao raio
+  // delas, e o Cafe mata de longe antes. A Caneta ganhou orbita mais larga
+  // (55-68 -> 80-98px) e dano do nivel 2 em diante; o Resumo, raio (90-135 ->
+  // 110-170px), cadencia e dano; o nivel 5 do Cafe perdeu uma perfuracao e um
+  // pouco de cadencia. O nivel 1 das duas nao mata o Prazo de um golpe (12 e
+  // 11 contra 14 de HP), como o Cafe nivel 1. Depois: Cafe 62% no 1º periodo
+  // e 42% no 3º; Caneta 9% -> 13%; Resumo 10% -> 14%; Marca-texto 19% -> 31%.
+  // A corrida isolada acima passou a dar Cafe 247 · Caneta 212 (86%) ·
+  // Resumo 239 (97%) · Marca-texto 114 (46%).
   armas: [
     {
       id: 'cafe',
@@ -477,13 +496,14 @@ export const CONTEUDO = {
       // passou a precisar de DOIS tiros; o nivel 2 (14) volta a matar de
       // primeira. E de proposito e medido: dar 14 ao nivel 1 devolvia a
       // vantagem ao canto (0 jubilados em 16 sementes, contra 5/16 assim) —
-      // o aperto dos primeiros ~20s e o que pune quem para.
+      // o aperto dos primeiros ~20s e o que pune quem para. A fase 13 so mexeu
+      // no nivel 5 (perfuracao 2 -> 1, cadencia 0,26 -> 0,28, dano 21 -> 20).
       niveis: [
         { dano: 12, cadencia: 0.4, velocidade: 430, alcance: 330, raio: 7, projeteis: 1, dispersao: 0, perfuracao: 0 },
         { dano: 14, cadencia: 0.36, velocidade: 450, alcance: 350, raio: 7, projeteis: 1, dispersao: 0, perfuracao: 0 },
         { dano: 16, cadencia: 0.33, velocidade: 470, alcance: 370, raio: 8, projeteis: 1, dispersao: 0, perfuracao: 1 },
         { dano: 18, cadencia: 0.3, velocidade: 490, alcance: 390, raio: 8, projeteis: 2, dispersao: 0.22, perfuracao: 1 },
-        { dano: 21, cadencia: 0.26, velocidade: 520, alcance: 420, raio: 9, projeteis: 3, dispersao: 0.3, perfuracao: 2 },
+        { dano: 20, cadencia: 0.28, velocidade: 520, alcance: 420, raio: 9, projeteis: 3, dispersao: 0.3, perfuracao: 1 },
       ],
     },
     {
@@ -496,11 +516,11 @@ export const CONTEUDO = {
       // quem estiver dentro de raioColisao da caneta. intervaloDano e o que
       // evita que um inimigo parado dentro dela leve 60 hits por segundo.
       niveis: [
-        { dano: 12, quantidade: 1, raioOrbita: 55, velocidadeAngular: 3.6, raioColisao: 20, intervaloDano: 0.16 },
-        { dano: 15, quantidade: 2, raioOrbita: 58, velocidadeAngular: 4.0, raioColisao: 21, intervaloDano: 0.14 },
-        { dano: 18, quantidade: 3, raioOrbita: 62, velocidadeAngular: 4.4, raioColisao: 22, intervaloDano: 0.12 },
-        { dano: 22, quantidade: 3, raioOrbita: 65, velocidadeAngular: 4.8, raioColisao: 23, intervaloDano: 0.1 },
-        { dano: 27, quantidade: 4, raioOrbita: 68, velocidadeAngular: 5.2, raioColisao: 24, intervaloDano: 0.09 },
+        { dano: 12, quantidade: 1, raioOrbita: 80, velocidadeAngular: 3.2, raioColisao: 24, intervaloDano: 0.16 },
+        { dano: 18, quantidade: 2, raioOrbita: 84, velocidadeAngular: 3.6, raioColisao: 25, intervaloDano: 0.14 },
+        { dano: 24, quantidade: 3, raioOrbita: 88, velocidadeAngular: 4.0, raioColisao: 26, intervaloDano: 0.12 },
+        { dano: 29, quantidade: 3, raioOrbita: 92, velocidadeAngular: 4.4, raioColisao: 27, intervaloDano: 0.1 },
+        { dano: 35, quantidade: 4, raioOrbita: 98, velocidadeAngular: 4.8, raioColisao: 28, intervaloDano: 0.09 },
       ],
     },
     {
@@ -514,11 +534,11 @@ export const CONTEUDO = {
       // velocidade — ver decisao no handoff da fase 05 sobre por que nao da
       // pra usar o empurraoX/Y de enemies.js aqui.
       niveis: [
-        { dano: 10, cadencia: 2.2, raio: 90, empurrao: 40 },
-        { dano: 13, cadencia: 2.0, raio: 100, empurrao: 45 },
-        { dano: 16, cadencia: 1.8, raio: 110, empurrao: 50 },
-        { dano: 20, cadencia: 1.6, raio: 120, empurrao: 55 },
-        { dano: 25, cadencia: 1.4, raio: 135, empurrao: 65 },
+        { dano: 11, cadencia: 2.0, raio: 110, empurrao: 40 },
+        { dano: 16, cadencia: 1.8, raio: 120, empurrao: 45 },
+        { dano: 22, cadencia: 1.6, raio: 135, empurrao: 50 },
+        { dano: 27, cadencia: 1.4, raio: 150, empurrao: 55 },
+        { dano: 34, cadencia: 1.2, raio: 170, empurrao: 65 },
       ],
     },
     {
@@ -556,21 +576,30 @@ export const CONTEUDO = {
   //   sobreviverFatal{ hp }                1x por run, o golpe fatal deixa `hp`
   //   multiplicarXp  { fator }             multiplica o XP de cada orbe
   //
-  // Precos (a loja paga em creditos por conceito: F 30 · D 60 · C 78 · B 96 ·
-  // A 120). Guardar dinheiro precisa ser jogada valida, entao os `caro`
+  // Precos (a loja paga em creditos por conceito: F 25 · D 50 · C 65 · B 80 ·
+  // A 100). Guardar dinheiro precisa ser jogada valida, entao os `caro`
   // custam MAIS que o melhor boletim possivel (o validador exige): so se
   // compra um deles guardando de uma avaliacao para a outra. Os `barato`
   // cabem num D.
   //
+  // Fase 13 (npm run sim, handoff 13): com os precos de antes (40/35/70/80/
+  // 140/125) e o boletim pagando ate 120, todo bot tinha 5 coringas no fim do
+  // 2º periodo e terminava a run com 625-700 creditos parados; o 3º periodo
+  // nao comprava nada. Agora: ~3 coringas no fim do 1º, 4 no fim do 2º, o 5º
+  // (um caro) no 3º, e ~200 de sobra no fim. O WhatsApp caiu de +0,5% para
+  // +0,25% por morte e continua o mais forte de longe: no fim de uma Prova
+  // Final do 3º periodo (~2100 mortos hoje) ainda chega a dano x6, e nao tem
+  // teto (pendencia 54, fase 14). Com 0,5% chegava a x8,5.
+  //
   // A `descricao` repete os numeros de `params` em texto: mudou um, mude o
-  // outro (fase 13).
+  // outro.
   coringas: [
     {
       id: 'energetico',
       nome: 'Energético',
       emoji: '🔋',
       descricao: '+15% de velocidade de movimento.',
-      preco: 40,
+      preco: 50,
       raridade: 'barato',
       efeito: 'atributo',
       params: { atributo: 'velocidade', fator: 1.15 },
@@ -580,7 +609,7 @@ export const CONTEUDO = {
       nome: 'Wi-Fi da Federal',
       emoji: '📶',
       descricao: '+80% no raio de coleta de XP.',
-      preco: 35,
+      preco: 45,
       raridade: 'barato',
       efeito: 'atributo',
       params: { atributo: 'raioColeta', fator: 1.8 },
@@ -590,7 +619,7 @@ export const CONTEUDO = {
       nome: 'Caderno Emprestado',
       emoji: '📚',
       descricao: 'Toda avaliação começa no nível 2.',
-      preco: 70,
+      preco: 150,
       raridade: 'medio',
       efeito: 'nivelInicial',
       params: { niveis: 1 },
@@ -600,7 +629,7 @@ export const CONTEUDO = {
       nome: 'Véspera da Prova',
       emoji: '🌙',
       descricao: 'Nos últimos 15s da avaliação, dano ×2.',
-      preco: 80,
+      preco: 130,
       raridade: 'medio',
       efeito: 'danoNoFim',
       params: { segundos: 15, fator: 2 },
@@ -609,18 +638,18 @@ export const CONTEUDO = {
       id: 'whatsapp',
       nome: 'Grupo de WhatsApp',
       emoji: '📱',
-      descricao: 'Cada morte soma +0,5% de dano, cumulativo dentro da avaliação.',
-      preco: 140,
+      descricao: 'Cada morte soma +0,25% de dano, cumulativo dentro da avaliação.',
+      preco: 300,
       raridade: 'caro',
       efeito: 'danoPorMorte',
-      params: { porMorte: 0.005 },
+      params: { porMorte: 0.0025 },
     },
     {
       id: 'atestado',
       nome: 'Atestado Médico',
       emoji: '🏥',
       descricao: '1× por run: sobrevive a um golpe fatal com 1 HP.',
-      preco: 125,
+      preco: 260,
       raridade: 'caro',
       efeito: 'sobreviverFatal',
       params: { hp: 1 },
@@ -671,8 +700,8 @@ export const CONTEUDO = {
   //              morte, com geracao+1 — geracaoMaxima trava a profundidade
   //              (1 = filhote nao divide de novo)
   //
-  // Numeros de primeiro corte (fase 09), sem pressao de balanceamento fino —
-  // isso e fase 13. O que importa aqui e cada tipo ter um papel distinto.
+  // Numeros de primeiro corte (fase 09). O que importa aqui e cada tipo ter
+  // um papel distinto. A fase 13 so mexeu no Trabalho em Grupo (abaixo).
   inimigos: [
     {
       id: 'prazo',
@@ -743,9 +772,13 @@ export const CONTEUDO = {
       id: 'trabalhoGrupo',
       nome: 'Trabalho em Grupo',
       emoji: '📱',
-      hp: 20,
-      velocidade: 100,
-      dano: 7,
+      // Fase 13: era hp 20, velocidade 100, dano 7. Ele so nasce do 2º periodo
+      // em diante (e na fase 2 da Banca), entao e o unico tipo que endurece o
+      // fim da run sem tocar no 1º periodo. Com hp 28/110/9 o 3º periodo virou
+      // parede demais (49-81% de jubilados); 24/105/8 fica em 8-23% (handoff 13).
+      hp: 24,
+      velocidade: 105,
+      dano: 8,
       raio: 13,
       xp: 2,
       peso: 0.35,
@@ -774,7 +807,14 @@ export const CONTEUDO = {
   // 3 por onda aos 30s e 5 aos 60s; agora 3,5 e 6). Sem essa rampa as armas
   // crescem mais rapido que a horda e o fim da avaliacao fica mais facil que
   // o meio. O teto da rampa (60s em diante) so vale para as avaliacoes mais
-  // longas, que a fase 13 ainda vai medir.
+  // longas.
+  //
+  // Medido na fase 13: subir `dificuldade` NAO endurece a avaliacao na mesma
+  // proporcao. Mais inimigos e mais XP, e o jogador sobe de nivel mais rapido;
+  // com o 3º periodo em 1,4/1,5/1,6 o desvio do `npm run sim` morreu MENOS
+  // (0%) que em 1,3/1,4/1,5 (15%), com tudo o mais igual. O que endurece de
+  // verdade e a composicao (PDF e Trabalho em Grupo pagam pouco XP pelo HP
+  // que tem) e os modificadores.
   spawn: {
     curvaPadrao: 'padrao',
     curvas: {
@@ -821,8 +861,13 @@ export const CONTEUDO = {
       // ...e o PDF entra so na Prova Final, o "modificador pesado" do 1o
       // periodo (design §2).
       p1Final: { prazo: 1, notificacao: 0.6, pdf: 0.3 },
-      // 2o periodo em diante: os 4 tipos, pesos fixos (fase 13 balanceia).
+      // 2o periodo em diante: os 4 tipos.
       todos: { prazo: 1, notificacao: 0.6, pdf: 0.3, trabalhoGrupo: 0.35 },
+      // Fase 13: a Prova Final do 2º periodo e o 3º periodo inteiro com mais
+      // PDF e mais Trabalho em Grupo. Era 'todos' do p2-av1 ao p3-final, e
+      // ninguem morria no 3º periodo (a curva de jubilacao era invertida).
+      p2Final: { prazo: 1, notificacao: 0.6, pdf: 0.4, trabalhoGrupo: 0.5 },
+      p3: { prazo: 1, notificacao: 0.6, pdf: 0.55, trabalhoGrupo: 0.7 },
       // TCC (fase 10): so o Prazo no fio de fundo — os 📱 da fase 2 vem da
       // Banca, nao do sorteio.
       tcc: { prazo: 1 },
@@ -942,7 +987,14 @@ export const CONTEUDO = {
   // Final e a "horda massiva com modificador pesado" do design so por dado:
   // mais dificuldade, dois modificadores e mais tempo.
   //
-  // Primeiro corte. A fase 13 mede a run inteira (tabela do smoke) e ajusta.
+  // Fase 13 (npm run sim, handoff 13). A curva de jubilacao era invertida:
+  // ninguem morria no 3º periodo (5 coringas na mao, nivel 13-15 aos 60s). O
+  // 1º periodo ficou como estava. No 2º, a av2 foi de 1,15 a 1,2 e a Prova
+  // Final de 1,25 a 1,35, com a composicao `p2Final`. No 3º, 1,2/1,25/1,35
+  // viraram 1,3/1,45/1,6, com a composicao `p3`, e a av2 sorteia 2
+  // modificadores (o design §9 diz 1-2). Jubilados por periodo (P1/P2/P3/TCC),
+  // 100 runs: desvio 4/17/0/45% -> 0/8/22/44%; passivo 0/4/0/0% ->
+  // 0/12/23/0%; agressivo 8/0/0/0% -> 0/0/8/0%.
   periodos: [
     {
       id: 'periodo-1',
@@ -958,17 +1010,17 @@ export const CONTEUDO = {
       nome: '2º Período',
       avaliacoes: [
         { id: 'p2-av1', nome: 'Avaliação 1', materia: 'Estruturas de Dados', tipo: 'comum', duracao: 65, dificuldade: 1.1, modificadores: 1, composicaoSpawn: 'todos' },
-        { id: 'p2-av2', nome: 'Avaliação 2', materia: 'Álgebra Linear', tipo: 'comum', duracao: 65, dificuldade: 1.15, modificadores: 1, composicaoSpawn: 'todos' },
-        { id: 'p2-final', nome: 'Prova Final', materia: 'Cálculo II', tipo: 'final', duracao: 80, dificuldade: 1.25, modificadores: 2, composicaoSpawn: 'todos' },
+        { id: 'p2-av2', nome: 'Avaliação 2', materia: 'Álgebra Linear', tipo: 'comum', duracao: 65, dificuldade: 1.2, modificadores: 1, composicaoSpawn: 'todos' },
+        { id: 'p2-final', nome: 'Prova Final', materia: 'Cálculo II', tipo: 'final', duracao: 80, dificuldade: 1.35, modificadores: 2, composicaoSpawn: 'p2Final' },
       ],
     },
     {
       id: 'periodo-3',
       nome: '3º Período',
       avaliacoes: [
-        { id: 'p3-av1', nome: 'Avaliação 1', materia: 'Banco de Dados', tipo: 'comum', duracao: 70, dificuldade: 1.2, modificadores: 1, composicaoSpawn: 'todos' },
-        { id: 'p3-av2', nome: 'Avaliação 2', materia: 'Probabilidade e Estatística', tipo: 'comum', duracao: 70, dificuldade: 1.25, modificadores: 1, composicaoSpawn: 'todos' },
-        { id: 'p3-final', nome: 'Prova Final', materia: 'Compiladores', tipo: 'final', duracao: 85, dificuldade: 1.35, modificadores: 2, composicaoSpawn: 'todos' },
+        { id: 'p3-av1', nome: 'Avaliação 1', materia: 'Banco de Dados', tipo: 'comum', duracao: 70, dificuldade: 1.3, modificadores: 1, composicaoSpawn: 'p3' },
+        { id: 'p3-av2', nome: 'Avaliação 2', materia: 'Probabilidade e Estatística', tipo: 'comum', duracao: 70, dificuldade: 1.45, modificadores: 2, composicaoSpawn: 'p3' },
+        { id: 'p3-final', nome: 'Prova Final', materia: 'Compiladores', tipo: 'final', duracao: 85, dificuldade: 1.6, modificadores: 2, composicaoSpawn: 'p3' },
       ],
     },
   ],
@@ -1033,20 +1085,26 @@ export const CONTEUDO = {
   //   horda      { tipo (id de inimigos[]), quantidade, raio (px da Banca ate
   //              cada ponto) } — circulos no chao, depois os inimigos ali
   //
-  // Primeiro corte, sem medicao fina (fase 13). O design pede "~2min". Medido
-  // com o botDesvio do smoke, SEM coringas e do nivel 1 (o pior jogador que
-  // ainda se mexe), 8 sementes: com HP segurado A Banca cai em 54-114s
-  // (mediana ~95s); com HP de verdade o bot cai em 4 das 8, com a Banca entre
-  // 17% e 26% — ele nao desvia de pergunta nenhuma. Com 1400 de HP a luta
-  // durava 43-83s: curta para um chefe. A luta dedicada do smoke imprime o
-  // numero da semente fixa (SEMENTE+900).
+  // O design pede "~2min". Primeiro corte (fase 10): hp 2200, contato 14,
+  // pergunta 10, investida 20. Com ele, os bots que pegam o Cafe (passivo e
+  // agressivo do `npm run sim`) a derrubavam em 40-50s, e o desvio (que nao
+  // desvia de pergunta nem de investida) vencia 55%.
+  //
+  // Fase 13: o HP quadruplicou e cada golpe ficou mais fraco e mais espacado.
+  // A luta e uma prova de resistencia: quanto mais longa, mais golpes quem nao
+  // desvia leva. Dobrar o HP sem baixar o dano derrubava o desvio para 26%.
+  // Depois (100 runs): passivo 115s, agressivo 85s, desvio 121s com 56% de
+  // vitoria; nenhuma luta passou de 300s (pendencia 76). O dano que o jogador
+  // toma da Banca nao e o que pune quem desvia (o passivo toma ~13 HP por
+  // minuto, so de pergunta). A luta dedicada do smoke imprime o numero da
+  // semente fixa (SEMENTE+900).
   banca: {
     id: 'banca',
     nome: 'A Banca',
     emoji: '📋',
-    hp: 2200,
+    hp: 9000,
     velocidade: 62, // px/s: devagar — o perigo sao os padroes, nao a perseguicao
-    dano: 14, // por encostada, fora da investida
+    dano: 4, // por encostada, fora da investida
     raio: 26, // 2 x 26 + folga cabe na grade de separacao (gradePasso 56)
     xp: 0,
     comportamento: 'perseguir',
@@ -1068,12 +1126,12 @@ export const CONTEUDO = {
         nome: 'Arguição',
         ate: 0.5,
         velocidadeFator: 1,
-        intervalo: 2.4,
+        intervalo: 3,
         sequencia: ['leque', 'horda'],
         padroes: {
           leque: {
             telegrafo: 0.8, recuperacao: 0.4,
-            projeteis: 7, abertura: 1.0, velocidade: 220, dano: 10, salvas: 1, intervaloSalvas: 0,
+            projeteis: 7, abertura: 1.0, velocidade: 220, dano: 4, salvas: 1, intervaloSalvas: 0,
           },
           horda: { telegrafo: 1.0, recuperacao: 0.4, tipo: 'prazo', quantidade: 6, raio: 80 },
         },
@@ -1082,14 +1140,14 @@ export const CONTEUDO = {
         nome: 'Réplica',
         ate: 0,
         velocidadeFator: 1.3,
-        intervalo: 1.8,
+        intervalo: 2.4,
         sequencia: ['investida', 'leque', 'investida', 'horda'],
         padroes: {
           leque: {
             telegrafo: 0.7, recuperacao: 0.4,
-            projeteis: 11, abertura: 1.5, velocidade: 250, dano: 10, salvas: 2, intervaloSalvas: 0.35,
+            projeteis: 9, abertura: 1.5, velocidade: 250, dano: 4, salvas: 2, intervaloSalvas: 0.35,
           },
-          investida: { telegrafo: 0.9, recuperacao: 0.8, velocidade: 520, distancia: 460, dano: 20 },
+          investida: { telegrafo: 0.9, recuperacao: 0.8, velocidade: 520, distancia: 460, dano: 8 },
           horda: { telegrafo: 1.0, recuperacao: 0.4, tipo: 'trabalhoGrupo', quantidade: 4, raio: 80 },
         },
       },
@@ -1127,8 +1185,9 @@ export const CONTEUDO = {
   // tanto quanto quem anda, e as mortes dominavam a nota. Agora as mortes
   // pesam metade e o HP pesa mais; quem manda na nota e o HP que sobra.
   //
-  // Medido com tres bots do smoke (avaliacao inteira, HP real, pegando
-  // sempre a primeira carta), 16 sementes cada:
+  // Medido com os pesos de ENTAO (0,016 / 4,5 / 0,5), tres bots do smoke
+  // (avaliacao inteira, HP real, pegando sempre a primeira carta), 16
+  // sementes cada — historico, nao vale para os pesos de hoje:
   //   - desviando (foge de quem chega perto; reproduzia a partida "jogando
   //     normal" do usuario antes do ajuste): media 8,4 — A1 B8 C6 D1, nenhum
   //     jubilado. O A exige terminar ileso E cacar: 279 mortos com ileso.
@@ -1145,21 +1204,39 @@ export const CONTEUDO = {
   // defensivo com 150 mortos e HP cheio da 6,9 (D), 7,4 (C) se ileso;
   // agressivo com 300 mortos e 40% de HP da 6,6 (D).
   //
-  // O que estes numeros NAO cobrem, e a fase 13 precisa olhar: como kills e
-  // termo absoluto, uma avaliacao de 85s (prova final) rende mais mortos e
-  // portanto nota maior que uma de 60s, mesmo jogando igual.
+  // Fase 13 (npm run sim, handoff 13): pesoKill 0,016 -> 0,007 e pesoHp
+  // 4,5 -> 7. Com o peso antigo a nota saturava da 1ª Prova Final em diante:
+  // 99% dos aprovados tiravam A e, em 68% deles, SO os kills ja davam 10 (o
+  // HP nao mudava nada). O numero de mortos nao mede estilo, mede spawn:
+  // todo bot mata ~90% do que nasce, de ~260 (p1-av1) a ~2100 (p3-final;
+  // ~1500 antes da fase 13). Nenhum pesoKill constante serve as 9
+  // avaliacoes; a formula por avaliacao e logica e ficou para a fase 14.
+  // Com os pesos de hoje:
+  //   - "so os kills dao 10" caiu de 68% para 17% dos aprovados (exige ~1430
+  //     mortos, so a Prova Final do 3º periodo chega la);
+  //   - na p1-av1 o A continua quase inalcancavel como antes: HP cheio,
+  //     ileso e ~286 mortos (nascem ~300). A partida perfeita do checkpoint 1
+  //     (210 mortos, ileso) daria 9,0 = B;
+  //   - parado no canto (smoke, SEMENTE+12) tira 3,8 F, contra 5,3 antes;
+  //   - passivo e agressivo continuam comparaveis: nota media 9,79 x 9,67,
+  //     conceito A em 80% x 76% das avaliacoes.
+  // O preco: perder HP pesa muito mais. As pontas de antes, refeitas: quem
+  // nao mata nada com HP cheio e ileso tira 7,5 (C); defensivo com 150 mortos
+  // e HP cheio, ~8,0 (C); agressivo com 300 mortos e 40% de HP, 4,9 (F). Na
+  // pratica nenhum bot "caca" (o agressivo mata o mesmo que o passivo), entao
+  // a segunda ponta nao aparece nas runs.
   nota: {
-    pesoKill: 0.016, // por inimigo morto; 250 mortos valem 4,0
-    pesoHp: 4.5, // multiplica a fracao de HP restante: HP cheio vale 4,5 pontos
+    pesoKill: 0.007, // por inimigo morto; 250 mortos valem 1,75 (era 0,016)
+    pesoHp: 7, // multiplica a fracao de HP restante: HP cheio vale 7 pontos (era 4,5)
     bonusIleso: 0.5, // so para quem terminou sem tomar UM ponto de dano
     maxima: 10,
     // Casas decimais da nota. Nao e cosmetico: e a nota ARREDONDADA que
     // escolhe a faixa, senao a tela mostraria 8,5 e pagaria creditos de C.
     casasDecimais: 1,
     // Creditos = creditosBase * creditosFator da faixa (design §4: D base,
-    // C +30%, B +60%, A +100%). A loja da fase 07 vende na casa dos 60-120,
-    // entao uma avaliacao rende de meia a duas compras.
-    creditosBase: 60,
+    // C +30%, B +60%, A +100%). Fase 13: era 60. Com 50 o boletim paga de 25
+    // (F) a 100 (A); um barato custa meio boletim A e um caro, 2,6 a 3.
+    creditosBase: 50,
     // Faixas em ordem decrescente de exigencia. A primeira cuja nota minima
     // for atingida vence.
     faixas: [
