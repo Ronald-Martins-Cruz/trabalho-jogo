@@ -47,6 +47,10 @@ export function criarEfeitos(cfg = CONTEUDO.juice) {
     // com nasc novo (pendencia 67), e herdar o HP do pai daria um flash falso.
     golpes: new WeakMap(),
     fontes: new Map(), // tamanho do emoji -> string de fonte
+    // Os emoji que esta maquina nao tem (detectarEmojiFaltando), testados no
+    // 1o quadro: Set, ou null quando nao falta nenhum (ou nao deu para testar).
+    emojiConferido: false,
+    emojiFaltando: null,
     fonteAtual: '',
     tamanhoFonte: -1,
     relogio: null, // estado.tempo do ultimo quadro desenhado
@@ -83,6 +87,10 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
   const v = CONTEUDO.visual;
   const naArena = TELAS_DE_JOGO.has(estado.tela) || TELAS_DE_FIM.has(estado.tela);
 
+  if (!fx.emojiConferido) {
+    fx.emojiConferido = true;
+    fx.emojiFaltando = detectarEmojiFaltando(ctx);
+  }
   avancarEfeitos(estado, fx);
   const paleta = paletaDe(estado, fx.cfg);
 
@@ -1043,7 +1051,94 @@ function desenharEmoji(ctx, fx, emoji, x, y, tamanho) {
     usarFonte(ctx, fx, fonte);
     fx.tamanhoFonte = tamanho;
   }
-  ctx.fillText(emoji, x, y);
+  glifo(ctx, fx, emoji, x, y, tamanho);
+}
+
+// O emoji, ou a forma no lugar dele numa maquina sem a fonte.
+function glifo(ctx, fx, emoji, x, y, tamanho) {
+  if (fx.emojiFaltando === null || !fx.emojiFaltando.has(emoji)) {
+    ctx.fillText(emoji, x, y);
+    return;
+  }
+  const fb = CONTEUDO.visual.emojiFallback;
+  const cor = fb.cores[emoji];
+  const antes = ctx.fillStyle;
+  ctx.fillStyle = cor === undefined ? fb.corPadrao : cor;
+  ctx.beginPath();
+  ctx.arc(x, y, tamanho * fb.fatorRaio, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = antes;
+}
+
+// ------------------------------------------------------- emoji sem fonte
+
+// Caracteres que nenhuma fonte desenha (o ultimo da area privada do plano 16
+// e um nao-caractere do plano 1): o navegador poe no lugar deles o mesmo
+// glifo de "nao tenho" (o tofu) que poria num emoji sem fonte.
+export const REFERENCIAS_TOFU = ['\u{10FFFD}', '\u{1FFFE}'];
+// Uma letra que toda fonte tem. Se ela sair em branco ou igual ao tofu, a
+// leitura do canvas nao e confiavel (privacidade do navegador devolvendo
+// pixels constantes) e nada e trocado: emoji de verdade virando circulo seria
+// pior que o tofu.
+export const CONTROLE_TOFU = 'A';
+
+// Todo emoji que o canvas desenha. O resto (cartas, loja, HUD) e texto do DOM.
+export function emojisDoCanvas(c = CONTEUDO) {
+  const lista = [c.jogador.emoji, c.xpOrbe.emoji, c.banca.emoji, c.banca.pergunta.emoji];
+  for (const a of c.armas) lista.push(a.emoji);
+  for (const i of c.inimigos) lista.push(i.emoji);
+  return lista;
+}
+
+// Desenha cada emoji num canvas pequeno, fora da tela, e compara os pixels
+// com os do tofu: igual ao tofu, ou em branco, e emoji que esta maquina nao
+// tem. Uma vez por canvas (o 1o quadro). Devolve o Set dos que faltam, ou
+// null — nenhum falta, ou nao deu para testar (node, canvas sem leitura).
+export function detectarEmojiFaltando(ctx, emojis = emojisDoCanvas(), v = CONTEUDO.visual) {
+  const doc = ctx && ctx.canvas && ctx.canvas.ownerDocument;
+  if (!doc || typeof doc.createElement !== 'function') return null;
+  try {
+    const fb = v.emojiFallback;
+    const lado = fb.tamanhoTeste;
+    const tela = doc.createElement('canvas');
+    tela.width = lado;
+    tela.height = lado;
+    const c = tela.getContext('2d', { willReadFrequently: true });
+    if (!c || typeof c.getImageData !== 'function') return null;
+    c.font = `${fb.fonteTeste}px ${v.fonteEmoji}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillStyle = v.corEmoji;
+    const ler = (texto) => {
+      c.clearRect(0, 0, lado, lado);
+      c.fillText(texto, lado / 2, lado / 2);
+      return c.getImageData(0, 0, lado, lado).data;
+    };
+    const controle = ler(CONTROLE_TOFU);
+    const tofus = REFERENCIAS_TOFU.map(ler);
+    if (emBranco(controle) || tofus.some((t) => mesmosPixels(t, controle))) return null;
+    let faltando = null;
+    for (const emoji of emojis) {
+      const p = ler(emoji);
+      if (!emBranco(p) && !tofus.some((t) => mesmosPixels(t, p))) continue;
+      if (!faltando) faltando = new Set();
+      faltando.add(emoji);
+    }
+    return faltando;
+  } catch {
+    return null;
+  }
+}
+
+function emBranco(dados) {
+  for (let i = 0; i < dados.length; i += 1) if (dados[i] !== 0) return false;
+  return true;
+}
+
+function mesmosPixels(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 // O flash: o emoji "incha" (escala do contexto, nao fonte nova) e e
@@ -1055,7 +1150,7 @@ function desenharComFlash(ctx, fx, emoji, x, y, tamanho, forca) {
   desenharEmoji(ctx, fx, emoji, 0, 0, tamanho);
   ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = f.alpha * forca;
-  ctx.fillText(emoji, 0, 0);
+  glifo(ctx, fx, emoji, 0, 0, tamanho);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   ctx.setTransform(1, 0, 0, 1, fx.tremorX, fx.tremorY);

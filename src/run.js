@@ -5,10 +5,14 @@ import {
   emitir,
   iniciarAvaliacao,
   irParaTela,
+  novaLoja,
   novaRun,
+  novasCartas,
+  novoPlayer,
   prepararAvaliacao,
   TELAS,
 } from './state.js';
+import { liberarPoolsDoEstado } from './pool.js';
 import { aoIniciarAvaliacao } from './jokers.js';
 import { equiparArma } from './weapons.js';
 import { receberDano } from './player.js';
@@ -204,6 +208,16 @@ export function fecharAvaliacao(estado, motivo) {
 // passa pelo anuncio: e ali que o jogador ve o periodo e a materia.
 export function iniciarRun(estado) {
   estado.run = novaRun();
+  // A run nasce inteira, e nao so `run`: o jogador, as cartas, a loja e as
+  // pools da run anterior ficavam congelados atras do anuncio ate a 1a
+  // avaliacao comecar (e a loja, ate a 1a loja abrir). Nada os lia nesse meio
+  // tempo, mas "jogar de novo" tem que ser o mesmo que abrir a pagina — e o
+  // que test/dom.mjs compara, quadro a quadro (fase 14, tarefa 5). Nada aqui
+  // sorteia: a run segue identica.
+  estado.player = novoPlayer();
+  estado.cartas = novasCartas();
+  estado.loja = novaLoja();
+  liberarPoolsDoEstado(estado);
   anunciarAvaliacao(estado, 0, 0);
 }
 

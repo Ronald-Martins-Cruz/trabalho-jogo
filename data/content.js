@@ -63,6 +63,32 @@ export const CONTEUDO = {
     // do fillStyle ao emoji colorido (com o das carteiras, 0,08, o bando sumia).
     corEmoji: '#ffffff',
     fonteEmoji: '"Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif',
+    // Maquina sem fonte de emoji (Linux sem Noto Color Emoji, Windows 7): o
+    // render.js testa cada emoji do canvas uma vez, desenhando-o num canvas
+    // pequeno e comparando os pixels com os de caracteres que nenhuma fonte tem
+    // (o "tofu"). O que sair igual ao tofu, ou em branco, vira um circulo desta
+    // cor (raio = tamanho do emoji x `fatorRaio`). O texto do DOM (cartas, loja,
+    // HUD) nao tem como trocar: o README da a fonte que falta.
+    emojiFallback: {
+      tamanhoTeste: 32, // px do lado do canvas de teste
+      fonteTeste: 24, // px da fonte no teste
+      fatorRaio: 0.38,
+      corPadrao: '#c9d1ff',
+      cores: {
+        '🎓': '#7aa2ff', // o jogador
+        '💡': '#56d8a6', // orbe de XP
+        '☕': '#c58b5a',
+        '✏️': '#ffd166',
+        '📝': '#f4f1de',
+        '🖍️': '#fff36b',
+        '📕': '#ff5d5d',
+        '🔔': '#ffb347',
+        '📄': '#e8ecff',
+        '📱': '#b28dff',
+        '📋': '#ff5d7a', // A Banca
+        '❓': '#ff9ff3',
+      },
+    },
     tamanhoEmojiJogador: 30,
     corSombraPausa: 'rgba(5, 6, 14, 0.6)',
     corRastro: '#8fd6ff', // rastro simples do jogador (fase 01)
@@ -1171,6 +1197,15 @@ export const CONTEUDO = {
     atrasoEntrada: 0.6,
   },
 
+  // O menu (fase 14). E o destino do jubilado e da colacao, e Enter/Espaco
+  // nele comecam uma run: sem atraso, o 2o toque de quem saiu de uma das duas
+  // com Enter (ou apertou Espaco varias vezes ao morrer) caia no anuncio de
+  // uma run que ninguem pediu — e do anuncio nao ha volta. O mesmo do
+  // colacao: fim de run, a tecla ainda quente.
+  menu: {
+    atrasoEntrada: 0.6,
+  },
+
   // O unico estado que sobrevive entre runs (main.js, lerRecorde/gravarRecorde):
   // melhor conceito geral e quantas vezes se formou. `chave` e o nome no
   // localStorage do navegador.
@@ -2262,6 +2297,9 @@ export function validarConteudo(conteudo = CONTEUDO) {
   if (exigeObjeto(conteudo.colacao, 'colacao')) {
     exigeNumero(conteudo.colacao.atrasoEntrada, 'colacao.atrasoEntrada', { min: 0, max: 3 });
   }
+  if (exigeObjeto(conteudo.menu, 'menu')) {
+    exigeNumero(conteudo.menu.atrasoEntrada, 'menu.atrasoEntrada', { min: 0, max: 3 });
+  }
   if (exigeObjeto(conteudo.recorde, 'recorde')) exigeTexto(conteudo.recorde.chave, 'recorde.chave');
 
   // Audio (fase 11): todo som que a fila pode pedir existe, e nenhum som
@@ -2667,6 +2705,28 @@ export function validarConteudo(conteudo = CONTEUDO) {
         erros.push(`${caminho}: esperava uma cor #hex ou rgb()/rgba(), veio ${JSON.stringify(valor)}`);
       }
     };
+    // A forma no lugar do emoji que a maquina nao tem (fase 14). Todo emoji
+    // que o canvas desenha precisa de cor propria: com a padrao, o bando
+    // inteiro vira circulos iguais.
+    const fb = conteudo.visual && conteudo.visual.emojiFallback;
+    if (exigeObjeto(fb, 'visual.emojiFallback')) {
+      exigeNumero(fb.tamanhoTeste, 'visual.emojiFallback.tamanhoTeste', { min: 8, max: 128 });
+      exigeNumero(fb.fonteTeste, 'visual.emojiFallback.fonteTeste', { min: 6, max: Number.isFinite(fb.tamanhoTeste) ? fb.tamanhoTeste : 128 });
+      exigeNumero(fb.fatorRaio, 'visual.emojiFallback.fatorRaio', { min: 0.1, max: 1 });
+      exigeCor(fb.corPadrao, 'visual.emojiFallback.corPadrao');
+      if (exigeObjeto(fb.cores, 'visual.emojiFallback.cores')) {
+        for (const [emoji, cor] of Object.entries(fb.cores)) exigeCor(cor, `visual.emojiFallback.cores["${emoji}"]`);
+        const doCanvas = [conteudo.jogador && conteudo.jogador.emoji, conteudo.xpOrbe && conteudo.xpOrbe.emoji];
+        if (conteudo.banca) doCanvas.push(conteudo.banca.emoji, conteudo.banca.pergunta && conteudo.banca.pergunta.emoji);
+        for (const a of conteudo.armas || []) doCanvas.push(a.emoji);
+        for (const i of conteudo.inimigos || []) doCanvas.push(i.emoji);
+        for (const emoji of doCanvas) {
+          if (typeof emoji === 'string' && emoji !== '' && !(emoji in fb.cores)) {
+            erros.push(`visual.emojiFallback.cores: falta a cor de ${emoji} (o canvas desenha esse emoji)`);
+          }
+        }
+      }
+    }
     if (exigeObjeto(j.tremor, 'juice.tremor')) {
       const t = j.tremor;
       exigeNumero(t.maximo, 'juice.tremor.maximo', { min: 0, max: 40 });

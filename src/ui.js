@@ -235,7 +235,10 @@ export function criarUi(doc) {
   function ligarCartas(aoEscolher, aoApontar) {
     opcoes.forEach((opcao, i) => {
       if (aoEscolher) {
-        opcao.botao.addEventListener('click', () => {
+        opcao.botao.addEventListener('click', (ev) => {
+          // O 2o clique de um clique duplo cai na carta seguinte da fila, que
+          // nasce no mesmo lugar: nao escolhe nada (soPrimeiroClique).
+          if (!soPrimeiroClique(ev)) return;
           aoEscolher(i);
           // Sem isto o botao clicado continua com o foco do DOM; se a fila
           // abrir a carta seguinte, o anel de foco fica na opcao da carta
@@ -252,13 +255,20 @@ export function criarUi(doc) {
     });
   }
 
+  // A versao conta os sorteios DE UMA avaliacao: `estado.cartas` nasce de novo
+  // (versao 0) a cada avaliacao e a cada run. So a versao, sem o objeto, deixava
+  // a 1a carta de uma avaliacao com o texto da ultima carta da anterior quando
+  // as duas tinham o mesmo numero (uma run que acabou depois de uma carta so, e
+  // a 1a carta da run seguinte): o jogador lia uma carta e levava outra.
+  let cartasDesenhadas = null;
   let versaoDesenhada = -1;
 
   function sincronizarCartas(estado) {
     const cartas = estado.cartas;
     const t = CONTEUDO.textos.cartas;
 
-    if (versaoDesenhada !== cartas.versao) {
+    if (cartasDesenhadas !== cartas || versaoDesenhada !== cartas.versao) {
+      cartasDesenhadas = cartas;
       versaoDesenhada = cartas.versao;
       // As cartas entram deslizando a cada sorteio novo, inclusive a 2a de
       // uma fila (a tela nao some entre as duas).
@@ -349,7 +359,11 @@ export function criarUi(doc) {
   // no estado pelas funcoes de shop.js.
   function ligarLoja(acoes) {
     itensLoja.forEach((item, i) => {
-      item.botao.addEventListener('click', () => {
+      item.botao.addEventListener('click', (ev) => {
+        // O 2o clique de um clique duplo LENTO no "Continuar" do boletim (o
+        // Windows aceita ate 500ms) chega depois do atraso de abertura da
+        // loja e cai no item que estiver embaixo: nao compra as cegas.
+        if (!soPrimeiroClique(ev)) return;
         acoes.comprar(i);
         soltarFoco(item.botao);
       });
@@ -357,24 +371,29 @@ export function criarUi(doc) {
       item.botao.addEventListener('focus', () => acoes.apontarItem(i));
     });
     slotsCoringa.forEach((slot, i) => {
-      slot.botao.addEventListener('click', () => {
+      slot.botao.addEventListener('click', (ev) => {
+        // Vendido o coringa, o seguinte escorrega para o mesmo slot: o 2o
+        // clique de um clique duplo venderia outro.
+        if (!soPrimeiroClique(ev)) return;
         acoes.vender(i);
         soltarFoco(slot.botao);
       });
       slot.botao.addEventListener('mouseenter', () => acoes.apontarCoringa(i));
       slot.botao.addEventListener('focus', () => acoes.apontarCoringa(i));
     });
-    const ligarAcao = (botao, agir, apontar) => {
+    const ligarAcao = (botao, agir, apontar, umPorCliqueDuplo) => {
       if (!botao) return;
-      botao.addEventListener('click', () => {
+      botao.addEventListener('click', (ev) => {
+        if (umPorCliqueDuplo && !soPrimeiroClique(ev)) return;
         agir();
         soltarFoco(botao);
       });
       botao.addEventListener('mouseenter', apontar);
       botao.addEventListener('focus', apontar);
     };
-    ligarAcao(el.botaoRerolar, acoes.rerolar, acoes.apontarRerolar);
-    ligarAcao(el.botaoSeguir, acoes.seguir, acoes.apontarSeguir);
+    // Rerrolar em sequencia rapida e de proposito; o "Seguir" troca de tela.
+    ligarAcao(el.botaoRerolar, acoes.rerolar, acoes.apontarRerolar, false);
+    ligarAcao(el.botaoSeguir, acoes.seguir, acoes.apontarSeguir, true);
   }
 
   let vitrineDesenhada = '';
@@ -580,21 +599,28 @@ export function criarUi(doc) {
     classe(el.colacaoRecorde, 'novo', c.novoRecorde);
   }
 
+  // Todo botao que troca de tela: o foco sai dele depois do clique (o Enter
+  // ou Espaco seguinte nao pode "clicar" de novo um botao que ja nao esta na
+  // tela) e o 2o clique de um clique duplo nao age — ele cai no que a tela
+  // nova pos embaixo do mouse. No Chrome, o "Desistir" da pausa fica bem em
+  // cima do "Jogar" do menu: o clique duplo nele comecava uma run nova.
   function ligarBotoes({ jogar, continuar, menu, resultado, jubilado, comecar, tcc, colacao }) {
-    if (el.botaoJogar && jogar) el.botaoJogar.addEventListener('click', jogar);
-    if (el.botaoContinuar && continuar) el.botaoContinuar.addEventListener('click', continuar);
-    if (el.botaoMenu && menu) el.botaoMenu.addEventListener('click', menu);
-    if (el.botaoResultado && resultado) el.botaoResultado.addEventListener('click', resultado);
-    if (el.botaoJubilado && jubilado) el.botaoJubilado.addEventListener('click', jubilado);
-    // O foco sai do botao depois do clique: o Enter seguinte nao pode
-    // "clicar" de novo num botao que ja nao esta na tela.
-    const soltando = (botao, acao) => () => {
-      acao();
-      soltarFoco(botao);
+    const ligar = (botao, acao) => {
+      if (!botao || !acao) return;
+      botao.addEventListener('click', (ev) => {
+        if (!soPrimeiroClique(ev)) return;
+        acao();
+        soltarFoco(botao);
+      });
     };
-    if (el.botaoComecar && comecar) el.botaoComecar.addEventListener('click', soltando(el.botaoComecar, comecar));
-    if (el.botaoTcc && tcc) el.botaoTcc.addEventListener('click', soltando(el.botaoTcc, tcc));
-    if (el.botaoColacao && colacao) el.botaoColacao.addEventListener('click', soltando(el.botaoColacao, colacao));
+    ligar(el.botaoJogar, jogar);
+    ligar(el.botaoContinuar, continuar);
+    ligar(el.botaoMenu, menu);
+    ligar(el.botaoResultado, resultado);
+    ligar(el.botaoJubilado, jubilado);
+    ligar(el.botaoComecar, comecar);
+    ligar(el.botaoTcc, tcc);
+    ligar(el.botaoColacao, colacao);
   }
 
   // `gerar(escopo)` devolve { nome, texto } ou null (nada gravado ainda). O
@@ -762,6 +788,13 @@ export function criarUi(doc) {
   }
 
   return { ligarMudo, mostrarMudo, ligarBotoes, ligarCartas, ligarLoja, ligarRelatorio, sincronizar, el };
+}
+
+// `detail` conta os cliques seguidos no mesmo lugar: 2 e o 2o clique de um
+// clique duplo. O clique que o teclado gera (Enter/Espaco num botao com foco)
+// e o `elemento.click()` vem com 0 e valem.
+export function soPrimeiroClique(ev) {
+  return !ev || !(ev.detail > 1);
 }
 
 // ------------------------------------------------------ exportar relatorio

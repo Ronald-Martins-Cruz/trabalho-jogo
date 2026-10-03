@@ -302,7 +302,8 @@ export function iniciar() {
 
   ligarTeclado(estado, audio);
   ui.ligarBotoes({
-    jogar: () => jogarDoMenu(estado),
+    // O clique espera o atraso de abertura do menu, como o Enter.
+    jogar: () => menuLiberado(estado) && jogarDoMenu(estado),
     continuar: () => continuarDaPausa(estado),
     menu: () => desistirDaPausa(estado),
     // Os dois botoes de fim de avaliacao chamam a MESMA funcao que o teclado:
@@ -554,30 +555,63 @@ function ligarTeclado(estado, audio) {
       ev.preventDefault();
       return;
     }
+    // Menu e pausa: Enter/Espaco fazem o botao principal ("Jogar",
+    // "Continuar"), como nas outras telas — sem mouse, o jogo nao comecava.
+    // Com um botao visivel em foco (Tab), quem age e ele: o Enter no
+    // "Desistir" desiste. O menu espera o atraso de abertura e engole a tecla
+    // enquanto isso: o 2o toque do Enter que saiu do jubilado ou da colacao
+    // nao comeca uma run (o Enter segurado ja cai no ev.repeat).
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && !botaoEmFoco(ev) && estado.tela === TELAS.MENU) {
+      if (menuLiberado(estado)) jogarDoMenu(estado);
+      ev.preventDefault();
+      return;
+    }
+    if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && !botaoEmFoco(ev) && continuarDaPausa(estado)) {
+      ev.preventDefault();
+      return;
+    }
     if (aplicar(ev.code, true)) ev.preventDefault();
     // ev.repeat: segurar ESC repete o keydown ~30x/s e a pausa piscaria.
     if (ev.code === 'Escape' && !ev.repeat) alternarPausa(estado);
+    // Espaco nunca rola a pagina nem "clica" um botao escondido que ficou com
+    // o foco; so o botao visivel em foco recebe o clique dele.
+    if (ev.code === 'Space' && !botaoEmFoco(ev)) ev.preventDefault();
   });
 
   window.addEventListener('keyup', (ev) => {
     if (aplicar(ev.code, false)) ev.preventDefault();
   });
 
-  // Aba escondida nao deixa tecla presa para sempre.
-  window.addEventListener('blur', () => {
-    estado.input.teclas = {};
-    estado.input.eixoX = 0;
-    estado.input.eixoY = 0;
-    // E nao deixa o jogador morrer enquanto olha para outra janela: trocar de
-    // aba no meio da apresentacao pausa a avaliacao, como o ESC.
-    if (estado.tela === TELAS.AVALIACAO) irParaTela(estado, TELAS.PAUSA);
-  });
+  window.addEventListener('blur', () => perderFoco(estado));
 
   // Minimizar ou trocar de aba nem sempre dispara `blur` (depende do
-  // navegador e de onde estava o foco). visibilitychange cobre o resto.
+  // navegador e de onde estava o foco). visibilitychange cobre o resto — e
+  // tambem solta as teclas: sem isso, quem trocava de aba (Ctrl+Tab) com o
+  // "D" apertado voltava andando sozinho para a parede.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && estado.tela === TELAS.AVALIACAO) irParaTela(estado, TELAS.PAUSA);
+    if (document.hidden) perderFoco(estado);
   });
+}
+
+// A janela perdeu o foco (blur) ou a aba sumiu: o keyup das teclas apertadas
+// nunca vai chegar, entao todas soltam; e a prova pausa, como o ESC — o
+// jogador nao morre olhando para outra janela no meio da apresentacao. As
+// outras telas ja congelam o jogo e ficam como estao. Devolve se pausou.
+export function perderFoco(estado) {
+  estado.input.teclas = {};
+  estado.input.eixoX = 0;
+  estado.input.eixoY = 0;
+  if (estado.tela !== TELAS.AVALIACAO) return false;
+  irParaTela(estado, TELAS.PAUSA);
+  return true;
+}
+
+// O alvo do teclado e um botao que o jogador enxerga (chegou nele com Tab)?
+// Entao o Enter/Espaco e dele, e o navegador o clica. Um botao escondido que
+// ficou com o foco depois de a tela sumir nao conta.
+function botaoEmFoco(ev) {
+  const alvo = ev.target;
+  return Boolean(alvo && alvo.tagName === 'BUTTON' && typeof alvo.getClientRects === 'function' && alvo.getClientRects().length > 0);
 }
 
 // Enter/Espaco seguem adiante na tela de resultado e na de jubilado. ESC NAO:
@@ -645,6 +679,13 @@ export function alternarPausa(estado) {
 // um Enter num botao que ficou com o foco depois de a tela sumir, nao pode
 // recomecar a run no meio de uma prova, nem "continuar" de cima de uma carta
 // ou da loja (o que pularia a escolha). Devolvem se agiram.
+// O atraso de abertura do menu (menu.atrasoEntrada). Como o do anuncio, quem
+// checa e quem chama (o teclado e o botao "Jogar"), e nao jogarDoMenu: o smoke
+// e o fuzz a exercitam sem simular o relogio.
+export function menuLiberado(estado) {
+  return estado.tela === TELAS.MENU && estado.tempo - estado.telaAbertaEm >= CONTEUDO.menu.atrasoEntrada;
+}
+
 export function jogarDoMenu(estado) {
   if (estado.tela !== TELAS.MENU) return false;
   iniciarRun(estado);

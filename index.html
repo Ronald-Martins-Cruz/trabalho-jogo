@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Semana de Provas</title>
+  <!-- Sem isto o navegador pede /favicon.ico, que nao existe (zero asset): um
+       404 vermelho no console a cada carga, bem na apresentacao. -->
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -158,7 +161,7 @@
       <h2 class="titulo-pausa">Pausado</h2>
       <button id="botao-continuar" class="botao" type="button">Continuar</button>
       <button id="botao-menu" class="botao botao-discreto" type="button">Desistir</button>
-      <p class="dica">Trocar de aba também pausa</p>
+      <p class="dica">ESC ou Enter continuam · trocar de aba também pausa</p>
     </div>
 
     <!-- Resultado: sobreviveu ao cronômetro. Os números saem de

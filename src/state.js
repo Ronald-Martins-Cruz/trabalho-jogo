@@ -24,6 +24,10 @@ export const TELAS = {
 export function novoEstado(seed = 1) {
   const estado = {
     tela: TELAS.MENU,
+    // estado.tempo em que a tela atual abriu (irParaTela). E o atraso de
+    // abertura do menu (main.js, menuLiberado); as outras telas guardam o seu
+    // no proprio objeto (loja, cartas, proxima, colacao).
+    telaAbertaEm: 0,
     tempo: 0, // segundos simulados desde novoEstado(); so cresce
     rng: criarRng(seed),
 
@@ -346,6 +350,7 @@ export function eventosDescartados(estado) {
 export function irParaTela(estado, tela) {
   if (estado.tela === tela) return;
   estado.tela = tela;
+  estado.telaAbertaEm = estado.tempo;
   emitir(estado, 'tela', tela);
 }
 
