@@ -43,7 +43,14 @@ export const CONTEUDO = {
       // inimigo. Pico medido na luta inteira (8 sementes, fase 2 com 2 salvas
       // de 11): 22 vivas ao mesmo tempo. 96 e ~4x isso.
       perguntas: 96,
-      eventos: 256, // fila de eventos para audio/juice; emitir() descarta o mais antigo
+      // Fila de eventos para audio/juice; emitir() descarta o mais antigo. O
+      // navegador so a esvazia uma vez por QUADRO, e um quadro lento tem ate
+      // loop.maxPassosPorFrame ticks. Fase 14: com os bots do sim, o pior
+      // quadro de 5 ticks juntou 134 eventos (passivo, p3-final) e o pior tick
+      // 114; o fuzz, com hordas extras, 247. Era 256 — folga de ~2x no jogo
+      // normal e nenhuma num quadro lento cheio. O teto nao custa nada (so o
+      // descarte custa), entao subiu.
+      eventos: 1024,
     },
   },
 
@@ -84,6 +91,9 @@ export const CONTEUDO = {
       corTelegrafo: 'rgba(255, 93, 122, 0.85)', // linhas, faixa e circulos de aviso
       alphaTelegrafoMin: 0.18, // o aviso nasce fraco...
       alphaTelegrafoMax: 0.75, // ...e fica forte ate o golpe sair
+      // A faixa da investida enche da Banca para a ponta com esta fracao do
+      // alfa do aviso (o contorno usa o alfa inteiro).
+      preenchimentoInvestida: 0.45,
       alcanceRaioLeque: 560, // px das linhas do aviso do leque (a pergunta voa alem)
       larguraRaioLeque: 3,
       emojiPerguntaFator: 2.6, // tamanho do ❓ = banca.pergunta.raio x este fator

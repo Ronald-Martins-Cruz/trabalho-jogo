@@ -832,11 +832,11 @@ export function resumoDoJubilado(resultado, textos = CONTEUDO.textos.resultado) 
 // (debug.boletimArmas): com a chave desligada devolve '' e a tela esconde a
 // linha. Le as armas do jogador, que so sao zeradas quando a proxima
 // avaliacao comeca — no boletim ainda sao as da partida que acabou.
-export function armasDoBoletim(resultado, armas, textos = CONTEUDO.textos.resultado, debug = CONTEUDO.debug) {
+export function armasDoBoletim(resultado, armas, textos = CONTEUDO.textos.resultado, debug = CONTEUDO.debug, catalogo = CONTEUDO.armas) {
   if (!debug || debug.boletimArmas !== true) return '';
   const partes = [`${textos.nivelJogador} ${resultado.nivel}`];
   for (const arma of armas) {
-    const dados = CONTEUDO.armas.find((a) => a.id === arma.id);
+    const dados = catalogo.find((a) => a.id === arma.id);
     const nome = dados ? `${dados.emoji} ${dados.nome}` : arma.id;
     partes.push(`${nome} ${textos.nivelArma}${arma.nivel}`);
   }

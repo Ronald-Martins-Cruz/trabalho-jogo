@@ -349,6 +349,11 @@ export function mediaDosBoletins(boletins) {
 // conceito geral e atualiza o recorde. A simulacao so escreve no estado
 // (estado.recorde) e avisa com o evento 'recorde'; gravar no localStorage e
 // com main.js, fora da simulacao.
+//
+// Pendencia 80: so a run com TODOS os boletins feitos conta como formatura.
+// Pelas portas do jogo nao se chega ao TCC sem as 9 avaliacoes; por um atalho
+// (teste, estado montado na mao) a media seria a de boletins vazios — um F
+// forjado que, gravado, viraria recorde. A colacao abre igual; o recorde fica.
 export function colarGrau(estado) {
   fecharAvaliacao(estado, MOTIVO_BANCA);
   const run = estado.run;
@@ -358,10 +363,18 @@ export function colarGrau(estado) {
   c.tempoTcc = run.resultado.tempo;
   c.feita = true;
   c.abertaEm = estado.tempo;
-  c.novoRecorde = registrarFormatura(estado.recorde, c.media, c.conceito);
+  const completa = runCompleta(run.boletins);
+  c.novoRecorde = completa && registrarFormatura(estado.recorde, c.media, c.conceito);
   irParaTela(estado, TELAS.COLACAO);
   emitir(estado, 'colacao', { media: c.media, conceito: c.conceito, novoRecorde: c.novoRecorde });
-  emitir(estado, 'recorde', null);
+  if (completa) emitir(estado, 'recorde', null);
+}
+
+// Todas as avaliacoes da run tem nota (o boletim de cada uma foi fechado).
+export function runCompleta(boletins) {
+  if (boletins.length === 0) return false;
+  for (const b of boletins) if (!b.feita) return false;
+  return true;
 }
 
 // Soma uma formatura e guarda a media se ela for a melhor. Devolve se bateu

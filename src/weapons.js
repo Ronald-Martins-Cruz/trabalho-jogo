@@ -262,8 +262,11 @@ function ondaArea(estado, arma, dados, nivel, dt) {
     if (d2 > soma * soma) continue;
 
     // O acerto e registrado ANTES do empurrao, no lugar em que a onda pegou.
+    // O chefe nao e empurrado (pendencia 77): A Banca fica parada no aviso e
+    // na virada de fase, e o aviso da investida mostra o caminho a partir de
+    // onde ela esta — empurrada, ela correria por outra faixa.
     const matou = golpear(estado, e, nivel.dano, dados.id);
-    if (!matou) {
+    if (!matou && !e.chefe) {
       const d = Math.sqrt(d2);
       const dirX = d > 0 ? dx / d : 0;
       const dirY = d > 0 ? dy / d : 0;
@@ -503,7 +506,11 @@ function esquecerAtingidos(p) {
 // avaliacao) ele fica protegido. Sem o `nasc`, um inimigo novo que reusasse o
 // objeto do morto herdaria a imunidade — o mesmo bug que a fase 03 blindou
 // para os projeteis perfurantes, aqui na sua outra forma.
-function criarMemoriaGolpes(tamanho) {
+// As tres funcoes da memoria sao exportadas so para o smoke (pendencia 33):
+// o laco de deduplicacao de lembrarGolpe so tem efeito visivel quando alguem
+// relembra um inimigo com entrada AINDA viva, e o orbital nunca faz isso (ele
+// pergunta emCooldown antes). O teste exercita esse caso direto.
+export function criarMemoriaGolpes(tamanho) {
   const itens = [];
   // -1 (nao -Infinity) porque a varredura profunda do smoke reprova qualquer
   // numero nao finito no estado inteiro; -1 ja e menor que qualquer
@@ -512,7 +519,7 @@ function criarMemoriaGolpes(tamanho) {
   return { itens, indice: 0 };
 }
 
-function emCooldown(memoria, e, agora) {
+export function emCooldown(memoria, e, agora) {
   const itens = memoria.itens;
   for (let i = 0; i < itens.length; i += 1) {
     if (itens[i].ref === e && itens[i].nasc === e.nasc) return itens[i].expiraEm > agora;
@@ -542,7 +549,14 @@ function emCooldown(memoria, e, agora) {
 // memoriaAlvos consegue lembrar — o round-robin sobrescreve um slot vivo
 // mesmo assim; nesse ponto o limite e de capacidade, nao de logica, e quem
 // resolve e subir memoriaAlvos (ver checarCooldownComEnxameOrbital()).
-function lembrarGolpe(memoria, e, expiraEm, agora) {
+//
+// O acoplamento com emCooldown (pendencia 33): as duas varrem do indice 0 e
+// emCooldown responde pela PRIMEIRA entrada do inimigo. Hoje o orbital so
+// relembra quem emCooldown deu como livre, e por isso o 2o laco, sozinho, ja
+// poria a entrada nova antes da velha vencida. O 1o laco e o que vale quando a
+// entrada ainda esta viva (renovar um cooldown): sem ele a entrada velha, mais
+// curta, ficaria na frente e responderia por ele.
+export function lembrarGolpe(memoria, e, expiraEm, agora) {
   const itens = memoria.itens;
   for (let i = 0; i < itens.length; i += 1) {
     if (itens[i].ref === e && itens[i].nasc === e.nasc) {

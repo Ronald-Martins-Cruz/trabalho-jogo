@@ -148,6 +148,10 @@ const EFEITOS = {
   },
 };
 
+// Os nomes de efeito que existem. Para o check (pendencia 56): um nome destes
+// escrito fora deste arquivo e logica de coringa vazando, como um id.
+export const NOMES_EFEITOS = Object.freeze(Object.keys(EFEITOS));
+
 // ------------------------------------------------------------------- dados
 
 export function dadosDoCoringa(id, lista = CONTEUDO.coringas) {
@@ -281,7 +285,7 @@ export function aoReceberDanoFatal(estado, dano) {
 // o teste. Devolve a lista de problemas (vazia = ok).
 export function verificarCoringasDoConteudo(conteudo = CONTEUDO) {
   const problemas = [];
-  const vistos = new Set();
+  const vistos = new Set(); // fora-do-loop: check, smoke e iniciar() verificam o conteudo uma vez
   for (const nomeEfeito of Object.keys(EFEITOS)) {
     for (const chave of Object.keys(EFEITOS[nomeEfeito])) {
       if (chave !== 'parametros' && chave !== 'validar' && !HOOKS.includes(chave)) {

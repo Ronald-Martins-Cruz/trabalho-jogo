@@ -337,9 +337,13 @@ if (erros.length === 0) {
 // A regra da fase 07: nenhum `if (temCoringa('x'))` fora de jokers.js. Id de
 // coringa especifico escrito num .js de src/ que nao seja jokers.js e logica
 // de coringa vazando — o comportamento tem que sair do `efeito` em content.js.
+// Fase 14 (pendencia 56): o mesmo vale para o NOME de um efeito
+// (`efeito === 'sobreviverFatal'`) e para ler o campo `.efeito` de um coringa
+// — so jokers.js sabe o que um efeito faz.
 if (erros.length === 0) {
   try {
     const { CONTEUDO } = await import(pathToFileURL(join(RAIZ, 'data', 'content.js')).href);
+    const { NOMES_EFEITOS } = await import(pathToFileURL(join(RAIZ, 'src', 'jokers.js')).href);
     const ids = CONTEUDO.coringas.map((c) => c.id);
     for (const arquivo of modulos) {
       const rel = relative(RAIZ, arquivo).split('\\').join('/');
@@ -351,10 +355,107 @@ if (erros.length === 0) {
             erros.push(`${rel}:${i + 1}: id de coringa "${id}" fora de jokers.js — use um efeito em content.js`);
           }
         }
+        for (const nome of NOMES_EFEITOS) {
+          if (new RegExp(`['"\`]${nome}['"\`]`).test(semComentario)) {
+            erros.push(`${rel}:${i + 1}: nome de efeito de coringa "${nome}" fora de jokers.js — o que um efeito faz mora la`);
+          }
+        }
+        if (/\.efeito\b/.test(semComentario)) {
+          erros.push(`${rel}:${i + 1}: leitura de \`.efeito\` de coringa fora de jokers.js — pergunte a um hook de jokers.js`);
+        }
       });
     }
   } catch (e) {
     erros.push(`nao deu para varrer os ids de coringa: ${e.message}`);
+  }
+}
+
+// ---------------------------------------- 10. nenhum `new` dentro do loop
+
+// Restricao 5 (pendencia 5): tudo que nasce e morre no loop sai de pool.
+// Nos modulos da simulacao, um `new` dentro de funcao e alocacao no caminho
+// do update. main.js entra: e la que moram atualizar() e o quadro; o que ele
+// tem de navegador (AudioContext, a hora do relatorio) se declara fora do
+// loop. Ficam de fora so: `throw new XError(...)` (excecao nao e regime), o
+// `new` no nivel do modulo que nao esta dentro de uma funcao de uma linha
+// (roda uma vez, no import), e a linha marcada `// fora-do-loop: <motivo>`.
+// O render, a UI, o audio e o relatorio nao sao update. Literal ({}/[]) por
+// evento nao e pego aqui: a guarda de runtime das pools (smoke e fuzz) e o
+// outro trilho.
+const FORA_DA_SIMULACAO = new Set(['src/ui.js', 'src/render.js', 'src/audio.js', 'src/relatorio.js']);
+for (const arquivo of modulos) {
+  const rel = relative(RAIZ, arquivo).split('\\').join('/');
+  if (!rel.startsWith('src/') || FORA_DA_SIMULACAO.has(rel)) continue;
+  readFileSync(arquivo, 'utf8').split(/\r?\n/).forEach((linha, i) => {
+    if (/\/\/.*fora-do-loop:/.test(linha)) return;
+    const semComentario = linha.replace(/\/\/.*$/, '');
+    const re = /\bnew\s*(\(|[A-Za-z_$][\w$]*)/g;
+    let achado;
+    while ((achado = re.exec(semComentario))) {
+      const antes = semComentario.slice(0, achado.index);
+      if (/Error$/.test(achado[1]) && /\bthrow\s+$/.test(antes)) continue;
+      // Nivel do modulo: coluna 0 e nenhuma funcao aberta antes do `new`
+      // na mesma linha (`export const f = () => new Map()` roda a cada chamada).
+      if (!/^\s/.test(linha) && !/=>|\bfunction\b/.test(antes)) continue;
+      const nome = achado[1] === '(' ? '(...)' : achado[1];
+      erros.push(
+        `${rel}:${i + 1}: \`new ${nome}\` dentro de funcao da simulacao — use uma pool, um scratch, ` +
+          'ou marque a linha com `// fora-do-loop: <motivo>` se ela nao roda no update'
+      );
+    }
+  });
+}
+
+// --------------------------------- 11. texto que repete numero de content.js
+
+// Pendencia 65: a `descricao` de cada coringa e modificador repete em texto os
+// numeros dos `params`/`fatores`/`somas`; o index.html repete a forma da run
+// e o numero de opcoes da carta. Mudou o numero, o texto mente. Todo numero
+// escrito numa descricao tem que sair de um numero do proprio item — cru,
+// em % (0,25% de 0,0025; 65% de 0,65), em % de mudanca (+15% de 1,15; −40%
+// de 0,6) ou somado ao nivel 1 (o Caderno: "nivel 2" de niveis 1).
+if (erros.length === 0) {
+  try {
+    const { CONTEUDO } = await import(pathToFileURL(join(RAIZ, 'data', 'content.js')).href);
+    const aproxima = (a, b) => Math.abs(a - b) < 1e-9;
+    const numerosDoTexto = (texto) => [...texto.matchAll(/\d+(?:,\d+)?/g)].map((m) => Number(m[0].replace(',', '.')));
+    const derivados = (valores) => {
+      const saida = [];
+      for (const v of valores) {
+        if (typeof v !== 'number') continue;
+        saida.push(v, v * 100, Math.abs(v - 1) * 100, v + 1);
+      }
+      return saida;
+    };
+    const conferir = (onde, texto, valores) => {
+      const aceitos = derivados(valores);
+      for (const n of numerosDoTexto(texto)) {
+        if (!aceitos.some((v) => aproxima(v, n))) {
+          const numeros = valores.filter((v) => typeof v === 'number').join(', ');
+          erros.push(`content.js — ${onde}: a descricao "${texto}" diz ${n}, que nao sai de nenhum numero do item (${numeros}) — o texto envelheceu`);
+        }
+      }
+    };
+    for (const c of CONTEUDO.coringas) conferir(`coringa "${c.id}"`, c.descricao, Object.values(c.params || {}));
+    for (const m of CONTEUDO.modificadores) {
+      conferir(`modificador "${m.id}"`, m.descricao, [...Object.values(m.fatores || {}), ...Object.values(m.somas || {})]);
+    }
+
+    const html = readFileSync(join(RAIZ, 'index.html'), 'utf8');
+    const avaliacoes = CONTEUDO.periodos.reduce((s, p) => s + p.avaliacoes.length, 0);
+    const fixos = [
+      [/(\d+) períodos/, CONTEUDO.periodos.length, 'periodos'],
+      [/(\d+) avaliações ·/, avaliacoes, 'avaliacoes de periodos[]'],
+      [/((?:\d · )*\d) para escolher/, CONTEUDO.cartas.quantidade, 'cartas.quantidade', (t) => t.split(' · ').length],
+    ];
+    for (const [padrao, esperado, nome, contar] of fixos) {
+      const m = padrao.exec(html);
+      if (!m) continue;
+      const escrito = contar ? contar(m[1]) : Number(m[1]);
+      if (escrito !== esperado) erros.push(`index.html: "${m[0]}" diz ${escrito}, content.js tem ${esperado} (${nome}) — o texto envelheceu`);
+    }
+  } catch (e) {
+    erros.push(`nao deu para conferir os textos que repetem numeros: ${e.message}`);
   }
 }
 
@@ -371,5 +472,5 @@ if (erros.length > 0) {
 
 console.log(
   `check ok — ${modulos.length} modulos + ${marcacoes.length} html/css + package.json` +
-    ' · sintaxe, regras estruturais, zero externo, content.js, nota, coringas'
+    ' · sintaxe, regras estruturais, zero externo, content.js, nota, coringas, new fora do loop, textos x numeros'
 );

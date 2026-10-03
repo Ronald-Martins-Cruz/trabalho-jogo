@@ -25,7 +25,7 @@ import { obterPool } from './pool.js';
 //   ENTRADA --entrada.duracao--> PERSEGUINDO --fase.intervalo-->
 //   TELEGRAFO (parada, aviso na tela) --padrao.telegrafo--> EXECUTANDO
 //   (o golpe; o leque pode ter varias salvas, a investida corre ate o fim da
-//   faixa ou a parede) --> RECUPERANDO (parada) --padrao.recuperacao-->
+//   faixa, desliza na parede se bater de raspao) --> RECUPERANDO (parada) --padrao.recuperacao-->
 //   PERSEGUINDO --> ... proximo padrao da `sequencia` da fase, em ciclo.
 //
 //   HP <= fases[f].ate * hpMax, em qualquer estado --> TRANSICAO (parada,
@@ -97,7 +97,16 @@ export function novaBanca(cfg = CONTEUDO.banca) {
     relogio: 0, // segundos que faltam no estado atual
     duracaoEstado: 0, // duracao total do estado atual: o render tira o progresso do aviso daqui
     mira: 0, // rad: direcao do leque e da investida, fixada no INICIO do aviso
-    alcance: 0, // px: o comprimento real da investida (cortado na parede da arena)
+    alcance: 0, // px: o 1o trecho da investida, na mira (cortado na parede da arena)
+    // O 2o trecho (pendencia 75): a investida que bate na parede de raspao
+    // desliza ao longo dela. Comeca na quina (o fim do 1o trecho), vai na
+    // direcao unitaria (deslizeX, deslizeY) e mede `deslize` px; 0 = nao ha.
+    deslize: 0,
+    deslizeX: 0,
+    deslizeY: 0,
+    quinaX: 0,
+    quinaY: 0,
+    perna: 0, // trecho da investida em execucao: 0 o da mira, 1 o deslize
     salvas: 0, // salvas de leque que ainda faltam sair
     pontos, // onde a horda vai nascer (o aviso mostra circulos ali)
     quantosPontos: 0,
@@ -333,18 +342,32 @@ function recuperar(b, corpo) {
 
 // ---------------------------------------------------------------- padroes
 
-function mirarNoJogador(estado, corpo) {
+// Distancia ao quadrado abaixo da qual dois pontos sao o mesmo ponto: a
+// direcao entre eles nao existe (atan2(0, 0) e 0, uma direcao qualquer).
+const MESMO_PONTO = 1e-12;
+
+// A direcao da Banca ate o jogador. Pendencia 79: com o jogador exatamente em
+// cima dela essa direcao nao existe, e a mira saia sempre 0 rad (para a
+// direita, mesmo colada na parede da direita). Mira entao o centro da arena,
+// onde sempre ha espaco para o golpe; se ela ja esta no centro, fica com a
+// mira anterior. Sem sorteio: o rng da partida nao muda.
+export function mirarNoJogador(estado, corpo, miraAnterior = 0) {
   const p = estado.player;
   const dx = p.x - corpo.x;
   const dy = p.y - corpo.y;
-  return dx === 0 && dy === 0 ? 0 : Math.atan2(dy, dx);
+  if (dx * dx + dy * dy > MESMO_PONTO) return Math.atan2(dy, dx);
+  const arena = estado.run.avaliacao.arena;
+  const cx = (arena.esquerda + arena.direita) / 2 - corpo.x;
+  const cy = (arena.topo + arena.base) / 2 - corpo.y;
+  if (cx * cx + cy * cy > MESMO_PONTO) return Math.atan2(cy, cx);
+  return miraAnterior;
 }
 
 // ❓ Leque de perguntas: mira no jogador no INICIO do aviso e atira nas
 // mesmas linhas que o aviso mostrou — quem saiu da linha durante o aviso nao
 // e seguido.
 function prepararLeque(estado, b, corpo, params) {
-  b.mira = mirarNoJogador(estado, corpo);
+  b.mira = mirarNoJogador(estado, corpo, b.mira);
   b.salvas = params.salvas;
 }
 
@@ -388,41 +411,104 @@ function atirarLeque(estado, b, corpo, params) {
   b.salvas -= 1;
 }
 
-// Investida: para, mostra a faixa (da Banca ate onde ela vai parar), e corre
-// em linha reta pelo comportamento de movimento 'rumo' — o mesmo
-// moverInimigos de todo inimigo, so que sem perseguir. O comprimento sai
-// cortado na parede ja no aviso, entao a faixa mostrada e exatamente o
-// caminho.
+// Investida: para, mostra a faixa, e corre pelo comportamento de movimento
+// 'rumo' — o mesmo moverInimigos de todo inimigo, so que sem perseguir. O
+// caminho inteiro sai decidido ja no aviso (tracarInvestida), entao a faixa
+// mostrada e exatamente o caminho.
 function prepararInvestida(estado, b, corpo, params) {
-  b.mira = mirarNoJogador(estado, corpo);
-  b.alcance = alcanceAteAParede(corpo, Math.cos(b.mira), Math.sin(b.mira), params.distancia, estado.run.avaliacao.arena);
+  b.mira = mirarNoJogador(estado, corpo, b.mira);
+  tracarInvestida(b, corpo, params.distancia, estado.run.avaliacao.arena);
+}
+
+// Abaixo disto (px) o deslize nao existe: e o resto de ponto flutuante de uma
+// investida que bateu de frente na parede (sin(pi) nao e zero).
+const DESLIZE_MINIMO = 1e-6;
+
+// O caminho da investida, a partir de onde A Banca esta e de b.mira: reto ate
+// `distancia`, cortado na parede da arena (b.alcance, ate a quina). Pendencia
+// 75: quem corria rente a borda deixava A Banca grampeada na mesma parede,
+// com a mira apontando para fora dela — o trecho reto media ~0px e a corrida
+// durava 1 tick. Agora, batendo numa parede, ela desliza ao longo dela com o
+// que o impulso tinha de paralelo a parede: o que faltava percorrer x a
+// componente paralela, cortado na parede seguinte. De frente para a parede,
+// para nela como sempre; de raspao, segue quase inteira. Exportada para o smoke.
+export function tracarInvestida(b, corpo, distancia, arena) {
+  const r = corpo.raio;
+  const dx = Math.cos(b.mira);
+  const dy = Math.sin(b.mira);
+  const tx = ateALimite(corpo.x, dx, arena.esquerda + r, arena.direita - r);
+  const ty = ateALimite(corpo.y, dy, arena.topo + r, arena.base - r);
+  const t = Math.min(distancia, tx, ty);
+  b.alcance = t;
+  b.quinaX = corpo.x + dx * t;
+  b.quinaY = corpo.y + dy * t;
+  b.deslize = 0;
+  b.deslizeX = 0;
+  b.deslizeY = 0;
+  // Nao bateu em nada, ou bateu na quina (as duas paredes de uma vez).
+  if (!(t < distancia) || tx === ty) return;
+  const sobra = distancia - t;
+  if (tx < ty) {
+    // Parede da esquerda ou da direita: desliza na vertical.
+    b.deslizeY = Math.sign(dy);
+    b.deslize = Math.min(sobra * Math.abs(dy), ateALimite(b.quinaY, b.deslizeY, arena.topo + r, arena.base - r));
+  } else {
+    b.deslizeX = Math.sign(dx);
+    b.deslize = Math.min(sobra * Math.abs(dx), ateALimite(b.quinaX, b.deslizeX, arena.esquerda + r, arena.direita - r));
+  }
+  if (!(b.deslize > DESLIZE_MINIMO)) {
+    b.deslize = 0;
+    b.deslizeX = 0;
+    b.deslizeY = 0;
+  }
+}
+
+// Quanto se anda de `pos`, na direcao `d` de um eixo, ate sair de [min, max].
+// Sem andar nesse eixo, nunca.
+function ateALimite(pos, d, min, max) {
+  if (d > 0) return Math.max(0, (max - pos) / d);
+  if (d < 0) return Math.max(0, (min - pos) / d);
+  return Infinity;
 }
 
 function executarInvestida(estado, b, corpo, params) {
   corpo.comportamento = MOVIMENTO_INVESTIDA;
-  corpo.rumoX = Math.cos(b.mira);
-  corpo.rumoY = Math.sin(b.mira);
   corpo.velocidade = params.velocidade * estado.run.avaliacao.regras.velocidadeInimigo;
   corpo.dano = params.dano;
-  b.relogio = corpo.velocidade > 0 ? b.alcance / corpo.velocidade : 0;
+  // Ja colada na parede, a corrida comeca pelo deslize (o trecho reto nao
+  // tem o que andar).
+  if (b.alcance > DESLIZE_MINIMO || !(b.deslize > 0)) seguirTrecho(b, corpo, 0, Math.cos(b.mira), Math.sin(b.mira), b.alcance);
+  else seguirTrecho(b, corpo, 1, b.deslizeX, b.deslizeY, b.deslize);
 }
 
+function seguirTrecho(b, corpo, perna, x, y, comprimento) {
+  b.perna = perna;
+  corpo.rumoX = x;
+  corpo.rumoY = y;
+  b.relogio = corpo.velocidade > 0 ? comprimento / corpo.velocidade : 0;
+}
+
+// O trecho acaba na parede (`bateu`) ou no fim do relogio. O 1o, se houver
+// deslize, emenda no 2o — com o que FALTA dele: no tick em que bate, o grampo
+// so trava um eixo e A Banca ja escorrega um pouco ao longo da parede, alem da
+// quina. Recomecar o deslize inteiro dali a levaria alem da ponta avisada
+// (revisao da fase 14: ate 60% do raio a mais, dano onde o aviso nao mostrou).
 function continuarInvestida(estado, b, corpo, params, bateu) {
-  return bateu || b.relogio <= 0;
+  if (!bateu && b.relogio > 0) return false;
+  if (b.perna === 0 && b.deslize > 0) {
+    const andado = (corpo.x - b.quinaX) * b.deslizeX + (corpo.y - b.quinaY) * b.deslizeY;
+    const resta = b.deslize - andado;
+    if (resta > 0) {
+      seguirTrecho(b, corpo, 1, b.deslizeX, b.deslizeY, resta);
+      return false;
+    }
+  }
+  return true;
 }
 
 function encerrarInvestida(b, corpo) {
   corpo.velocidade = 0;
-}
-
-function alcanceAteAParede(corpo, dx, dy, maximo, arena) {
-  const r = corpo.raio;
-  let t = maximo;
-  if (dx > 0) t = Math.min(t, (arena.direita - r - corpo.x) / dx);
-  else if (dx < 0) t = Math.min(t, (arena.esquerda + r - corpo.x) / dx);
-  if (dy > 0) t = Math.min(t, (arena.base - r - corpo.y) / dy);
-  else if (dy < 0) t = Math.min(t, (arena.topo + r - corpo.y) / dy);
-  return Math.max(0, t);
+  b.perna = 0;
 }
 
 // Horda: circulos no chao em volta da Banca, e os inimigos nascem ali no fim

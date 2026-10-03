@@ -1,5 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { FONTE_DESCONHECIDA, SITUACAO } from './telemetria.js';
+import { FONTE_PERDA_HP } from './run.js';
 
 // Relatorio de balanceamento: transforma estado.telemetria (src/telemetria.js)
 // num arquivo Markdown — resumo, leituras automaticas e tabelas — com o JSON
@@ -74,6 +75,7 @@ export function configuracaoDoJogo(conteudo = CONTEUDO) {
 export function analisarAvaliacao(reg, conteudo = CONTEUDO) {
   const cfg = conteudo.relatorio;
   const tempo = reg.tempoJogado > 0 ? reg.tempoJogado : reg.pressao.tempo;
+  const duracao = duracaoMedida(reg, tempo);
   const observado = reg.pressao.tempo > 0 ? reg.pressao.tempo : NaN;
   const j = reg.jogador;
   const r = reg.resultado;
@@ -86,7 +88,7 @@ export function analisarAvaliacao(reg, conteudo = CONTEUDO) {
     return nivel;
   };
   const marcos = [];
-  for (let k = 1; k * cfg.marcosNivel <= reg.duracao + EPS; k += 1) {
+  for (let k = 1; k * cfg.marcosNivel <= duracao + EPS; k += 1) {
     const t = k * cfg.marcosNivel;
     marcos.push({ t, nivel: tempo + EPS >= t ? nivelAos(t) : null });
   }
@@ -245,9 +247,15 @@ export function analisarAvaliacao(reg, conteudo = CONTEUDO) {
       piorSequencia: piorSequenciaDeDano(golpes, cfg.janelaDano),
       maiorTrechoSemDano: maiorTrechoSemDano(golpes, tempo),
     },
+    // A duracao que mede a avaliacao: o cronometro, ou, sem ele (o TCC), o
+    // tempo que a luta durou.
+    duracao,
     movimento: {
       distancia: j.distancia,
       velocidadeMedia: j.distancia / observado,
+      // Pendencia 58: a do jogador desta avaliacao, com os coringas (o
+      // Energetico); registro antigo sem o campo cai na de content.js.
+      velocidadeMaxima: Number.isFinite(j.velocidadeMax) ? j.velocidadeMax : conteudo.jogador.velocidade,
       fracParado: j.tempoParado / observado,
       fracComInput: j.tempoComInput / observado,
       fracBorda: j.tempoBorda / observado,
@@ -294,6 +302,18 @@ export function analisarAvaliacao(reg, conteudo = CONTEUDO) {
   return analise;
 }
 
+// Pendencia 74: o TCC nao tem cronometro (duracao 0). Medido contra 0, a linha
+// do tempo da luta inteira caia numa janela "0–0" e o jubilado saia "aos 97s
+// de 0s". Sem cronometro, a avaliacao se mede pelo tempo que ela durou.
+function duracaoMedida(reg, tempo) {
+  return reg.duracao > 0 ? reg.duracao : Math.max(0, Number.isFinite(tempo) ? tempo : 0);
+}
+
+// " de 60s", ou " de defesa" no TCC: o complemento de "aos Xs".
+function deQuanto(reg) {
+  return reg.duracao > 0 ? ` de ${reg.duracao}s` : ' de defesa';
+}
+
 function piorSequenciaDeDano(golpes, janela) {
   let pior = null;
   for (let i = 0; i < golpes.length; i += 1) {
@@ -332,13 +352,13 @@ function sinaisDaAvaliacao(reg, a, conteudo) {
     const m = reg.morte;
     add(
       true,
-      `Jubilado aos ${seg(m.t)} de ${reg.duracao}s. Golpe final: ${nomeFonte(m.fonte, conteudo)}, com ${m.perto} ` +
+      `Jubilado aos ${seg(m.t)}${deQuanto(reg)}. Golpe final: ${nomeFonte(m.fonte, conteudo)}, com ${m.perto} ` +
         `inimigo(s) a menos de ${cfg.raioPerto}px e ${m.vivos} vivos na arena, no nível ${m.nivel}.`
     );
   } else if (reg.situacao === SITUACAO.DESISTIU) {
-    add(false, `Desistiu (voltou ao menu pela pausa) aos ${seg(a.tempo)} de ${reg.duracao}s.`);
+    add(false, `Desistiu (voltou ao menu pela pausa) aos ${seg(a.tempo)}${deQuanto(reg)}.`);
   } else if (reg.situacao === SITUACAO.EM_ANDAMENTO) {
-    add(false, `Avaliação ainda em andamento (${seg(a.tempo)} de ${reg.duracao}s): os números são parciais.`);
+    add(false, `Avaliação ainda em andamento (${seg(a.tempo)}${deQuanto(reg)}): os números são parciais.`);
   } else if (reg.situacao === SITUACAO.INTERROMPIDA) {
     add(true, `Avaliação interrompida por outra que começou por cima (${seg(a.tempo)} jogados): dados parciais.`);
   }
@@ -395,7 +415,7 @@ function sinaisDaAvaliacao(reg, a, conteudo) {
   add(
     false,
     `Percorreu ${num(mv.distancia, 0)}px (${num(mv.velocidadeMedia, 0)} px/s em média; o máximo do jogador é ` +
-      `${conteudo.jogador.velocidade}); parado ${pct(mv.fracParado)}, rente à borda ${pct(mv.fracBorda)}, ` +
+      `${num(mv.velocidadeMaxima, 0)}); parado ${pct(mv.fracParado)}, rente à borda ${pct(mv.fracBorda)}, ` +
       `no canto ${pct(mv.fracCanto)} do tempo.`
   );
   if (mv.fracCanto >= al.fracaoCanto) add(true, `${pct(mv.fracCanto)} do tempo no canto (limiar ${pct(al.fracaoCanto)}): jogou acampado.`);
@@ -860,7 +880,7 @@ function listaDeSinais(sinais) {
 
 function tabelaLinhaDoTempo(reg, a) {
   const cfg = CONTEUDO.relatorio;
-  const janelas = janelasDaLinhaDoTempo(reg, cfg.janelaTabela);
+  const janelas = janelasDaLinhaDoTempo(reg, cfg.janelaTabela, a.duracao);
   if (janelas.length === 0) return '_(sem amostras: a avaliação não chegou a 1 amostra)_';
   const ativas = reg.armas.map((x, i) => ({ id: x.id, i })).filter((x) => a.armas.some((y) => y.id === x.id));
   const cabecalho = [
@@ -870,7 +890,7 @@ function tabelaLinhaDoTempo(reg, a) {
   const linhas = janelas.map((jn) => {
     const u = jn.ultima;
     return [
-      `${num(jn.inicio, 0)}–${num(Math.min(jn.fim, reg.duracao), 0)}`,
+      `${num(jn.inicio, 0)}–${num(Math.min(jn.fim, a.duracao), 0)}`,
       num(u.hp, 0),
       u.nivel,
       u.vivos,
@@ -891,8 +911,9 @@ function tabelaLinhaDoTempo(reg, a) {
   return tabela(cabecalho, linhas);
 }
 
-function janelasDaLinhaDoTempo(reg, tamanho) {
-  const ultima = Math.max(1, Math.ceil(reg.duracao / tamanho - EPS));
+// `duracao`: a de analisarAvaliacao (o cronometro, ou a luta inteira no TCC).
+function janelasDaLinhaDoTempo(reg, tamanho, duracao) {
+  const ultima = Math.max(1, Math.ceil(duracao / tamanho - EPS));
   const janelas = [];
   for (const a of reg.amostras) {
     const k = Math.min(ultima, Math.max(1, Math.ceil(a.t / tamanho - EPS)));
@@ -1036,7 +1057,7 @@ function listaMovimento(a) {
   const c = m.celulaMaisUsada;
   return [
     `- Distância percorrida: ${num(m.distancia, 0)}px · velocidade média ${num(m.velocidadeMedia, 0)} px/s ` +
-      `(máximo do jogador: ${CONTEUDO.jogador.velocidade}).`,
+      `(máximo do jogador: ${num(m.velocidadeMaxima, 0)}).`,
     `- Parado ${pct(m.fracParado)} · com tecla de movimento apertada ${pct(m.fracComInput)} · rente à borda ` +
       `${pct(m.fracBorda)} · no canto ${pct(m.fracCanto)} do tempo.`,
     c ? `- Região mais usada: coluna ${c.coluna + 1}, linha ${c.linha + 1} (${pct(c.frac)} do tempo).` : '',
@@ -1128,7 +1149,7 @@ function tabelaDasAvaliacoes(avaliacoes) {
         `${reg.nome} (\`${reg.id}\`)`,
         reg.periodo,
         rotuloSituacao(reg.situacao),
-        `${seg(reg.tempoJogado)} / ${reg.duracao}s`,
+        reg.duracao > 0 ? `${seg(reg.tempoJogado)} / ${reg.duracao}s` : `${seg(reg.tempoJogado)} de defesa`,
         aprovado ? num(r.nota) : '—',
         aprovado ? r.conceito : '—',
         aprovado ? r.creditos : '—',
@@ -1532,6 +1553,13 @@ export function nomeFonte(id, conteudo = CONTEUDO) {
   const banca = conteudo.banca;
   if (banca && id === banca.id) return `${banca.emoji} ${banca.nome}`;
   if (banca && banca.pergunta && id === banca.pergunta.id) return `${banca.pergunta.emoji} ${banca.pergunta.nome}`;
+  // Pendencia 66: a perda de HP por tempo (run.js, atualizarRegras), com o nome
+  // do modificador que a liga.
+  if (id === FONTE_PERDA_HP) {
+    const mods = (conteudo.modificadores || []).filter((m) => (m.somas && 'perdaHp' in m.somas) || (m.fatores && 'perdaHp' in m.fatores));
+    const nomes = mods.map((m) => `${m.emoji} ${m.nome}`).join(' / ');
+    return nomes ? `perda de HP por tempo (${nomes})` : 'perda de HP por tempo (regras.perdaHp)';
+  }
   return String(id);
 }
 

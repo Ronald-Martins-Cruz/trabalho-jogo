@@ -349,6 +349,9 @@ function abrirAvaliacao(estado, sc) {
     jogador: {
       hpInicial: p.hp,
       hpMax: p.hpMax,
+      // A velocidade maxima DESTE jogador, ja com os coringas (Energetico): o
+      // relatorio a compara com a media (pendencia 58).
+      velocidadeMax: p.velocidade,
       hpMin: p.hp,
       curado: 0,
       golpes: 0,

@@ -1,7 +1,7 @@
 import { CONTEUDO } from '../data/content.js';
 import { criarRng } from './rng.js';
 import { criarRastro, xpParaSubir } from './player.js';
-import { liberarPoolsDoEstado } from './pool.js';
+import { liberarPoolsDoEstado, obterScratch } from './pool.js';
 
 // O estado do jogo inteiro em um objeto so, sem classes e sem singleton
 // escondido. Quem precisa do estado o recebe como argumento. Todos os campos
@@ -324,11 +324,23 @@ function arenaDaRegra(fator) {
 }
 
 // Unica porta de entrada da fila de eventos. Descarta o mais antigo ao bater
-// no teto para que a fila nunca cresca sem limite se ninguem consumir.
+// no teto para que a fila nunca cresca sem limite se ninguem consumir. Cada
+// descarte e contado (scratch, fora do estado serializavel): um evento perdido
+// e um som ou uma faisca que nao sai, e o smoke e o fuzz exigem zero.
 export function emitir(estado, tipo, dados = null) {
   estado.eventos.push({ tipo, dados, t: estado.tempo });
   const teto = CONTEUDO.arena.limites.eventos;
-  while (estado.eventos.length > teto) estado.eventos.shift();
+  if (estado.eventos.length <= teto) return;
+  const scratch = obterScratch(estado);
+  while (estado.eventos.length > teto) {
+    estado.eventos.shift();
+    scratch.eventosDescartados = (scratch.eventosDescartados || 0) + 1;
+  }
+}
+
+// Quantos eventos emitir() ja jogou fora neste estado (pendencia 35).
+export function eventosDescartados(estado) {
+  return (estado.scratch && estado.scratch.eventosDescartados) || 0;
 }
 
 export function irParaTela(estado, tela) {

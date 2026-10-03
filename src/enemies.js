@@ -421,7 +421,7 @@ function posicionarNaBorda(inimigo, rng, arena) {
 function spawnRajada(estado, tipo, quantidade) {
   const av = estado.run.avaliacao;
   const fora = CONTEUDO.arena.margemSpawn + tipo.raio;
-  const ancora = pontoNaBorda(estado.rng, av.arena, fora);
+  const ancora = pontoNaBorda(estado.rng, av.arena, fora, ANCORA_RAJADA);
   const espalhamento = (tipo.rajada && tipo.rajada.espalhamento) || 0;
 
   for (let i = 0; i < quantidade; i += 1) {
@@ -430,22 +430,37 @@ function spawnRajada(estado, tipo, quantidade) {
   }
 }
 
+// A ancora da rajada, reaproveitada (pendencia 71): spawnRajada a escreve e
+// le no mesmo tick, e nada guarda a referencia depois.
+const ANCORA_RAJADA = { lado: 0, x: 0, y: 0 };
+
 // Mesma escolha de lado/coordenada de posicionarNaBorda, mas sorteada UMA vez
 // (por rajada, nao por inimigo) e guardando o lado — e o que deixa
-// posicionarNoGrupo saber em qual eixo espalhar os membros.
-function pontoNaBorda(rng, arena, fora) {
+// posicionarNoGrupo saber em qual eixo espalhar os membros. Escreve em
+// `saida`; a ordem dos sorteios e a de sempre (lado, depois a coordenada).
+function pontoNaBorda(rng, arena, fora, saida) {
   const { esquerda, topo, direita, base } = arena;
   const lado = rng.int(0, 3);
+  saida.lado = lado;
   switch (lado) {
     case 0: // topo
-      return { lado, x: rng.range(esquerda - fora, direita + fora), y: topo - fora };
+      saida.x = rng.range(esquerda - fora, direita + fora);
+      saida.y = topo - fora;
+      break;
     case 1: // direita
-      return { lado, x: direita + fora, y: rng.range(topo - fora, base + fora) };
+      saida.x = direita + fora;
+      saida.y = rng.range(topo - fora, base + fora);
+      break;
     case 2: // base
-      return { lado, x: rng.range(esquerda - fora, direita + fora), y: base + fora };
+      saida.x = rng.range(esquerda - fora, direita + fora);
+      saida.y = base + fora;
+      break;
     default: // esquerda
-      return { lado, x: esquerda - fora, y: rng.range(topo - fora, base + fora) };
+      saida.x = esquerda - fora;
+      saida.y = rng.range(topo - fora, base + fora);
+      break;
   }
+  return saida;
 }
 
 // Desliza um membro da rajada ao redor da ancora, SO ao longo da borda (o
@@ -697,19 +712,22 @@ export function aplicarDano(estado, inimigo, dano) {
 // filhote nenhum — recursao de divisao com pool cheio e o jeito mais curto
 // de travar o jogo (tarefa 3 do contrato da fase 09), entao o teto tem que
 // ganhar sempre, nunca so no primeiro filhote.
+// Os fatores do filhote, reaproveitados (pendencia 71): inicializarInimigo os
+// le na hora e ninguem guarda a referencia.
+const FATORES_FILHOTE = { hpFator: 1, velocidadeFator: 1, raioFator: 1, xpFator: 1, danoFator: 1, geracao: 0 };
+
 function dividirSeAplicavel(estado, pool, tipo, geracao, x, y) {
   const divisao = tipo.divisao;
   if (!divisao || geracao >= divisao.geracaoMaxima) return;
 
   const av = estado.run.avaliacao;
-  const overrides = {
-    hpFator: divisao.hpFator,
-    velocidadeFator: divisao.velocidadeFator,
-    raioFator: divisao.raioFator,
-    xpFator: divisao.xpFator,
-    danoFator: divisao.danoFator,
-    geracao: geracao + 1,
-  };
+  const overrides = FATORES_FILHOTE;
+  overrides.hpFator = divisao.hpFator;
+  overrides.velocidadeFator = divisao.velocidadeFator;
+  overrides.raioFator = divisao.raioFator;
+  overrides.xpFator = divisao.xpFator;
+  overrides.danoFator = divisao.danoFator;
+  overrides.geracao = geracao + 1;
 
   for (let i = 0; i < divisao.filhos; i += 1) {
     if (pool.ativos.length >= CONTEUDO.spawn.maxSimultaneos) return;

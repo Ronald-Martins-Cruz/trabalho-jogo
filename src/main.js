@@ -1,4 +1,4 @@
-import { CONTEUDO } from '../data/content.js';
+import { CONTEUDO, validarConteudo } from '../data/content.js';
 import { novoEstado, novoRecorde, irParaTela, emitir, TELAS } from './state.js';
 import { desenhar } from './render.js';
 import { criarAudio } from './audio.js';
@@ -40,6 +40,11 @@ import {
 } from './shop.js';
 import { observarTick, registrarQuadro } from './telemetria.js';
 import { gerarRelatorio } from './relatorio.js';
+import { verificarArmasDoConteudo } from './weapons.js';
+import { verificarInimigosDoConteudo } from './enemies.js';
+import { verificarBancaDoConteudo } from './boss.js';
+import { verificarCartasDoConteudo } from './cards.js';
+import { verificarCoringasDoConteudo } from './jokers.js';
 
 // Nada de document/window no topo deste modulo: e o que permite ao node
 // importar `atualizar` e rodar a partida inteira sem navegador.
@@ -179,9 +184,97 @@ export function avancarRelogio(relogio, dtReal) {
   return passos;
 }
 
+// Um quadro do navegador, sem o navegador: os passos de simulacao que o
+// relogio rende, e depois as camadas que so leem o estado — desenho, UI,
+// audio, o recorde no localStorage — e so entao a fila esvazia. `camadas` traz
+// { desenhar(estado), sincronizar(estado), tocar(eventos), gravarRecorde(recorde),
+// aoFalhar(nome, erro), falhas: {} }.
+//
+// Pendencia 85: uma excecao em qualquer camada (a sintese de som, um no do
+// DOM que sumiu) saia de frame() antes do requestAnimationFrame, e o jogo
+// congelava sem aviso. Agora cada camada roda isolada: cada falha diferente
+// e relatada uma vez (aoFalhar; ver falhaDeCamada) e o quadro segue — a fila
+// ainda esvazia e o recorde ainda e gravado. Uma falha da simulacao interrompe os passos DESTE
+// quadro (repetir o mesmo passo quebrado 5x nao ajuda), e a pausa e o menu
+// continuam funcionando para o jogador sair dela.
+export function rodarQuadro(estado, relogio, dtReal, camadas) {
+  const passos = avancarRelogio(relogio, dtReal);
+  try {
+    for (let i = 0; i < passos; i += 1) atualizar(estado, CONTEUDO.loop.passo);
+  } catch (erro) {
+    falhaDeCamada(camadas, 'simulacao', erro);
+  }
+  try {
+    registrarQuadro(estado, dtReal, passos);
+  } catch (erro) {
+    falhaDeCamada(camadas, 'telemetria', erro);
+  }
+  try {
+    camadas.desenhar(estado);
+  } catch (erro) {
+    falhaDeCamada(camadas, 'desenho', erro);
+  }
+  try {
+    camadas.sincronizar(estado);
+  } catch (erro) {
+    falhaDeCamada(camadas, 'interface', erro);
+  }
+  // Consumidores da fila, antes de esvaziar: o audio toca o que o quadro
+  // emitiu e o recorde e gravado aqui, e nao dentro da simulacao: run.js so o
+  // escreve no estado e emite 'recorde'.
+  try {
+    camadas.tocar(estado.eventos);
+  } catch (erro) {
+    falhaDeCamada(camadas, 'audio', erro);
+  }
+  for (let i = 0; i < estado.eventos.length; i += 1) {
+    if (estado.eventos[i].tipo !== 'recorde') continue;
+    try {
+      camadas.gravarRecorde(estado.recorde);
+    } catch (erro) {
+      falhaDeCamada(camadas, 'recorde', erro);
+    }
+  }
+  estado.eventos.length = 0;
+  return passos;
+}
+
+// Cada falha DIFERENTE de cada camada e relatada uma vez: a mesma excecao
+// repetida a cada quadro inundaria o console, mas uma nova (outro bug, outra
+// run) tem que aparecer — senao a arena congela em silencio. `falhas` conta
+// todas.
+function falhaDeCamada(camadas, nome, erro) {
+  const falhas = camadas.falhas;
+  falhas[nome] = (falhas[nome] || 0) + 1;
+  if (!camadas.relatadas) camadas.relatadas = new Set(); // fora-do-loop: so na primeira falha do jogo
+  const chave = `${nome}: ${erro && erro.message !== undefined ? erro.message : String(erro)}`;
+  if (camadas.relatadas.has(chave)) return;
+  camadas.relatadas.add(chave);
+  if (camadas.aoFalhar) camadas.aoFalhar(nome, erro);
+}
+
+// Os verificadores de dado x codigo que o smoke roda antes de tudo, mais o
+// validador de content.js (pendencias 22/34). No navegador ninguem os
+// chamava: um typo de `comportamento` estourava dentro do
+// requestAnimationFrame no primeiro disparo, sem mensagem util. iniciar() os
+// roda uma vez, antes do loop. Devolve a lista de problemas (vazia = ok).
+export function verificarConteudoDoJogo() {
+  const problemas = [];
+  for (const erro of validarConteudo().erros) problemas.push(`content.js: ${erro}`);
+  const unicos = [verificarArmasDoConteudo(), verificarInimigosDoConteudo(), verificarBancaDoConteudo(), verificarCartasDoConteudo()];
+  for (const problema of unicos) if (problema) problemas.push(problema);
+  for (const problema of verificarCoringasDoConteudo()) problemas.push(problema);
+  return problemas;
+}
+
 // ------------------------------------------------------------------ browser
 
 export function iniciar() {
+  // Problema de dado vai para o console com a lista inteira, e o jogo tenta
+  // seguir: um aviso do validador (preco, texto) nao impede jogar, e o que
+  // impediria ao menos ja tem nome quando quebrar.
+  for (const problema of verificarConteudoDoJogo()) console.error(`semana-de-provas: ${problema}`);
+
   const canvas = document.getElementById('palco');
   const ctx = canvas.getContext('2d');
   canvas.width = CONTEUDO.arena.largura;
@@ -196,7 +289,7 @@ export function iniciar() {
   // O audio vive fora do estado: a simulacao nunca o enxerga. O contexto so
   // nasce no primeiro gesto (ligarGestos), porque o navegador bloqueia antes.
   const audio = criarAudio({
-    criarContexto: () => new (window.AudioContext || window.webkitAudioContext)(),
+    criarContexto: () => new (window.AudioContext || window.webkitAudioContext)(), // fora-do-loop: no primeiro gesto
     mudoInicial: lerMudo(),
     aoMudar: (mudo) => {
       gravarMudo(mudo);
@@ -209,9 +302,9 @@ export function iniciar() {
 
   ligarTeclado(estado, audio);
   ui.ligarBotoes({
-    jogar: () => iniciarRun(estado),
-    continuar: () => irParaTela(estado, TELAS.AVALIACAO),
-    menu: () => irParaTela(estado, TELAS.MENU),
+    jogar: () => jogarDoMenu(estado),
+    continuar: () => continuarDaPausa(estado),
+    menu: () => desistirDaPausa(estado),
     // Os dois botoes de fim de avaliacao chamam a MESMA funcao que o teclado:
     // quem decide para onde ir e a simulacao, nao o DOM. Fase 07: e aqui que
     // a loja entra no lugar do menu.
@@ -249,29 +342,23 @@ export function iniciar() {
   // pura (relatorio.js) e baixar/copiar e com a UI.
   ui.ligarRelatorio((escopo) => arquivoDoRelatorio(estado, escopo));
 
-  const passo = CONTEUDO.loop.passo;
   const relogio = criarRelogio();
   let anterior = performance.now();
+  const camadas = {
+    desenhar: (e) => desenhar(e, ctx),
+    sincronizar: (e) => ui.sincronizar(e),
+    tocar: (eventos) => audio.consumir(eventos),
+    gravarRecorde: (recorde) => gravarRecorde(recorde),
+    aoFalhar: (nome, erro) => console.error(`semana-de-provas: a camada "${nome}" falhou e o jogo segue sem ela neste quadro`, erro),
+    falhas: {},
+  };
 
   function frame(agora) {
-    const dtReal = (agora - anterior) / 1000;
-    const passos = avancarRelogio(relogio, dtReal);
-    anterior = agora;
-    for (let i = 0; i < passos; i += 1) atualizar(estado, passo);
-    registrarQuadro(estado, dtReal, passos);
-
-    desenhar(estado, ctx);
-    ui.sincronizar(estado);
-    // Consumidor da fila, antes de esvaziar: o audio toca o que o quadro
-    // emitiu e o recorde e gravado aqui, e nao dentro da simulacao: run.js so o
-    // escreve no estado e emite 'recorde'.
-    audio.consumir(estado.eventos);
-    for (let i = 0; i < estado.eventos.length; i += 1) {
-      if (estado.eventos[i].tipo === 'recorde') gravarRecorde(estado.recorde);
-    }
-    estado.eventos.length = 0;
-
+    // Agendado antes de tudo: nada que aconteca neste quadro tira o seguinte.
     requestAnimationFrame(frame);
+    const dtReal = (agora - anterior) / 1000;
+    anterior = agora;
+    rodarQuadro(estado, relogio, dtReal, camadas);
   }
 
   requestAnimationFrame(frame);
@@ -281,7 +368,7 @@ export function iniciar() {
 // O relatorio pedido por um botao: texto pronto e nome de arquivo com a hora
 // local, que so o navegador sabe — a simulacao nunca le relogio de parede.
 function arquivoDoRelatorio(estado, escopo) {
-  const agora = new Date();
+  const agora = new Date(); // fora-do-loop: so no clique do botao de relatorio
   const relatorio = gerarRelatorio(estado, escopo, ambienteDoNavegador(agora));
   if (!relatorio) return null;
   const dois = (n) => String(n).padStart(2, '0');
@@ -546,7 +633,32 @@ function teclaDaCarta(estado, code) {
   return false;
 }
 
+// ESC: so a avaliacao rodando pausa, e so a pausa despausa. Na carta e na
+// loja (e em toda tela que ja congela o jogo) e nada: nao existe "pausa por
+// cima da carta", que voltaria para a avaliacao sem a carta ser escolhida.
 export function alternarPausa(estado) {
   if (estado.tela === TELAS.AVALIACAO) irParaTela(estado, TELAS.PAUSA);
   else if (estado.tela === TELAS.PAUSA) irParaTela(estado, TELAS.AVALIACAO);
+}
+
+// Os botoes do menu e da pausa so valem na tela deles. Um clique atrasado, ou
+// um Enter num botao que ficou com o foco depois de a tela sumir, nao pode
+// recomecar a run no meio de uma prova, nem "continuar" de cima de uma carta
+// ou da loja (o que pularia a escolha). Devolvem se agiram.
+export function jogarDoMenu(estado) {
+  if (estado.tela !== TELAS.MENU) return false;
+  iniciarRun(estado);
+  return true;
+}
+
+export function continuarDaPausa(estado) {
+  if (estado.tela !== TELAS.PAUSA) return false;
+  irParaTela(estado, TELAS.AVALIACAO);
+  return true;
+}
+
+export function desistirDaPausa(estado) {
+  if (estado.tela !== TELAS.PAUSA) return false;
+  irParaTela(estado, TELAS.MENU);
+  return true;
 }

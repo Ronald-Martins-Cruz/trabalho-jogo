@@ -93,19 +93,24 @@ function desviarPerguntas(estado, f, raio, peso) {
   }
 }
 
-// Sai do corredor da investida enquanto ela e avisada ou executada.
+// Sai do corredor da investida enquanto ela e avisada ou executada: o trecho
+// reto, da Banca na mira, e o deslize ao longo da parede, que comeca na quina
+// (fase 14, pendencia 75). Correndo o deslize, o trecho reto ja passou.
 function desviarInvestida(estado, f, peso) {
   const b = estado.run.avaliacao.banca;
   if (!b || b.padrao !== PADRAO_INVESTIDA) return;
   if (b.estado !== ESTADOS_BANCA.TELEGRAFO && b.estado !== ESTADOS_BANCA.EXECUTANDO) return;
   const p = estado.player;
-  const ux = Math.cos(b.mira);
-  const uy = Math.sin(b.mira);
-  const dx = p.x - b.x;
-  const dy = p.y - b.y;
-  const frente = dx * ux + dy * uy;
   const largura = CONTEUDO.banca.raio + p.raio + 24;
-  if (frente < -largura || frente > b.alcance + largura) return;
+  if (b.perna !== 1) fugirDoCorredor(p, f, b.x, b.y, Math.cos(b.mira), Math.sin(b.mira), b.alcance, largura, peso);
+  if (b.deslize > 0) fugirDoCorredor(p, f, b.quinaX, b.quinaY, b.deslizeX, b.deslizeY, b.deslize, largura, peso);
+}
+
+function fugirDoCorredor(p, f, x0, y0, ux, uy, comprimento, largura, peso) {
+  const dx = p.x - x0;
+  const dy = p.y - y0;
+  const frente = dx * ux + dy * uy;
+  if (frente < -largura || frente > comprimento + largura) return;
   let px = dx - frente * ux;
   let py = dy - frente * uy;
   let pd = Math.hypot(px, py);

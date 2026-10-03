@@ -89,6 +89,11 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
+  // O rastro deixa as pontas redondas e os numeros de dano, as juntas: sem
+  // repor, o quadro seguinte desenharia a parede e o leque com elas
+  // (pendencia 88). Os padroes do canvas.
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
   // Uma vez por quadro, e nao por emoji (pendencia 16). A fonte so e trocada
   // quando o tamanho muda (desenharEmoji).
   ctx.textAlign = 'center';
@@ -407,10 +412,27 @@ export function pontoDeEntrada(ex, ey, px, py, arena, saida) {
 
 // ------------------------------------------------------------- fundo
 
-function paletaDe(estado, cfg) {
-  if (estado.run.avaliacao.banca) return cfg.paletaTcc;
-  const i = Math.max(0, Math.min(cfg.paletas.length - 1, estado.run.periodoIndex));
-  return cfg.paletas[i];
+// A paleta do quadro. Na arena e nas telas de fim, a da avaliacao que esta (ou
+// estava) na tela; no anuncio, a do periodo que vai comecar; na tela do TCC, a
+// dele; no menu, a do 1º periodo, onde toda run comeca. Pendencia 89: lendo
+// sempre a ultima avaliacao, o menu depois da colacao saia com a paleta do
+// TCC, e o anuncio de um periodo novo com a do periodo anterior. A loja fica
+// com a do periodo que acabou de ser jogado.
+export function paletaDe(estado, cfg = CONTEUDO.juice) {
+  switch (estado.tela) {
+    case TELAS.MENU:
+      return paletaDoPeriodo(cfg, 0);
+    case TELAS.ANUNCIO:
+      return paletaDoPeriodo(cfg, estado.run.proxima.periodoIndex);
+    case TELAS.TCC:
+      return cfg.paletaTcc;
+    default:
+      return estado.run.avaliacao.banca ? cfg.paletaTcc : paletaDoPeriodo(cfg, estado.run.periodoIndex);
+  }
+}
+
+function paletaDoPeriodo(cfg, periodoIndex) {
+  return cfg.paletas[Math.max(0, Math.min(cfg.paletas.length - 1, periodoIndex))];
 }
 
 // O chao (cor de fundo, piso em grade, fileiras de carteiras) e as vinhetas
@@ -787,16 +809,32 @@ function avisoDoLeque(ctx, b, params, progresso, v) {
   ctx.stroke();
 }
 
+// O caminho inteiro (boss.js, tracarInvestida): o trecho reto, da Banca ate a
+// quina, e o deslize ao longo da parede, se houver (pendencia 75). A faixa
+// enche da Banca para a ponta, pelos dois trechos: quando chega la, ela corre.
 function avisoDaInvestida(ctx, b, params, progresso, v, avisando) {
   if (!avisando) return;
   const r = CONTEUDO.banca.raio;
-  ctx.translate(b.x, b.y);
-  ctx.rotate(b.mira);
+  const fracao = v.banca.preenchimentoInvestida;
+  const cheio = (b.alcance + b.deslize + r) * progresso;
   ctx.lineWidth = 2;
-  ctx.strokeRect(0, -r, b.alcance + r, r * 2);
-  // A faixa enche da Banca para a ponta: quando chega la, ela corre.
-  ctx.globalAlpha *= 0.45;
-  ctx.fillRect(0, -r, (b.alcance + r) * progresso, r * 2);
+  faixaDaInvestida(ctx, b.x, b.y, b.mira, b.alcance + r, Math.min(cheio, b.alcance + r), r, fracao);
+  if (b.deslize > 0) {
+    faixaDaInvestida(ctx, b.quinaX, b.quinaY, Math.atan2(b.deslizeY, b.deslizeX), b.deslize + r, Math.max(0, cheio - b.alcance), r, fracao);
+  }
+}
+
+// Um trecho da faixa, de (x, y) na direcao `angulo`: o contorno inteiro e, por
+// dentro, o quanto ja encheu. save/restore devolvem o transform do mundo (com
+// o tremor) para o trecho seguinte.
+function faixaDaInvestida(ctx, x, y, angulo, comprimento, cheio, r, fracao) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angulo);
+  ctx.strokeRect(0, -r, comprimento, r * 2);
+  ctx.globalAlpha *= fracao;
+  if (cheio > 0) ctx.fillRect(0, -r, cheio, r * 2);
+  ctx.restore();
 }
 
 // O raio de cada tipo, por id, montado uma vez: o aviso da horda nao procura

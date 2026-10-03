@@ -12,12 +12,25 @@ import { CONTEUDO, validarConteudo } from '../data/content.js';
 import {
   dadosDaAvaliacao,
   emitir,
+  eventosDescartados,
   iniciarAvaliacao,
   irParaTela,
   novoEstado,
   TELAS,
 } from '../src/state.js';
-import { alternarPausa, atualizar, avancarRelogio, criarRelogio, sairDoResultado } from '../src/main.js';
+import {
+  alternarPausa,
+  armazenamentoDoNavegador,
+  atualizar,
+  avancarRelogio,
+  continuarDaPausa,
+  criarRelogio,
+  desistirDaPausa,
+  jogarDoMenu,
+  rodarQuadro,
+  sairDoResultado,
+  verificarConteudoDoJogo,
+} from '../src/main.js';
 import {
   anuncioLiberado,
   avaliacoesDepois,
@@ -37,6 +50,7 @@ import {
   MOTIVO_TEMPO,
   proximaAvaliacao,
   registrarFormatura,
+  runCompleta,
   sairDaColacao,
   sortearModificadores,
   tccLiberado,
@@ -47,8 +61,10 @@ import {
   atualizarBanca,
   bancaVencida,
   ESTADOS_BANCA,
+  mirarNoJogador,
   NOMES_PADROES,
   poolPerguntas,
+  tracarInvestida,
   verificarBancaDoConteudo,
 } from '../src/boss.js';
 import { gravarMudo, gravarRecorde, lerMudo, lerRecorde } from '../src/main.js';
@@ -117,8 +133,11 @@ import {
 } from '../src/enemies.js';
 import {
   atualizarArmas,
+  criarMemoriaGolpes,
   dadosDaArma,
+  emCooldown,
   equiparArma,
+  lembrarGolpe,
   nivelDaArma,
   poolProjeteis,
   posicaoSatelite,
@@ -135,7 +154,8 @@ import {
   xpParaSubir,
 } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
-import { criarEfeitos, desenhar, flashDoInimigo, pontoDeEntrada } from '../src/render.js';
+import { criarRng } from '../src/rng.js';
+import { criarEfeitos, desenhar, flashDoInimigo, paletaDe, pontoDeEntrada } from '../src/render.js';
 import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
 import { analisarAvaliacao, ESCOPOS, gerarRelatorio, nomeFonte } from '../src/relatorio.js';
 
@@ -272,8 +292,10 @@ const VERIFICACOES = [
           return `pool ${pool} com ${tamanho} itens, teto e ${CONTEUDO.arena.limites[pool]}`;
         }
       }
-      if (estado.eventos.length > CONTEUDO.arena.limites.eventos) {
-        return `fila de eventos com ${estado.eventos.length}, teto e ${CONTEUDO.arena.limites.eventos}`;
+      // Pendencia 35: emitir() ja corta a fila no teto, entao medir o tamanho
+      // dela aqui nunca acusava nada. O que importa e se algum evento caiu.
+      if (eventosDescartados(estado) > 0) {
+        return `emitir() descartou ${eventosDescartados(estado)} evento(s): a fila de ${CONTEUDO.arena.limites.eventos} encheu entre dois consumidores`;
       }
       return null;
     },
@@ -4733,22 +4755,53 @@ function checarRecorde() {
       return falhar(0, `recorde: ${rotulo} lancou excecao (${e && e.message ? e.message : e}) — o acesso ao localStorage precisa degradar em silencio`);
     }
   };
-  if (typeof globalThis.localStorage !== 'undefined') falhar(0, 'recorde: este node tem localStorage — o teste de ausencia perdeu o sentido');
-  const ausente = naoQuebra('lerRecorde sem localStorage', () => lerRecorde());
+  // Pendencia 78: a ausencia e testada passando `null` (o que
+  // armazenamentoDoNavegador devolve sem localStorage), e nao dependendo de o
+  // node nao ter um — o Node 25 liga Web Storage por padrao. A deteccao em si
+  // so e conferida quando o global de fato falta.
+  if (typeof globalThis.localStorage === 'undefined' && naoQuebra('armazenamentoDoNavegador', () => armazenamentoDoNavegador()) !== null) {
+    falhar(0, 'recorde: sem localStorage no global, armazenamentoDoNavegador nao devolveu null');
+  }
+  const ausente = naoQuebra('lerRecorde sem localStorage', () => lerRecorde(null));
   if (JSON.stringify(ausente) !== zerado) falhar(0, `recorde: sem localStorage veio ${JSON.stringify(ausente)}`);
-  if (naoQuebra('gravarRecorde sem localStorage', () => gravarRecorde(ausente)) !== false) falhar(0, 'recorde: gravar sem localStorage disse que gravou');
+  if (naoQuebra('gravarRecorde sem localStorage', () => gravarRecorde(ausente, null)) !== false) falhar(0, 'recorde: gravar sem localStorage disse que gravou');
+  if (naoQuebra('lerMudo sem localStorage', () => lerMudo(null)) !== false) falhar(0, 'recorde: sem localStorage o jogo comecou mudo');
+  if (naoQuebra('gravarMudo sem localStorage', () => gravarMudo(true, null)) !== false) falhar(0, 'recorde: gravar o mudo sem localStorage disse que gravou');
 
   const quebrado = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('QuotaExceededError'); } };
   if (JSON.stringify(naoQuebra('lerRecorde com getItem lancando', () => lerRecorde(quebrado))) !== zerado) falhar(0, 'recorde: getItem lancando nao deu o recorde zerado');
   if (naoQuebra('gravarRecorde com setItem lancando', () => gravarRecorde(ausente, quebrado)) !== false) falhar(0, 'recorde: setItem lancando disse que gravou');
+  // Fase 14: o mudo pelo mesmo caminho (cota cheia, armazenamento bloqueado).
+  if (naoQuebra('lerMudo com getItem lancando', () => lerMudo(quebrado)) !== false) falhar(0, 'recorde: getItem lancando deixou o jogo mudo');
+  if (naoQuebra('gravarMudo com setItem lancando', () => gravarMudo(true, quebrado)) !== false) falhar(0, 'recorde: setItem lancando disse que gravou o mudo');
 
-  const memoria = (inicial) => {
-    const dados = new Map(inicial === undefined ? [] : [[CONTEUDO.recorde.chave, inicial]]);
+  const memoria = (inicial, chave = CONTEUDO.recorde.chave) => {
+    const dados = new Map(inicial === undefined ? [] : [[chave, inicial]]);
     return { getItem: (k) => (dados.has(k) ? dados.get(k) : null), setItem: (k, v) => dados.set(k, String(v)) };
   };
-  for (const podre of ['{nao e json', '{"formaturas":-1,"melhorMedia":9,"melhorConceito":"A"}', '{"formaturas":2,"melhorMedia":99,"melhorConceito":"A"}', '{"formaturas":2,"melhorMedia":9,"melhorConceito":"Z"}', 'null']) {
+  // Fase 14: alem do JSON quebrado e do numero fora da faixa, o dado de uma
+  // versao antiga (ou de outro formato) com o mesmo nome de chave: campo como
+  // texto, nota com virgula, campo renomeado, lista, numero solto, formatura
+  // fracionaria, infinito.
+  const podres = [
+    '{nao e json', '{"formaturas":-1,"melhorMedia":9,"melhorConceito":"A"}', '{"formaturas":2,"melhorMedia":99,"melhorConceito":"A"}',
+    '{"formaturas":2,"melhorMedia":9,"melhorConceito":"Z"}', 'null',
+    '{"formaturas":"2","melhorMedia":9,"melhorConceito":"A"}', '{"formaturas":2,"melhorMedia":"9,1","melhorConceito":"A"}',
+    '{"formaturas":2,"melhor":9,"conceito":"A"}', '[2,9,"A"]', '9.1', '"A"', '{"formaturas":2.5,"melhorMedia":9,"melhorConceito":"A"}',
+    '{"formaturas":1e999,"melhorMedia":9,"melhorConceito":"A"}', '',
+  ];
+  for (const podre of podres) {
     const lido = naoQuebra(`lerRecorde com "${podre}"`, () => lerRecorde(memoria(podre)));
     if (JSON.stringify(lido) !== zerado) falhar(0, `recorde: o valor podre ${podre} foi aceito como ${JSON.stringify(lido)}`);
+  }
+  // Uma versao antiga com campo a MAIS e o resto valido continua valendo: o
+  // recorde de quem ja jogou nao some por causa de um campo novo.
+  const comExtra = lerRecorde(memoria('{"formaturas":2,"melhorMedia":8.7,"melhorConceito":"B","versao":0,"extra":[1]}'));
+  if (comExtra.formaturas !== 2 || comExtra.melhorMedia !== 8.7 || comExtra.melhorConceito !== 'B' || 'extra' in comExtra) {
+    falhar(0, `recorde: um recorde valido com campos a mais virou ${JSON.stringify(comExtra)}`);
+  }
+  for (const podre of ['true', 'sim', '', '{"mudo":1}']) {
+    if (naoQuebra(`lerMudo com "${podre}"`, () => lerMudo(memoria(podre, CONTEUDO.audio.chaveMudo))) !== false) falhar(0, `recorde: o mudo "${podre}" ligou o mudo`);
   }
 
   // A conta: a 1a formatura e recorde; uma pior so conta formatura; uma melhor troca.
@@ -5131,10 +5184,19 @@ function checarTelasDeFim() {
 // e assim que se descobre. As posicoes de texto e retangulo saem ja com a
 // translacao/escala do contexto aplicadas (rotacao fica de fora: so os avisos
 // da Banca e o feixe giram, e nenhum dos dois escreve texto).
+// Fase 14 (pendencia 88): save/restore guardam e devolvem o estado do
+// contexto de verdade, numa pilha, e `quadro` exige a pilha vazia no fim de
+// cada desenho — um save sem restore vazaria transform e alfa para o quadro
+// seguinte. Cada traco (stroke/strokeRect) guarda o lineCap/lineJoin do
+// momento.
+const CAMPOS_DO_CONTEXTO = ['fillStyle', 'strokeStyle', 'lineWidth', 'lineCap', 'lineJoin', 'globalAlpha', 'globalCompositeOperation', 'textAlign', 'textBaseline'];
+
 function ctx2dFalso() {
-  const reg = { fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0 };
+  const reg = { fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0, tracos: [], pilha: 0, restoreSemSave: 0 };
   let fonte = '';
   const t = [1, 0, 0, 1, 0, 0];
+  const pilha = [];
+  const tracar = (tipo) => reg.tracos.push({ tipo, lineCap: ctx.lineCap, lineJoin: ctx.lineJoin, x: t[4], y: t[5] });
   const ctx = {
     reg,
     fillStyle: '',
@@ -5154,16 +5216,31 @@ function ctx2dFalso() {
     },
     translate(x, y) { t[4] += t[0] * x; t[5] += t[3] * y; },
     rotate() {},
-    save() {},
-    restore() {},
+    save() {
+      const s = { fonte, t: t.slice() };
+      for (const k of CAMPOS_DO_CONTEXTO) s[k] = ctx[k];
+      pilha.push(s);
+      reg.pilha = pilha.length;
+    },
+    restore() {
+      const s = pilha.pop();
+      if (!s) {
+        reg.restoreSemSave += 1;
+        return;
+      }
+      for (const k of CAMPOS_DO_CONTEXTO) ctx[k] = s[k];
+      fonte = s.fonte;
+      for (let i = 0; i < 6; i += 1) t[i] = s.t[i];
+      reg.pilha = pilha.length;
+    },
     beginPath() {},
     moveTo() {},
     lineTo() {},
     arc() {},
     rect() {},
     fill() {},
-    stroke() {},
-    strokeRect() {},
+    stroke() { tracar('stroke'); },
+    strokeRect() { tracar('strokeRect'); },
     strokeText() {},
     fillRect(x, y, w, h) {
       reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha });
@@ -5184,15 +5261,20 @@ function ctx2dFalso() {
       reg.retangulos.length = 0;
       reg.transformacoes.length = 0;
       reg.copias.length = 0;
+      reg.tracos.length = 0;
     },
   };
   return ctx;
 }
 
-// Um quadro como o de main.js: desenha, e so depois a fila e esvaziada.
+// Um quadro como o de main.js: desenha, e so depois a fila e esvaziada. O
+// desenho tem que devolver o contexto como achou: todo save com o seu restore.
 function quadro(estado, ctx, fx) {
   ctx.limpar();
   desenhar(estado, ctx, fx);
+  if (ctx.reg.pilha !== 0 || ctx.reg.restoreSemSave !== 0) {
+    falhar(0, `render: o quadro terminou com ${ctx.reg.pilha} save() sem restore() e ${ctx.reg.restoreSemSave} restore() sem save() (pendencia 88)`);
+  }
   estado.eventos.length = 0;
 }
 
@@ -5953,6 +6035,15 @@ function correrRunInteira(semente, { estrutural }) {
     // fontes de dano da Banca (pendencia 49).
     const texto = gerarRelatorio(estado, ESCOPOS.PARTIDA).texto;
     if (/NaN|undefined|Infinity/.test(texto)) falhar(tick, 'relatorio da partida com o TCC tem NaN/undefined/Infinity');
+    // Pendencia 74: o TCC, sem cronometro, e medido pelo tempo da luta — nao
+    // por um cronometro de 0s (a linha do tempo inteira caia em "0–0").
+    const aTcc = analisarAvaliacao(regTcc);
+    if (/\| 0–0 \|/.test(texto) || / de 0s\b/.test(texto) || /\/ 0s\b/.test(texto)) {
+      falhar(tick, 'relatorio: o TCC foi medido contra um cronometro de 0s ("0–0", "de 0s" ou "/ 0s" no texto) — pendencia 74');
+    }
+    if (Math.abs(aTcc.duracao - regTcc.tempoJogado) > 1e-9 || aTcc.marcosNivel.length === 0) {
+      falhar(tick, `relatorio: o TCC durou ${regTcc.tempoJogado}s e a analise mediu ${aTcc.duracao}s com ${aTcc.marcosNivel.length} marcos de nivel`);
+    }
     for (const f of regTcc.fontesDano) {
       if (nomeFonte(f.fonte) === String(f.fonte)) falhar(tick, `relatorio: a fonte "${f.fonte}" do TCC nao tem nome (pendencia 49)`);
     }
@@ -6032,6 +6123,739 @@ function tabelaDaRun(linhas) {
   return saida;
 }
 
+// ---------------------------------------------------------------- fase 14
+
+// Tarefa 1 da fase 14: os estados que so aparecem quando duas coisas caem no
+// mesmo tick, ou quando uma acao chega na tela errada. O veredito de cada um
+// esta no handoff 14; cada teste aqui foi visto falhando por mutacao.
+
+// Uma avaliacao da 1a posicao, sem inimigo, com o cronometro no ultimo meio
+// passo: o proximo atualizar() zera o cronometro.
+function avaliacaoNoUltimoTick(semente, coringas = []) {
+  const estado = avaliacaoCom(semente, [], coringas);
+  const av = estado.run.avaliacao;
+  av.decorrido = av.duracao - PASSO / 2;
+  estado.eventos.length = 0;
+  return estado;
+}
+
+// Um 📕 encostado no jogador, que esta com 1 de HP e sem i-frames: o
+// contato do proximo tick e fatal.
+function golpeFatalNoProximoTick(estado) {
+  const p = estado.player;
+  receberDano(estado, p.hpMax - 1);
+  p.invulneravel = 0;
+  const e = spawnInimigo(estado, CONTEUDO.inimigos[0].id);
+  e.x = p.x;
+  e.y = p.y + 1;
+  estado.eventos.length = 0;
+  return e;
+}
+
+// Subir de nivel no tick em que o cronometro zera: o boletim ganha, e a carta
+// nao abre por cima dele (ela travaria a tela de fim). O nivel pendente morre
+// com o jogador da avaliacao — as armas zeram de qualquer jeito.
+function checarNivelNoUltimoTick() {
+  // O controle: o mesmo XP, longe do fim, abre a carta. Sem ele o teste
+  // passaria com o XP sem efeito nenhum.
+  const controle = avaliacaoCom(SEMENTE + 1401, []);
+  controle.player.xp = controle.player.xpProximo;
+  atualizar(controle, PASSO);
+  if (controle.tela !== TELAS.CARTA) falhar(0, `nivel no ultimo tick: o controle (XP cheio no meio da prova) foi a "${controle.tela}", esperava a carta`);
+
+  const estado = avaliacaoNoUltimoTick(SEMENTE + 1401);
+  estado.player.xp = estado.player.xpProximo;
+  atualizar(estado, PASSO);
+  const tipos = estado.eventos.map((e) => e.tipo);
+  if (estado.tela !== TELAS.RESULTADO) falhar(0, `nivel no ultimo tick: o cronometro zerou com o XP cheio e a tela foi "${estado.tela}" — a carta abriu por cima do boletim`);
+  if (tipos.includes('carta-aberta') || estado.cartas.fila !== 0) falhar(0, `nivel no ultimo tick: a carta entrou na fila (${estado.cartas.fila}) com a avaliacao encerrada`);
+  if (!estado.run.resultado.aprovado || !tipos.includes('avaliacao-fim')) falhar(0, 'nivel no ultimo tick: o boletim nao saiu como aprovado');
+  if (!sairDoResultado(estado) || estado.tela !== TELAS.LOJA) falhar(0, `nivel no ultimo tick: o boletim levou a "${estado.tela}", esperava a loja`);
+  seguirDaLoja(estado);
+  comecarProxima(estado);
+  if (estado.tela !== TELAS.AVALIACAO || estado.player.nivel !== 1 || estado.player.xp !== 0) {
+    falhar(0, `nivel no ultimo tick: a avaliacao seguinte comecou em "${estado.tela}", nivel ${estado.player.nivel}, xp ${estado.player.xp}`);
+  }
+  return 'XP cheio no tick em que o cronometro zera: boletim, sem carta por cima';
+}
+
+// Morrer no tick em que o cronometro zera: jubilado (a morte ganha do
+// cronometro, como ganha da Banca). Sem boletim, sem credito, sem
+// 'avaliacao-fim' na fila.
+function checarMorteNoUltimoTick() {
+  const estado = avaliacaoNoUltimoTick(SEMENTE + 1402);
+  golpeFatalNoProximoTick(estado);
+  const creditos = estado.run.creditos;
+  atualizar(estado, PASSO);
+  const tipos = estado.eventos.map((e) => e.tipo);
+  const r = estado.run.resultado;
+  if (estado.tela !== TELAS.JUBILADO || r.motivo !== MOTIVO_JUBILADO) falhar(0, `morte no ultimo tick: a tela e "${estado.tela}" (motivo "${r.motivo}"), a morte tem que ganhar do cronometro`);
+  if (tipos.includes('avaliacao-fim') || !tipos.includes('jubilado')) falhar(0, `morte no ultimo tick: a fila levou ${tipos.filter((t) => t !== 'tela')}`);
+  if (estado.run.boletins[0].feita || estado.run.creditos !== creditos) falhar(0, 'morte no ultimo tick: o jubilado ganhou boletim ou creditos');
+  return 'morte no tick em que o cronometro zera: jubilado, sem boletim';
+}
+
+// O Atestado segurando o golpe que cai no tick em que o cronometro zera:
+// aprovado, com o HP do Atestado, e o Atestado gasto (o golpe aconteceu).
+function checarAtestadoNoUltimoTick() {
+  const atestado = coringaComEfeito('sobreviverFatal');
+  const estado = avaliacaoNoUltimoTick(SEMENTE + 1403, [atestado.id]);
+  golpeFatalNoProximoTick(estado);
+  atualizar(estado, PASSO);
+  const tipos = estado.eventos.map((e) => e.tipo);
+  const r = estado.run.resultado;
+  const inst = estado.run.coringas[0];
+  if (estado.tela !== TELAS.RESULTADO || !r.aprovado) falhar(0, `Atestado no ultimo tick: a tela e "${estado.tela}", esperava o boletim aprovado`);
+  if (!estado.player.vivo || estado.player.hp !== atestado.params.hp) falhar(0, `Atestado no ultimo tick: o jogador terminou com ${estado.player.hp} de HP`);
+  if (!inst.gasto || !estado.run.coringasGastos.includes(atestado.id) || !tipos.includes('coringa-ativado')) {
+    falhar(0, 'Atestado no ultimo tick: o golpe fatal foi segurado sem gastar o Atestado (o cronometro fechou antes do contato?)');
+  }
+  if (r.ileso || !estado.run.boletins[0].feita) falhar(0, 'Atestado no ultimo tick: o boletim diz ileso, ou nao foi registrado');
+  return `Atestado no ultimo tick: aprovado com ${r.hp} de HP, Atestado gasto`;
+}
+
+// ESC, "Continuar", "Desistir" e "Jogar" na tela errada nao fazem nada. Na
+// carta e na loja o jogo ja esta congelado; "pausar" ali e "continuar" dali
+// voltariam para a avaliacao sem a escolha ser feita.
+function checarPausaForaDaAvaliacao() {
+  const tentar = (estado, onde) => {
+    const tela = estado.tela;
+    const run = estado.run;
+    alternarPausa(estado);
+    if (estado.tela !== tela) falhar(0, `pausa ${onde}: ESC levou a "${estado.tela}"`);
+    if (continuarDaPausa(estado) || desistirDaPausa(estado) || jogarDoMenu(estado) || estado.tela !== tela || estado.run !== run) {
+      falhar(0, `pausa ${onde}: um botao da pausa ou do menu agiu fora da tela dele (tela "${estado.tela}")`);
+    }
+  };
+  const carta = avaliacaoCom(SEMENTE + 1404, []);
+  carta.player.xp = carta.player.xpProximo;
+  atualizar(carta, PASSO);
+  if (carta.tela !== TELAS.CARTA) falhar(0, 'pausa: o cenario nao abriu a carta');
+  tentar(carta, 'na carta');
+  const loja = avaliacaoNoUltimoTick(SEMENTE + 1404);
+  atualizar(loja, PASSO);
+  sairDoResultado(loja);
+  if (loja.tela !== TELAS.LOJA) falhar(0, 'pausa: o cenario nao abriu a loja');
+  tentar(loja, 'na loja');
+  const jogo = avaliacaoCom(SEMENTE + 1404, []);
+  if (continuarDaPausa(jogo) || desistirDaPausa(jogo) || jogarDoMenu(jogo)) falhar(0, 'pausa: um botao da pausa ou do menu agiu com a avaliacao rodando');
+  alternarPausa(jogo);
+  if (!continuarDaPausa(jogo) || jogo.tela !== TELAS.AVALIACAO) falhar(0, `pausa: "Continuar" levou a "${jogo.tela}"`);
+  alternarPausa(jogo);
+  if (!desistirDaPausa(jogo) || jogo.tela !== TELAS.MENU) falhar(0, `pausa: "Desistir" levou a "${jogo.tela}"`);
+  const antiga = jogo.run;
+  if (continuarDaPausa(jogo) || !jogarDoMenu(jogo) || jogo.tela !== TELAS.ANUNCIO || jogo.run === antiga) falhar(0, 'pausa: no menu, so "Jogar" age, e comeca uma run nova');
+  return 'ESC e os botoes da pausa/menu nao agem na carta, na loja nem com a prova rodando';
+}
+
+// A Banca caindo no aviso da investida e no meio da corrida: colacao, a
+// maquina dela parada (nenhum golpe sai depois), e o aviso some da tela.
+function checarBancaMorreNoAviso() {
+  const cfg = CONTEUDO.banca;
+  const fase = cfg.fases.findIndex((f) => f.padroes.investida);
+  const medidas = [];
+  for (const quando of [ESTADOS_BANCA.TELEGRAFO, ESTADOS_BANCA.EXECUTANDO]) {
+    const estado = estadoNoTcc(SEMENTE + 1405);
+    const av = estado.run.avaliacao;
+    const b = av.banca;
+    const corpo = acharBanca(estado);
+    const p = estado.player;
+    p.armas.length = 0;
+    b.fase = fase;
+    b.estado = ESTADOS_BANCA.PERSEGUINDO;
+    b.relogio = PASSO / 2;
+    b.passo = cfg.fases[fase].sequencia.indexOf('investida');
+    corpo.x = (av.arena.esquerda + av.arena.direita) / 2;
+    corpo.y = (av.arena.topo + av.arena.base) / 2;
+    p.x = av.arena.esquerda + 100;
+    p.y = corpo.y;
+    for (let t = 0; t < 600 && b.estado !== quando; t += 1) {
+      p.hp = p.hpMax;
+      atualizar(estado, PASSO);
+      estado.eventos.length = 0;
+    }
+    if (b.estado !== quando || b.padrao !== 'investida') falhar(0, `Banca no aviso: o cenario nao chegou a "${quando}" da investida (esta em "${b.estado}"/${b.padrao})`);
+    const ctx = ctx2dFalso();
+    const fx = criarEfeitos();
+    quadro(estado, ctx, fx);
+    const contornosAntes = ctx.reg.tracos.filter((x) => x.tipo === 'strokeRect').length;
+    aplicarDano(estado, corpo, corpo.hpMax * 2);
+    atualizar(estado, PASSO);
+    const tipos = estado.eventos.map((e) => e.tipo);
+    if (estado.tela !== TELAS.COLACAO || b.estado !== ESTADOS_BANCA.DERROTADA || b.padrao !== '') {
+      falhar(0, `Banca no aviso (${quando}): caiu e a tela e "${estado.tela}", a Banca em "${b.estado}"/"${b.padrao}"`);
+    }
+    if (tipos.includes('banca-padrao') || !tipos.includes('banca-derrotada')) falhar(0, `Banca no aviso (${quando}): a fila levou ${tipos.filter((t) => t !== 'tela')}`);
+    for (let t = 0; t < 30; t += 1) atualizar(estado, PASSO);
+    if (estado.eventos.some((e) => e.tipo === 'banca-padrao' || e.tipo === 'banca-telegrafo')) falhar(0, `Banca no aviso (${quando}): um golpe saiu depois de ela cair`);
+    quadro(estado, ctx, fx);
+    const contornosDepois = ctx.reg.tracos.filter((x) => x.tipo === 'strokeRect').length;
+    if (quando === ESTADOS_BANCA.TELEGRAFO && !(contornosDepois < contornosAntes)) falhar(0, 'Banca no aviso: a faixa da investida continuou na tela da colacao');
+    const erro = poolInimigos(estado).verificar();
+    if (erro) falhar(0, `Banca no aviso (${quando}): pool de inimigos inconsistente: ${erro}`);
+    ticksAteLiberar(estado, colacaoLiberada);
+    if (!sairDaColacao(estado) || !jogarDoMenu(estado) || estado.run.avaliacao.banca !== null) falhar(0, `Banca no aviso (${quando}): a run seguinte nao comecou limpa`);
+    medidas.push(quando);
+  }
+  return `Banca caindo no ${medidas.join(' e no ')} da investida: colacao, nenhum golpe depois, aviso apagado`;
+}
+
+// Pool literalmente cheia (o teto de spawn na capacidade, como no
+// smoke:carga) de 📱: a divisao nunca recicla um inimigo vivo nem aloca, matando
+// um a um ou com as quatro armas no maximo varrendo a pool enquanto os
+// filhotes nascem no meio da varredura.
+function checarDivisaoComPoolCheia() {
+  const grupo = CONTEUDO.inimigos.find((t) => t.divisao);
+  const capacidade = CONTEUDO.arena.limites.enemies;
+  const original = CONTEUDO.spawn.maxSimultaneos;
+  CONTEUDO.spawn.maxSimultaneos = capacidade;
+  try {
+    const estado = avaliacaoCom(SEMENTE + 1406, [], [], 1, 0);
+    const p = estado.player;
+    const pool = poolInimigos(estado);
+    const recicladosAntes = pool.reciclados;
+    const conferir = (onde) => {
+      const erro = pool.verificar();
+      if (erro || pool.ativos.length > capacidade || pool.criados !== capacidade || pool.reciclados !== recicladosAntes) {
+        falhar(0, `divisao com a pool cheia (${onde}): ${pool.ativos.length}/${capacidade} ativos, criados ${pool.criados}, reciclados ${pool.reciclados - recicladosAntes}${erro ? `, ${erro}` : ''}`);
+      }
+    };
+    const encher = () => {
+      for (let i = 0; pool.ativos.length < capacidade && i < capacidade * 2; i += 1) {
+        const e = spawnInimigo(estado, grupo.id);
+        if (!e) break;
+        const ang = (i * 2.399) % (Math.PI * 2);
+        e.x = p.x + Math.cos(ang) * (50 + (i % 7) * 12);
+        e.y = p.y + Math.sin(ang) * (50 + (i % 7) * 12);
+      }
+      if (pool.ativos.length !== capacidade || pool.reserva.length !== 0) falhar(0, `divisao com a pool cheia: a pool nao encheu (${pool.ativos.length}/${capacidade})`);
+    };
+    encher();
+    let filhotes = 0;
+    for (let k = 0; k < 40; k += 1) {
+      const pai = pool.ativos.find((e) => e.geracao === 0);
+      const antes = pool.ativos.length;
+      aplicarDano(estado, pai, 1e9);
+      filhotes += pool.ativos.length - antes + 1;
+      conferir('morte a morte');
+    }
+    if (filhotes !== 40) falhar(0, `divisao com a pool cheia: 40 pais mortos com a pool cheia deixaram ${filhotes} filhotes, esperava 1 por vaga aberta`);
+    encher();
+    for (const arma of CONTEUDO.armas) {
+      equiparArma(estado, arma.id);
+      while (subirNivelArma(estado, arma.id));
+    }
+    let mortos = 0;
+    for (let t = 0; t < 180; t += 1) {
+      p.hp = p.hpMax;
+      atualizar(estado, PASSO);
+      if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+      mortos += estado.eventos.filter((e) => e.tipo === 'inimigo-morto').length;
+      estado.eventos.length = 0;
+      conferir(`armas no maximo, tick ${t + 1}`);
+    }
+    if (mortos < 50) falhar(0, `divisao com a pool cheia: as armas no maximo so mataram ${mortos} em 3s, o teste perdeu o sentido`);
+    return `pool cheia de ${grupo.emoji} (${capacidade}): 40 mortes -> 40 filhotes, armas no maximo 3s -> ${mortos} mortes, 0 reciclados, 0 alocados`;
+  } finally {
+    CONTEUDO.spawn.maxSimultaneos = original;
+  }
+}
+
+// Pendencia 33: o laco de deduplicacao de lembrarGolpe so tem efeito quando
+// um inimigo com entrada AINDA viva e relembrado. Sem ele, a entrada velha
+// (mais curta) ficaria na frente da nova e responderia por ela.
+function checarMemoriaDeGolpesRenovada() {
+  const mem = criarMemoriaGolpes(3);
+  const a = { nasc: 1 };
+  const b = { nasc: 2 };
+  lembrarGolpe(mem, a, 5, 0);
+  lembrarGolpe(mem, b, 1, 0);
+  lembrarGolpe(mem, a, 9, 2); // aos 2s: b venceu, a ainda vale ate 5 — e e renovado ate 9
+  if (!emCooldown(mem, a, 6)) falhar(0, 'memoria de golpes: o cooldown renovado nao valeu aos 6s — a entrada velha (ate 5s) respondeu por ele (pendencia 33)');
+  if (emCooldown(mem, a, 9.5)) falhar(0, 'memoria de golpes: o cooldown renovado nao venceu aos 9,5s');
+  if (mem.itens.filter((it) => it.ref === a).length !== 1) falhar(0, 'memoria de golpes: o mesmo inimigo ficou com duas entradas');
+  a.nasc = 7; // o mesmo objeto, outro inimigo (pool LIFO)
+  if (emCooldown(mem, a, 3)) falhar(0, 'memoria de golpes: o inimigo que reusa o objeto herdou o cooldown do morto');
+  return 'memoria de golpes: renovar um cooldown vivo vale, uma entrada por inimigo, geracao respeitada';
+}
+
+// Pendencia 75: a investida que bate na parede de raspao desliza ao longo
+// dela, e o aviso mostra os dois trechos. De frente, para na parede.
+function checarInvestidaDeslizando() {
+  const cfg = CONTEUDO.banca;
+  const fase = cfg.fases.findIndex((f) => f.padroes.investida);
+  const inv = cfg.fases[fase].padroes.investida;
+  const r = cfg.raio;
+  const arena = { esquerda: 0, topo: 0, direita: CONTEUDO.arena.largura, base: CONTEUDO.arena.altura };
+  const b = { mira: Math.PI, alcance: 0, deslize: 0, deslizeX: 0, deslizeY: 0, quinaX: 0, quinaY: 0 };
+  tracarInvestida(b, { x: 120, y: 270, raio: r }, inv.distancia, arena);
+  if (b.deslize !== 0 || Math.abs(b.alcance - (120 - r)) > 1e-9) falhar(0, `investida: de frente para a parede ela deslizou ${b.deslize}px (alcance ${b.alcance})`);
+  b.mira = Math.atan2(200, -10);
+  tracarInvestida(b, { x: r, y: 100, raio: r }, inv.distancia, arena);
+  const esperado = Math.min(inv.distancia * Math.abs(Math.sin(b.mira)), arena.base - r - 100);
+  if (b.alcance > 1e-9 || b.deslizeY !== 1 || b.deslizeX !== 0 || Math.abs(b.deslize - esperado) > 1e-6) {
+    falhar(0, `investida: colada na parede, mirando ao longo dela, o caminho foi ${b.alcance}px + ${b.deslize}px (${b.deslizeX}, ${b.deslizeY}), esperava 0 + ${esperado.toFixed(1)}px para baixo (pendencia 75)`);
+  }
+  tracarInvestida(b, { x: r, y: arena.base - r - 50, raio: r }, inv.distancia, arena);
+  if (Math.abs(b.deslize - 50) > 1e-6) falhar(0, `investida: o deslize nao parou na parede seguinte (${b.deslize}px, esperava 50)`);
+
+  // Na luta: o jogador rente a parede da esquerda e A Banca grampeada nela.
+  const estado = estadoNoTcc(SEMENTE + 1407);
+  const av = estado.run.avaliacao;
+  const bb = av.banca;
+  const corpo = acharBanca(estado);
+  const p = estado.player;
+  p.armas.length = 0;
+  bb.fase = fase;
+  bb.estado = ESTADOS_BANCA.PERSEGUINDO;
+  bb.relogio = PASSO / 2;
+  bb.passo = cfg.fases[fase].sequencia.indexOf('investida');
+  corpo.x = av.arena.esquerda + r;
+  corpo.y = av.arena.topo + r + 10; // espaco abaixo para a corrida inteira
+  p.x = av.arena.esquerda + p.raio;
+  p.y = corpo.y + 220;
+  p.hp = p.hpMax;
+  atualizar(estado, PASSO);
+  if (bb.estado !== ESTADOS_BANCA.TELEGRAFO || bb.padrao !== 'investida') falhar(0, `investida: o cenario nao abriu o aviso (${bb.estado}/${bb.padrao})`);
+  const caminho = bb.alcance + bb.deslize;
+  if (!(bb.deslize > inv.distancia * 0.9)) falhar(0, `investida: rente a parede o caminho avisado foi ${bb.alcance.toFixed(1)}px + ${bb.deslize.toFixed(1)}px de ${inv.distancia} — a corrida sumiu na parede (pendencia 75)`);
+  const ctx = ctx2dFalso();
+  quadro(estado, ctx, criarEfeitos());
+  const faixas = ctx.reg.tracos.filter((x) => x.tipo === 'strokeRect').length - 1; // menos a parede da arena
+  if (faixas !== 2) falhar(0, `investida: o aviso desenhou ${faixas} faixa(s), o caminho tem 2 trechos`);
+  const fimX = bb.quinaX + bb.deslizeX * bb.deslize;
+  const fimY = bb.quinaY + bb.deslizeY * bb.deslize;
+  const x0 = corpo.x;
+  const y0 = corpo.y;
+  let t = 0;
+  while (bb.estado !== ESTADOS_BANCA.RECUPERANDO && t < 600) {
+    p.hp = p.hpMax;
+    p.x = av.arena.direita - p.raio; // fora do caminho: so a corrida importa aqui
+    atualizar(estado, PASSO);
+    if (!dentroDaArena(corpo, av.arena)) falhar(t, `investida: A Banca saiu da arena (${corpo.x.toFixed(1)}, ${corpo.y.toFixed(1)})`);
+    t += 1;
+  }
+  const folga = inv.velocidade * PASSO + 1e-6;
+  if (bb.estado !== ESTADOS_BANCA.RECUPERANDO || Math.hypot(corpo.x - fimX, corpo.y - fimY) > folga) {
+    falhar(0, `investida: A Banca parou em (${corpo.x.toFixed(1)}, ${corpo.y.toFixed(1)}), o aviso mostrou o fim em (${fimX.toFixed(1)}, ${fimY.toFixed(1)})`);
+  }
+  const andou = Math.hypot(corpo.x - x0, corpo.y - y0);
+  return `investida rente a parede: aviso de ${caminho.toFixed(0)}px (${bb.alcance.toFixed(0)} + ${bb.deslize.toFixed(0)} deslizando), correu ${andou.toFixed(0)}px e parou no fim avisado; de frente, para na parede`;
+}
+
+// A distancia de (px, py) ao segmento a-b.
+function distanciaAoSegmento(px, py, ax, ay, bx, by) {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const l2 = vx * vx + vy * vy;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / l2)) : 0;
+  return Math.hypot(px - (ax + vx * t), py - (ay + vy * t));
+}
+
+// Revisao da fase 14: a investida nunca sai do caminho que o aviso mostrou
+// por mais que um tick de corrida, nem para alem da ponta dele. Muitas
+// investidas sorteadas (semente fixa), a maioria partindo PERTO de uma parede
+// (nao so colada) com o jogador rente a ela — o caso em que o 1o trecho
+// acaba de raspao e a Banca ja escorrega um pouco ao longo da parede no tick
+// em que bate. Antes do conserto, o deslize recomecava inteiro dali e a
+// corrida passava da ponta avisada (pior caso medido: 15,7px, 60% do raio).
+function checarInvestidaPertoDaParede() {
+  const cfg = CONTEUDO.banca;
+  const fase = cfg.fases.findIndex((f) => f.padroes.investida);
+  const inv = cfg.fases[fase].padroes.investida;
+  const r = cfg.raio;
+  const rng = criarRng(SEMENTE + 1420);
+  const umTick = inv.velocidade * PASSO + 1e-6;
+  let estado = null;
+  let casos = 0;
+  let deslizes = 0;
+  let pior = 0;
+  for (let k = 0; k < 400; k += 1) {
+    if (k % 50 === 0) estado = estadoNoTcc(SEMENTE + 1421 + k);
+    const av = estado.run.avaliacao;
+    const A = av.arena;
+    const b = av.banca;
+    const corpo = acharBanca(estado);
+    const p = estado.player;
+    p.armas.length = 0;
+    b.fase = fase;
+    b.estado = ESTADOS_BANCA.PERSEGUINDO;
+    b.relogio = PASSO / 2;
+    b.passo = cfg.fases[fase].sequencia.indexOf('investida');
+    if (rng.chance(0.75)) {
+      // Perto de uma parede (0 a 30px do grampo), e o jogador rente a ela.
+      const lado = rng.int(0, 3);
+      const folga = rng.range(0, 30);
+      const longe = rng.range(30, 450) * (rng.chance(0.5) ? 1 : -1);
+      if (lado < 2) {
+        corpo.x = lado === 0 ? A.esquerda + r + folga : A.direita - r - folga;
+        corpo.y = rng.range(A.topo + r, A.base - r);
+        p.x = lado === 0 ? A.esquerda + p.raio : A.direita - p.raio;
+        p.y = Math.min(A.base - p.raio, Math.max(A.topo + p.raio, corpo.y + longe));
+      } else {
+        corpo.y = lado === 2 ? A.topo + r + folga : A.base - r - folga;
+        corpo.x = rng.range(A.esquerda + r, A.direita - r);
+        p.y = lado === 2 ? A.topo + p.raio : A.base - p.raio;
+        p.x = Math.min(A.direita - p.raio, Math.max(A.esquerda + p.raio, corpo.x + longe));
+      }
+    } else {
+      corpo.x = rng.range(A.esquerda + r, A.direita - r);
+      corpo.y = rng.range(A.topo + r, A.base - r);
+      p.x = rng.range(A.esquerda + p.raio, A.direita - p.raio);
+      p.y = rng.range(A.topo + p.raio, A.base - p.raio);
+    }
+    for (let t = 0; t < 10 && b.estado !== ESTADOS_BANCA.TELEGRAFO; t += 1) {
+      p.hp = p.hpMax;
+      atualizar(estado, PASSO);
+      estado.eventos.length = 0;
+    }
+    if (b.estado !== ESTADOS_BANCA.TELEGRAFO || b.padrao !== 'investida') continue;
+    casos += 1;
+    if (b.deslize > 0) deslizes += 1;
+    // O caminho do aviso, guardado no inicio dele (render.js desenha estes).
+    const x0 = b.x;
+    const y0 = b.y;
+    const qx = b.quinaX;
+    const qy = b.quinaY;
+    const fx = qx + b.deslizeX * b.deslize;
+    const fy = qy + b.deslizeY * b.deslize;
+    let fora = 0;
+    for (let t = 0; t < 600 && (b.estado === ESTADOS_BANCA.TELEGRAFO || b.estado === ESTADOS_BANCA.EXECUTANDO); t += 1) {
+      p.hp = p.hpMax;
+      atualizar(estado, PASSO);
+      estado.eventos.length = 0;
+      const d = Math.min(distanciaAoSegmento(corpo.x, corpo.y, x0, y0, qx, qy), distanciaAoSegmento(corpo.x, corpo.y, qx, qy, fx, fy));
+      if (d > fora) fora = d;
+    }
+    const alemDaPonta = Math.hypot(corpo.x - fx, corpo.y - fy);
+    pior = Math.max(pior, fora, alemDaPonta);
+    if (fora > umTick || alemDaPonta > umTick) {
+      falhar(0, `investida perto da parede (caso ${k}): A Banca correu ${fora.toFixed(2)}px fora da faixa avisada e parou ${alemDaPonta.toFixed(2)}px alem da ponta dela — mais que um tick de corrida (${umTick.toFixed(2)}px): dano onde o aviso nao mostrou`);
+    }
+  }
+  if (casos < 300 || deslizes < 50) falhar(0, `investida perto da parede: so ${casos} investidas (${deslizes} com deslize), o teste perdeu o sentido`);
+  return `investida perto da parede: ${casos} investidas sorteadas (${deslizes} deslizando), nenhuma sai da faixa avisada nem passa da ponta por mais de um tick (pior ${pior.toFixed(2)}px de ${umTick.toFixed(2)})`;
+}
+
+// Pendencia 77: a onda do Resumo empurra o bando e nao A Banca, que fica
+// parada na virada de fase (e no aviso dos padroes).
+function checarResumoNaoEmpurraBanca() {
+  const estado = estadoNoTcc(SEMENTE + 1408);
+  const b = estado.run.avaliacao.banca;
+  const corpo = acharBanca(estado);
+  const p = estado.player;
+  const resumo = CONTEUDO.armas.find((a) => a.comportamento === 'ondaArea');
+  p.armas.length = 0;
+  equiparArma(estado, resumo.id);
+  while (subirNivelArma(estado, resumo.id));
+  const nivel = nivelDaArma(p.armas[0]);
+  b.estado = ESTADOS_BANCA.TRANSICAO;
+  b.relogio = 10;
+  b.duracaoEstado = 10;
+  corpo.x = p.x + nivel.raio * 0.5;
+  corpo.y = p.y;
+  const comum = spawnInimigo(estado, CONTEUDO.inimigos[0].id);
+  comum.hpMax = 1e6;
+  comum.hp = 1e6;
+  comum.x = p.x - nivel.raio * 0.5;
+  comum.y = p.y;
+  p.armas[0].cooldown = 0;
+  const bx = corpo.x;
+  const by = corpo.y;
+  const cx = comum.x;
+  estado.eventos.length = 0;
+  atualizar(estado, PASSO);
+  if (!estado.eventos.some((e) => e.tipo === 'arma-disparo' && e.dados.arma === resumo.id)) falhar(0, 'Resumo x Banca: a onda nao pulsou, o teste perdeu o sentido');
+  if (!(cx - comum.x > nivel.empurrao * 0.5)) falhar(0, `Resumo x Banca: o ${CONTEUDO.inimigos[0].emoji} nao foi empurrado (${(cx - comum.x).toFixed(1)}px), o teste perdeu o sentido`);
+  if (corpo.x !== bx || corpo.y !== by) falhar(0, `Resumo x Banca: a onda empurrou A Banca ${Math.hypot(corpo.x - bx, corpo.y - by).toFixed(1)}px na virada de fase (pendencia 77)`);
+  return `Resumo: empurra o bando ${(cx - comum.x).toFixed(0)}px, A Banca 0px`;
+}
+
+// Pendencia 79: o jogador exatamente em cima da Banca no inicio do aviso. A
+// mira ia sempre para a direita (0 rad), colada ou nao na parede da direita.
+function checarMiraEmCima() {
+  const estado = estadoNoTcc(SEMENTE + 1409);
+  const av = estado.run.avaliacao;
+  const corpo = acharBanca(estado);
+  const p = estado.player;
+  const cx = (av.arena.esquerda + av.arena.direita) / 2;
+  const cy = (av.arena.topo + av.arena.base) / 2;
+  corpo.x = av.arena.direita - corpo.raio;
+  corpo.y = cy;
+  p.x = corpo.x;
+  p.y = corpo.y;
+  const mira = mirarNoJogador(estado, corpo, 1.234);
+  if (Math.abs(Math.cos(mira) + 1) > 1e-9) falhar(0, `mira: com o jogador em cima dela, colada na parede da direita, A Banca mirou ${mira.toFixed(3)} rad, e nao o centro da arena (pendencia 79)`);
+  corpo.x = cx;
+  p.x = cx;
+  if (mirarNoJogador(estado, corpo, 1.234) !== 1.234) falhar(0, 'mira: no centro, com o jogador em cima, a mira anterior nao ficou');
+  p.x = cx + 10;
+  if (mirarNoJogador(estado, corpo, 1.234) !== 0) falhar(0, 'mira: com o jogador a direita, a mira nao foi 0 rad');
+  // Pelo padrao: a investida com o jogador em cima, na parede da direita, avisa um caminho de verdade.
+  const b = av.banca;
+  const fase = CONTEUDO.banca.fases.findIndex((f) => f.padroes.investida);
+  b.fase = fase;
+  b.estado = ESTADOS_BANCA.PERSEGUINDO;
+  b.relogio = PASSO / 2;
+  b.passo = CONTEUDO.banca.fases[fase].sequencia.indexOf('investida');
+  p.armas.length = 0;
+  // Perto da parede da direita, mas longe o bastante para nenhum dos dois ser
+  // grampeado nela (o grampo separaria os centros).
+  corpo.x = av.arena.direita - corpo.raio - 4;
+  p.x = corpo.x;
+  p.y = corpo.y;
+  atualizar(estado, PASSO);
+  if (b.estado !== ESTADOS_BANCA.TELEGRAFO || !(b.alcance > 100)) falhar(0, `mira: a investida com o jogador em cima avisou ${b.alcance.toFixed(1)}px (estado ${b.estado})`);
+  return `mira com o jogador em cima: o centro da arena (investida de ${b.alcance.toFixed(0)}px)`;
+}
+
+// Pendencia 80: o TCC vencido sem os boletins da run (so por atalho de
+// teste) abre a colacao, mas nao conta formatura nem recorde.
+function checarColacaoSemBoletins() {
+  const vencer = (estado) => {
+    const b = estado.run.avaliacao.banca;
+    b.fase = CONTEUDO.banca.fases.length - 1;
+    estado.eventos.length = 0;
+    const corpo = acharBanca(estado);
+    aplicarDano(estado, corpo, corpo.hpMax * 2);
+    atualizar(estado, PASSO);
+    if (estado.tela !== TELAS.COLACAO) falhar(0, `colacao: a Banca caiu e a tela e "${estado.tela}"`);
+    return estado.eventos.map((e) => e.tipo);
+  };
+  const vazio = estadoNoTcc(SEMENTE + 1410);
+  if (runCompleta(vazio.run.boletins)) falhar(0, 'colacao: o cenario sem boletins ja nasceu com os boletins feitos');
+  const tiposVazio = vencer(vazio);
+  if (vazio.recorde.formaturas !== 0 || vazio.run.colacao.novoRecorde || tiposVazio.includes('recorde')) {
+    falhar(0, `colacao: a run sem boletins (media ${vazio.run.colacao.media}) virou formatura/recorde (${JSON.stringify(vazio.recorde)}) — pendencia 80`);
+  }
+  const cheio = estadoNoTcc(SEMENTE + 1411);
+  for (const bol of cheio.run.boletins) {
+    bol.feita = true;
+    bol.nota = 9;
+    bol.conceito = conceitoDaNota(9);
+  }
+  const tiposCheio = vencer(cheio);
+  if (cheio.recorde.formaturas !== 1 || !cheio.run.colacao.novoRecorde || !tiposCheio.includes('recorde') || cheio.recorde.melhorMedia !== 9) {
+    falhar(0, `colacao: a run com os 9 boletins nao virou recorde (${JSON.stringify(cheio.recorde)})`);
+  }
+  return 'colacao sem boletins: abre, sem formatura nem recorde; com os 9, recorde';
+}
+
+// Pendencias 58 e 66: o relatorio diz a velocidade maxima DESTE jogador (com
+// o Energetico) e nomeia a perda de HP por tempo.
+function checarRelatorioVelocidadeEFontes() {
+  const original = CONTEUDO.debug.relatorio;
+  CONTEUDO.debug.relatorio = true;
+  try {
+    const energetico = CONTEUDO.coringas.find((c) => c.efeito === 'atributo' && c.params.atributo === 'velocidade');
+    const estado = novoEstado(SEMENTE + 1412);
+    iniciarRun(estado);
+    estado.run.coringas.push(novaInstancia(energetico.id));
+    comecarProxima(estado);
+    for (let t = 1; t <= 120; t += 1) {
+      botCircular(estado, t);
+      atualizar(estado, PASSO);
+      if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+      estado.eventos.length = 0;
+    }
+    const texto = gerarRelatorio(estado, ESCOPOS.AVALIACAO).texto;
+    const max = (CONTEUDO.jogador.velocidade * energetico.params.fator).toFixed(0);
+    if (!texto.includes(`o máximo do jogador é ${max})`) || !texto.includes(`(máximo do jogador: ${max})`)) {
+      falhar(0, `relatorio: com o Energetico o maximo do jogador e ${max} e o texto nao diz isso (pendencia 58)`);
+    }
+  } finally {
+    CONTEUDO.debug.relatorio = original;
+  }
+  const nome = nomeFonte(FONTE_PERDA_HP);
+  const mod = CONTEUDO.modificadores.find((m) => m.somas && m.somas.perdaHp);
+  if (nome === FONTE_PERDA_HP || (mod && !nome.includes(mod.nome))) falhar(0, `relatorio: a perda de HP por tempo saiu como "${nome}" (pendencia 66)`);
+  return `relatorio: maximo do jogador com o Energetico, perda de HP como "${nome}"`;
+}
+
+// Pendencia 87: os efeitos de uma avaliacao nao atravessam para a seguinte,
+// nem no mesmo instante (nada envelheceu entre os dois quadros).
+function checarLimparEfeitos() {
+  const estado = avaliacaoCom(SEMENTE + 1413, []);
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  quadro(estado, ctx, fx);
+  for (let i = 0; i < 3; i += 1) {
+    const e = spawnInimigo(estado, CONTEUDO.inimigos[0].id);
+    e.x = 300 + i * 80;
+    e.y = 200;
+    aplicarDano(estado, e, 1e9);
+  }
+  emitir(estado, 'arma-acerto', { arma: 'teste', x: 300, y: 200, dano: 5, efetivo: 5, matou: false });
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 95, x: 0, y: 0 });
+  estado.tempo += PASSO;
+  quadro(estado, ctx, fx);
+  if (!(fx.particulas.ativos.length > 0 && fx.numeros.ativos.length > 0 && fx.tremor > 0 && fx.flashJogador > 0)) falhar(0, 'limparEfeitos: o cenario nao acendeu os efeitos, o teste perdeu o sentido');
+  comecarAvaliacao(estado, 0, 1);
+  quadro(estado, ctx, fx);
+  const sobra = { particulas: fx.particulas.ativos.length, numeros: fx.numeros.ativos.length, tremor: fx.tremor, flash: fx.flashJogador, vinheta: fx.vinhetaDano };
+  if (Object.values(sobra).some((v) => v !== 0)) falhar(0, `limparEfeitos: a avaliacao nova comecou com os efeitos da anterior ${JSON.stringify(sobra)} (pendencia 87)`);
+  return 'efeitos: a avaliacao nova comeca sem faisca, numero, tremor nem flash da anterior';
+}
+
+// Pendencia 88: o quadro repoe lineCap/lineJoin (o rastro e os numeros os
+// mudam), e todo save tem o seu restore (conferido em todo `quadro`).
+function checarContextoReposto() {
+  const estado = avaliacaoCom(SEMENTE + 1414, []);
+  const ctx = ctx2dFalso();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  quadro(estado, ctx, criarEfeitos());
+  const primeiro = ctx.reg.tracos[0];
+  if (!primeiro || primeiro.lineCap !== 'butt' || primeiro.lineJoin !== 'miter') {
+    falhar(0, `render: o 1o traco do quadro saiu com lineCap "${primeiro && primeiro.lineCap}" e lineJoin "${primeiro && primeiro.lineJoin}" herdados do quadro anterior (pendencia 88)`);
+  }
+  return 'render: lineCap/lineJoin repostos a cada quadro, save/restore balanceados';
+}
+
+// Pendencia 85: uma camada quebrada (desenho, UI, audio, gravar o recorde, ou
+// a propria simulacao) nao derruba o quadro: as outras rodam, a fila esvazia,
+// e cada falha e relatada uma vez.
+function checarQuadroIsolado() {
+  const estado = avaliacaoCom(SEMENTE + 1415, []);
+  const relogio = criarRelogio();
+  const vez = { desenhar: 0, sincronizar: 0, tocar: 0, gravar: 0 };
+  const relatadas = [];
+  const camadas = {
+    desenhar() { vez.desenhar += 1; throw new Error('desenho quebrado'); },
+    sincronizar() { vez.sincronizar += 1; throw new Error('no do DOM sumiu'); },
+    tocar() { vez.tocar += 1; throw new Error('sintese quebrada'); },
+    gravarRecorde() { vez.gravar += 1; throw new Error('QuotaExceededError'); },
+    aoFalhar(nome) { relatadas.push(nome); },
+    falhas: {},
+  };
+  const rodar = (onde) => {
+    try {
+      rodarQuadro(estado, relogio, PASSO, camadas);
+    } catch (e) {
+      falhar(0, `quadro: ${onde}, uma camada quebrada derrubou o quadro (${e && e.message}) — o requestAnimationFrame seguinte nao seria agendado (pendencia 85)`);
+    }
+    if (estado.eventos.length !== 0) falhar(0, `quadro: ${onde}, a fila nao esvaziou`);
+  };
+  emitir(estado, 'recorde', null);
+  const decorrido = estado.run.avaliacao.decorrido;
+  for (let q = 0; q < 3; q += 1) rodar('com desenho, UI, audio e recorde quebrados');
+  if (vez.desenhar !== 3 || vez.sincronizar !== 3 || vez.tocar !== 3 || vez.gravar !== 1) falhar(0, `quadro: uma camada quebrada tirou a vez das outras (${JSON.stringify(vez)})`);
+  if (relatadas.join() !== 'desenho,interface,audio,recorde') falhar(0, `quadro: as falhas foram relatadas assim: ${relatadas.join()} (uma vez cada, na ordem do quadro)`);
+  if (!(estado.run.avaliacao.decorrido > decorrido)) falhar(0, 'quadro: a simulacao parou junto com as camadas quebradas');
+  // Revisao da fase 14: uma 2a excecao DIFERENTE na mesma camada (outro bug,
+  // ou a mesma camada quebrando de novo numa run seguinte) tambem aparece; a
+  // mesma repetida, nao.
+  camadas.desenhar = () => { vez.desenhar += 1; throw new Error('outro desenho quebrado'); };
+  rodar('com o desenho quebrando de outro jeito');
+  rodar('com o desenho quebrando de outro jeito, de novo');
+  const doDesenho = relatadas.filter((n) => n === 'desenho').length;
+  if (doDesenho !== 2) falhar(0, `quadro: duas excecoes diferentes no desenho, em 5 quadros, foram relatadas ${doDesenho} vez(es) — esperava 2 (cada falha diferente uma vez)`);
+  // A simulacao quebrada: o quadro segue, e o jogador ainda sai pela pausa.
+  estado.run.avaliacao.regras = null;
+  rodar('com a simulacao quebrada');
+  rodar('com a simulacao quebrada, de novo');
+  if (relatadas.filter((n) => n === 'simulacao').length !== 1) falhar(0, `quadro: a falha da simulacao foi relatada ${relatadas.filter((n) => n === 'simulacao').length} vezes`);
+  alternarPausa(estado);
+  rodar('pausado');
+  if (!desistirDaPausa(estado) || estado.tela !== TELAS.MENU) falhar(0, 'quadro: com a simulacao quebrada, a pausa nao levou ao menu');
+  return 'quadro: desenho, UI, audio, recorde e simulacao quebrados, cada falha diferente relatada uma vez, o quadro segue e a fila esvazia';
+}
+
+// Pendencias 22/34: os verificadores de dado x codigo tambem rodam no
+// navegador (iniciar), e cada um acusa o seu typo pelo nome do arquivo.
+function checarVerificacaoNoNavegador() {
+  const limpo = verificarConteudoDoJogo();
+  if (limpo.length !== 0) falhar(0, `verificarConteudoDoJogo acusou o conteudo de verdade: ${limpo.join(' | ')}`);
+  const trocar = (obj, chave, valor) => {
+    const existia = Object.prototype.hasOwnProperty.call(obj, chave);
+    const antes = obj[chave];
+    obj[chave] = valor;
+    return () => {
+      if (existia) obj[chave] = antes;
+      else delete obj[chave];
+    };
+  };
+  const casos = [
+    ['arma', () => trocar(CONTEUDO.armas[0], 'comportamento', 'typoDeArma'), 'weapons.js'],
+    ['inimigo', () => trocar(CONTEUDO.inimigos[0], 'comportamento', 'typoDeInimigo'), 'enemies.js'],
+    ['Banca', () => trocar(CONTEUDO.banca.fases[0].padroes, 'typoDePadrao', { telegrafo: 1, recuperacao: 1 }), 'boss.js'],
+    ['coringa', () => trocar(CONTEUDO.coringas[0], 'efeito', 'typoDeEfeito'), 'jokers.js'],
+    ['carta', () => trocar(CONTEUDO.cartas.consolo, 'tipo', 'typoDeCarta'), 'cards.js'],
+  ];
+  for (const [nome, mexer, arquivo] of casos) {
+    const desfazer = mexer();
+    let problemas;
+    try {
+      problemas = verificarConteudoDoJogo();
+    } finally {
+      desfazer();
+    }
+    if (!problemas.some((p) => p.includes(arquivo))) falhar(0, `verificarConteudoDoJogo nao acusou um typo de ${nome} (esperava uma mensagem de ${arquivo}): ${problemas.join(' | ')}`);
+  }
+  if (verificarConteudoDoJogo().length !== 0) falhar(0, 'verificarConteudoDoJogo: o conteudo nao voltou ao normal depois do teste');
+  return `conteudo verificado no navegador: ${casos.length} typos, cada um acusado pelo arquivo dele`;
+}
+
+// Pendencia 89: o menu nao herda a paleta do TCC, e o anuncio de um periodo
+// novo ja vem com a paleta dele.
+function checarPaletaForaDaArena() {
+  const cfg = CONTEUDO.juice;
+  const tcc = estadoNoTcc(SEMENTE + 1416);
+  if (paletaDe(tcc) !== cfg.paletaTcc) falhar(0, 'paletas: a luta contra A Banca nao usa a paleta do TCC');
+  irParaTela(tcc, TELAS.MENU);
+  const ctx = ctx2dFalso();
+  quadro(tcc, ctx, criarEfeitos());
+  if (paletaDe(tcc) !== cfg.paletas[0] || ctx.reg.retangulos[0].cor !== cfg.paletas[0].fundo) falhar(0, 'paletas: o menu depois do TCC saiu com a paleta da defesa (pendencia 89)');
+  const e = novoEstado(SEMENTE + 1417);
+  comecarAvaliacao(e, 0, CONTEUDO.periodos[0].avaliacoes.length - 1);
+  avancarRun(e);
+  if (e.tela !== TELAS.ANUNCIO || e.run.proxima.periodoIndex !== 1) falhar(0, 'paletas: o cenario nao chegou ao anuncio do 2o periodo');
+  if (paletaDe(e) !== cfg.paletas[1]) falhar(0, 'paletas: o anuncio do 2o periodo saiu com a paleta do 1o');
+  const f = novoEstado(SEMENTE + 1418);
+  const ultimo = CONTEUDO.periodos.length - 1;
+  comecarAvaliacao(f, ultimo, CONTEUDO.periodos[ultimo].avaliacoes.length - 1);
+  avancarRun(f);
+  if (f.tela !== TELAS.TCC || paletaDe(f) !== cfg.paletaTcc) falhar(0, 'paletas: a tela do TCC nao usa a paleta da defesa');
+  return 'paletas: menu no 1o periodo, anuncio no periodo que vai comecar, tela do TCC na da defesa';
+}
+
+function checarFase14() {
+  // Pendencia 47: o catalogo de armas do boletim e injetavel, como o resto.
+  const linha = armasDoBoletim({ nivel: 3 }, [{ id: 'x', nivel: 2 }], CONTEUDO.textos.resultado, { boletimArmas: true }, [{ id: 'x', emoji: '🧪', nome: 'Teste' }]);
+  if (!linha.includes('🧪 Teste')) falhar(0, `armasDoBoletim nao usou o catalogo passado: "${linha}" (pendencia 47)`);
+  // Pendencia 35: o descarte da fila e contado, e a verificacao de todo tick
+  // da corrida principal o acusa (a de antes media o tamanho de uma fila que
+  // emitir() ja cortava, e nunca disparava).
+  const cheio = novoEstado(SEMENTE + 1419);
+  const teto = CONTEUDO.arena.limites.eventos;
+  for (let i = 0; i < teto; i += 1) emitir(cheio, 'teste');
+  const verificacao = VERIFICACOES.find((v) => v.nome === 'pools dentro do teto');
+  if (eventosDescartados(cheio) !== 0 || verificacao.rodar(cheio, 1)) falhar(0, 'eventos: a fila exatamente no teto acusou descarte');
+  for (let i = 0; i < 7; i += 1) emitir(cheio, 'teste');
+  if (eventosDescartados(cheio) !== 7 || !verificacao.rodar(cheio, 1)) falhar(0, `eventos: 7 eventos alem do teto, ${eventosDescartados(cheio)} contados como descartados e a verificacao por tick nao acusou (pendencia 35)`);
+  const partes = [
+    checarNivelNoUltimoTick(),
+    checarMorteNoUltimoTick(),
+    checarAtestadoNoUltimoTick(),
+    checarPausaForaDaAvaliacao(),
+    checarBancaMorreNoAviso(),
+    checarDivisaoComPoolCheia(),
+    checarMemoriaDeGolpesRenovada(),
+    checarInvestidaDeslizando(),
+    checarInvestidaPertoDaParede(),
+    checarResumoNaoEmpurraBanca(),
+    checarMiraEmCima(),
+    checarColacaoSemBoletins(),
+    checarRelatorioVelocidadeEFontes(),
+    checarLimparEfeitos(),
+    checarContextoReposto(),
+    checarQuadroIsolado(),
+    checarVerificacaoNoNavegador(),
+    checarPaletaForaDaArena(),
+  ];
+  return partes.map((p) => `\n    ${p}`).join('');
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -6091,6 +6915,9 @@ const morteSimultanea = checarMorteSimultanea();
 const audioDoJogo = checarAudio();
 // Fase 12: o juice (render.js) e o HUD, e a prova de que nao mexem na partida.
 const juice = checarJuice();
+// Fase 14: estados no mesmo tick, pausa fora de hora, a Banca, a pool cheia,
+// o quadro isolado e as pendencias de logica.
+const fase14 = checarFase14();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -6339,6 +7166,7 @@ console.log(
     `\n  morte simultanea (pendencia 73): ${morteSimultanea}` +
     `\n  audio (fase 11): ${audioDoJogo}` +
     `\n  juice (fase 12): ${juice}` +
+    `\n  robustez (fase 14):${fase14}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +
