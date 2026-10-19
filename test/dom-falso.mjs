@@ -530,6 +530,8 @@ function criarContexto2d(canvas, opcoes = {}) {
     moveTo() { op('moveTo', arguments); },
     lineTo() { op('lineTo', arguments); },
     rect() { op('rect', arguments); },
+    // Fase 15: o lado de fora da arena encolhida e recortado ('evenodd').
+    clip() { op('clip', arguments); },
     arc(x, y, r) {
       if (!(r >= 0)) throw new Error(`canvas falso: arc com raio ${r}`); // o navegador lanca IndexSizeError
       op('arc', arguments);

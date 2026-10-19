@@ -34,10 +34,15 @@ export function efeitosDe(ctx) {
   return fx;
 }
 
-export function criarEfeitos(cfg = CONTEUDO.juice) {
+export function criarEfeitos(cfg = CONTEUDO.juice, tema = CONTEUDO.tema) {
   return {
     cfg,
+    tema,
     rng: criarRng(cfg.semente), // nunca o da simulacao
+    // O da pagina (pintarPagina): reiniciado em cfg.fundo.semente a cada
+    // pintura, para o mesmo clima sair sempre a mesma pagina — e sem mexer na
+    // sequencia de `rng`, que as faiscas e o tremor seguem usando.
+    rngPagina: criarRng(cfg.fundo.semente),
     // A pool da fase 02, com o teto que ja estava reservado para particulas.
     particulas: criarPool(CONTEUDO.arena.limites.particles, novaParticula),
     numeros: criarPool(cfg.numeros.max, novoNumero),
@@ -64,10 +69,10 @@ export function criarEfeitos(cfg = CONTEUDO.juice) {
     flashBanca: 0, // 0..1, do quadro atual
     novasParticulas: 0, // neste quadro
     novosNumeros: 0,
-    gradientes: { paleta: null, vinheta: null, dano: null, aviso: null },
-    // Chao e vinhetas pintados uma vez por paleta (desenharFundo). `criarCamada`
-    // (w, h) -> canvas pode ser trocada (o smoke passa a dele).
-    camadas: { paleta: null, chao: null, vinheta: null, dano: null, criadas: 0 },
+    gradientes: { clima: null, vinheta: null, dano: null, aviso: null },
+    // A pagina e as vinhetas pintadas uma vez por clima (desenharFundo).
+    // `criarCamada` (w, h) -> canvas pode ser trocada (o smoke passa a dele).
+    camadas: { clima: null, chao: null, vinheta: null, dano: null, criadas: 0 },
     criarCamada: null,
     // Para o smoke e para medir: o que o ultimo quadro fez.
     diag: { fontes: 0, avisos: 0, numerosAgrupados: 0, numerosDescartados: 0, particulasDescartadas: 0 },
@@ -92,7 +97,7 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
     fx.emojiFaltando = detectarEmojiFaltando(ctx);
   }
   avancarEfeitos(estado, fx);
-  const paleta = paletaDe(estado, fx.cfg);
+  const clima = climaDe(estado, fx.tema);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
@@ -115,7 +120,7 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
   // de entidade muda.
   const ox = naArena ? fx.tremorX : 0;
   const oy = naArena ? fx.tremorY : 0;
-  desenharFundo(ctx, fx, paleta, largura, altura, ox, oy);
+  desenharFundo(ctx, fx, clima, largura, altura, ox, oy);
 
   if (naArena) {
     const av = estado.run.avaliacao;
@@ -136,7 +141,7 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
     desenharArmasEspeciais(ctx, fx, estado.player, v);
     // Por cima das entidades: quem esta fora da arena encolhida fica apagado
     // (pendencia 63), e a parede por cima de tudo.
-    desenharForaDaArena(ctx, av.arena, largura, altura, v, fx.cfg.tremor.maximo);
+    desenharForaDaArena(ctx, av.arena, clima, largura, altura, v, fx.cfg.tremor.maximo);
     desenharAvisosDeSpawn(ctx, fx, estado);
     desenharNumeros(ctx, fx);
   }
@@ -144,7 +149,7 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  desenharVinheta(ctx, fx, paleta, largura, altura);
+  desenharVinheta(ctx, fx, clima, largura, altura);
   if (naArena) {
     const banca = estado.run.avaliacao.banca;
     if (banca) desenharTransicaoDaBanca(ctx, fx, banca, largura, altura, v);
@@ -420,34 +425,34 @@ export function pontoDeEntrada(ex, ey, px, py, arena, saida) {
 
 // ------------------------------------------------------------- fundo
 
-// A paleta do quadro. Na arena e nas telas de fim, a da avaliacao que esta (ou
-// estava) na tela; no anuncio, a do periodo que vai comecar; na tela do TCC, a
-// dele; no menu, a do 1º periodo, onde toda run comeca. Pendencia 89: lendo
-// sempre a ultima avaliacao, o menu depois da colacao saia com a paleta do
-// TCC, e o anuncio de um periodo novo com a do periodo anterior. A loja fica
-// com a do periodo que acabou de ser jogado.
-export function paletaDe(estado, cfg = CONTEUDO.juice) {
+// O clima do quadro: a pagina do caderno no estado daquele periodo (v2, fase
+// 15; era a paleta da fase 12). Na arena e nas telas de fim, o da avaliacao
+// que esta (ou estava) na tela; no anuncio, o do periodo que vai comecar; na
+// tela do TCC, o da defesa; no menu, o do 1o periodo, onde toda run comeca.
+// Pendencia 89: lendo sempre a ultima avaliacao, o menu depois da colacao saia
+// com o clima do TCC, e o anuncio de um periodo novo com o do anterior. A loja
+// fica com o do periodo que acabou de ser jogado.
+export function climaDe(estado, tema = CONTEUDO.tema) {
   switch (estado.tela) {
     case TELAS.MENU:
-      return paletaDoPeriodo(cfg, 0);
+      return climaDoPeriodo(tema, 0);
     case TELAS.ANUNCIO:
-      return paletaDoPeriodo(cfg, estado.run.proxima.periodoIndex);
+      return climaDoPeriodo(tema, estado.run.proxima.periodoIndex);
     case TELAS.TCC:
-      return cfg.paletaTcc;
+      return tema.climaTcc;
     default:
-      return estado.run.avaliacao.banca ? cfg.paletaTcc : paletaDoPeriodo(cfg, estado.run.periodoIndex);
+      return estado.run.avaliacao.banca ? tema.climaTcc : climaDoPeriodo(tema, estado.run.periodoIndex);
   }
 }
 
-function paletaDoPeriodo(cfg, periodoIndex) {
-  return cfg.paletas[Math.max(0, Math.min(cfg.paletas.length - 1, periodoIndex))];
+function climaDoPeriodo(tema, periodoIndex) {
+  return tema.climas[Math.max(0, Math.min(tema.climas.length - 1, periodoIndex))];
 }
 
-// O chao (cor de fundo, piso em grade, fileiras de carteiras) e as vinhetas
-// nao mudam dentro de um periodo: sao pintados UMA vez por paleta numa camada
-// fora da tela e copiados a cada quadro com drawImage — duas copias em vez de
-// ~240 retangulos, as linhas do piso e um gradiente da tela inteira. Sem como
-// criar camada (o node do smoke), pinta direto, com os mesmos numeros.
+// A pagina (papel, pauta, margem, furos e os detalhes do clima) e as vinhetas
+// nao mudam dentro de um periodo: sao pintadas UMA vez por clima numa camada
+// fora da tela e copiadas a cada quadro com drawImage. Sem como criar camada
+// (o node do smoke), pinta direto, com os mesmos numeros.
 function novaCamada(ctx, fx, largura, altura) {
   if (fx.criarCamada) return fx.criarCamada(largura, altura);
   const doc = ctx.canvas && ctx.canvas.ownerDocument;
@@ -461,85 +466,249 @@ function novaCamada(ctx, fx, largura, altura) {
   return null;
 }
 
-function prepararCamadas(ctx, fx, paleta, largura, altura) {
+function prepararCamadas(ctx, fx, clima, largura, altura) {
   const cam = fx.camadas;
-  if (cam.paleta === paleta) return;
-  cam.paleta = paleta;
-  // A camada do chao passa da borda o quanto o tremor desloca o mundo.
+  if (cam.clima === clima) return;
+  cam.clima = clima;
+  // A camada da pagina passa da borda o quanto o tremor desloca o mundo.
   const m = Math.ceil(fx.cfg.tremor.maximo);
   cam.chao = novaCamada(ctx, fx, largura + 2 * m, altura + 2 * m);
   if (cam.chao) {
     const c = cam.chao.getContext('2d');
     c.translate(m, m);
-    c.fillStyle = paleta.fundo;
-    c.fillRect(-m, -m, largura + 2 * m, altura + 2 * m);
-    pintarChao(c, paleta, fx, largura, altura);
+    pintarPagina(c, fx, clima, largura, altura, m);
     cam.criadas += 1;
   }
-  cam.vinheta = camadaDeBorda(ctx, fx, largura, altura, paleta.vinheta);
-  if (!cam.dano) cam.dano = camadaDeBorda(ctx, fx, largura, altura, fx.cfg.flash.corVinhetaDano);
+  const vinheta = clima.vinheta;
+  cam.vinheta = camadaDeBorda(ctx, fx, largura, altura, vinheta.cor, vinheta.raioInterno, vinheta.raioExterno);
+  if (!cam.dano) {
+    const f = fx.cfg.flash;
+    cam.dano = camadaDeBorda(ctx, fx, largura, altura, f.corVinhetaDano, f.vinhetaDanoRaioInterno, f.vinhetaDanoRaioExterno);
+  }
 }
 
-function camadaDeBorda(ctx, fx, largura, altura, cor) {
+function camadaDeBorda(ctx, fx, largura, altura, cor, raioInterno, raioExterno) {
   const camada = novaCamada(ctx, fx, largura, altura);
   if (!camada) return null;
   const c = camada.getContext('2d');
-  c.fillStyle = gradienteDeBorda(c, fx.cfg.fundo, largura, altura, cor);
+  c.fillStyle = gradienteDeBorda(c, largura, altura, cor, raioInterno, raioExterno);
   c.fillRect(0, 0, largura, altura);
   fx.camadas.criadas += 1;
   return camada;
 }
 
 // O fundo do quadro, ja com o deslocamento do tremor (ox, oy).
-function desenharFundo(ctx, fx, paleta, largura, altura, ox, oy) {
-  prepararCamadas(ctx, fx, paleta, largura, altura);
-  const chao = fx.camadas.chao;
-  if (chao) {
-    const m = Math.ceil(fx.cfg.tremor.maximo);
-    ctx.setTransform(1, 0, 0, 1, ox, oy);
-    ctx.drawImage(chao, -m, -m);
-    return;
-  }
-  ctx.fillStyle = paleta.fundo;
-  ctx.fillRect(0, 0, largura, altura);
+function desenharFundo(ctx, fx, clima, largura, altura, ox, oy) {
+  prepararCamadas(ctx, fx, clima, largura, altura);
+  const m = Math.ceil(fx.cfg.tremor.maximo);
   ctx.setTransform(1, 0, 0, 1, ox, oy);
-  pintarChao(ctx, paleta, fx, largura, altura);
+  const chao = fx.camadas.chao;
+  if (chao) ctx.drawImage(chao, -m, -m);
+  else pintarPagina(ctx, fx, clima, largura, altura, m);
 }
 
-// O piso em grade e as fileiras de carteiras, um caminho so para cada. Passa
-// da borda do canvas o quanto o tremor desloca.
-function pintarChao(ctx, paleta, fx, largura, altura) {
+// A pagina do caderno de um clima, de -m a largura + m (o tremor descobre a
+// borda). Os sorteios saem de fx.rngPagina reiniciado em sementes fixas, uma
+// por tipo de detalhe: a mesma pagina toda vez, e as 2 manchas da tarde sao
+// as 2 primeiras das 4 da madrugada — o caderno e o mesmo, so mais gasto.
+// O contexto volta como estava (save/restore): os rabiscos mudam lineCap.
+function pintarPagina(ctx, fx, clima, largura, altura, m) {
   const f = fx.cfg.fundo;
-  const passo = f.passoPiso;
-  ctx.strokeStyle = paleta.piso;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = -passo; x <= largura + passo; x += passo) {
-    ctx.moveTo(x + 0.5, -passo);
-    ctx.lineTo(x + 0.5, altura + passo);
-  }
-  for (let y = -passo; y <= altura + passo; y += passo) {
-    ctx.moveTo(-passo, y + 0.5);
-    ctx.lineTo(largura + passo, y + 0.5);
-  }
-  ctx.stroke();
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = clima.papel;
+  ctx.fillRect(-m, -m, largura + 2 * m, altura + 2 * m);
 
-  const c = f.carteira;
-  ctx.fillStyle = paleta.carteira;
-  ctx.beginPath();
-  for (let y = (c.passoY - c.altura) / 2 - c.passoY; y < altura + c.passoY; y += c.passoY) {
-    for (let x = (c.passoX - c.largura) / 2 - c.passoX; x < largura + c.passoX; x += c.passoX) {
-      ctx.rect(x, y, c.largura, c.altura);
-      // O assento, menor, logo atras da mesa.
-      ctx.rect(x + (c.largura - c.assentoLargura) / 2, y + c.altura + c.assentoDistancia, c.assentoLargura, c.assentoAltura);
+  if (clima.pauta !== null) {
+    ctx.strokeStyle = clima.pauta;
+    ctx.lineWidth = f.pauta.largura;
+    ctx.beginPath();
+    for (let y = f.pauta.topo; y < altura + m; y += f.pauta.passo) {
+      ctx.moveTo(-m, y + 0.5);
+      ctx.lineTo(largura + m, y + 0.5);
+    }
+    ctx.stroke();
+  }
+  if (clima.margem !== null) {
+    ctx.strokeStyle = clima.margem;
+    ctx.lineWidth = f.margem.largura;
+    ctx.beginPath();
+    ctx.moveTo(f.margem.x, -m);
+    ctx.lineTo(f.margem.x, altura + m);
+    ctx.stroke();
+  }
+
+  const rng = fx.rngPagina;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  rng.s = f.semente >>> 0;
+  pintarManchas(ctx, rng, f.mancha, clima.manchas, f.margem.x, largura, altura);
+  rng.s = (f.semente + 1) >>> 0;
+  pintarVincos(ctx, rng, f.vinco, clima.vincos, largura, altura, m);
+  rng.s = (f.semente + 2) >>> 0;
+  pintarRabiscos(ctx, rng, f, clima.rabiscos, altura);
+
+  if (clima.furos !== null) {
+    const furos = f.furos;
+    ctx.fillStyle = clima.furos.cor;
+    ctx.strokeStyle = clima.furos.borda;
+    ctx.lineWidth = furos.largura;
+    for (let i = 0; i < furos.quantidade; i += 1) {
+      ctx.beginPath();
+      ctx.arc(furos.x, (altura * (i + 1)) / (furos.quantidade + 1), furos.raio, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
   }
-  ctx.fill();
+
+  // A luz por cima do que esta escrito na pagina: tinge tudo.
+  if (clima.luz !== null) {
+    const luz = clima.luz;
+    const x = luz.canto.endsWith('Direito') ? largura : 0;
+    const y = luz.canto.startsWith('inferior') ? altura : 0;
+    pintarLuz(ctx, x, y, luz.raio * Math.hypot(largura, altura), luz.cor, luz.alfa, largura, altura, m);
+  }
+  if (clima.luminaria !== null) {
+    const l = clima.luminaria;
+    pintarLuz(ctx, largura / 2, altura / 2, (l.raio * Math.hypot(largura, altura)) / 2, l.cor, l.alfa, largura, altura, m);
+  }
+
+  if (clima.timbrado !== null) {
+    const t = clima.timbrado;
+    ctx.strokeStyle = t.cor;
+    ctx.lineWidth = t.larguraExterna;
+    ctx.beginPath();
+    ctx.rect(t.margem, t.margem, largura - 2 * t.margem, altura - 2 * t.margem);
+    ctx.stroke();
+    const dentro = t.margem + t.espaco;
+    ctx.lineWidth = t.larguraInterna;
+    ctx.beginPath();
+    ctx.rect(dentro, dentro, largura - 2 * dentro, altura - 2 * dentro);
+    ctx.stroke();
+  }
+  if (clima.marcaDagua !== null) {
+    const md = clima.marcaDagua;
+    // O emoji herda o alfa do fillStyle (fase 12): a cor e a opaca dos emoji,
+    // e a transparencia e o globalAlpha.
+    ctx.globalAlpha = md.alfa;
+    ctx.fillStyle = CONTEUDO.visual.corEmoji;
+    ctx.font = `${md.tamanho}px ${CONTEUDO.visual.fonteEmoji}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    glifo(ctx, fx, md.emoji, largura / 2, altura / 2, md.tamanho);
+  }
+  ctx.restore();
 }
 
-// Vinheta escura nas bordas (a da paleta) e, por cima, a vermelha do dano.
-// Sem camada, os gradientes nascem uma vez por paleta, nao por quadro.
-function desenharVinheta(ctx, fx, paleta, largura, altura) {
+// Marca de xicara: um anel inteiro e, um pouco deslocado, um arco incompleto,
+// em marrom translucido. Fora da faixa da margem.
+function pintarManchas(ctx, rng, f, manchas, margemX, largura, altura) {
+  if (manchas.quantidade <= 0) return;
+  ctx.strokeStyle = manchas.cor;
+  ctx.lineWidth = f.largura;
+  for (let i = 0; i < manchas.quantidade; i += 1) {
+    const r = rng.range(f.raioMin, f.raioMax);
+    const x = rng.range(margemX + f.folga + r, largura - f.folga - r);
+    const y = rng.range(f.folga + r, altura - f.folga - r);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    const inicio = rng.range(0, Math.PI * 2);
+    ctx.beginPath();
+    ctx.arc(x + rng.range(-f.desvio, f.desvio), y + rng.range(-f.desvio, f.desvio), r + rng.range(-f.desvio, f.desvio) / 2, inicio, inicio + f.arco * Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+// Vinco: uma dobra que atravessa a pagina de cima a baixo, na diagonal, em
+// trechos com um pouco de tremor.
+function pintarVincos(ctx, rng, f, vincos, largura, altura, m) {
+  if (vincos.quantidade <= 0) return;
+  ctx.strokeStyle = vincos.cor;
+  ctx.lineWidth = f.largura;
+  for (let i = 0; i < vincos.quantidade; i += 1) {
+    const x0 = rng.range(0, largura);
+    const sentido = rng.chance(0.5) ? 1 : -1;
+    const x1 = x0 + sentido * rng.range(altura / 2, altura);
+    ctx.beginPath();
+    ctx.moveTo(x0, -m);
+    for (let t = 1; t < f.trechos; t += 1) {
+      const k = t / f.trechos;
+      ctx.lineTo(x0 + (x1 - x0) * k + rng.range(-f.desvio, f.desvio), -m + (altura + 2 * m) * k);
+    }
+    ctx.lineTo(x1, altura + m);
+    ctx.stroke();
+  }
+}
+
+// Rabiscos a lapis na faixa da margem, entre os furos e a linha vermelha, do
+// jeito que se rabisca esperando a prova: uma molinha descendo (voltas
+// encadeadas) ou um caracol (espiral que abre), sorteados.
+function pintarRabiscos(ctx, rng, f, rabiscos, altura) {
+  if (rabiscos.quantidade <= 0) return;
+  const r = f.rabisco;
+  const esquerda = f.furos.x + f.furos.raio + r.tamanho / 2;
+  const direita = Math.max(esquerda, f.margem.x - r.tamanho / 2);
+  const passos = r.voltas * r.passosPorVolta;
+  ctx.strokeStyle = rabiscos.cor;
+  ctx.lineWidth = r.largura;
+  for (let i = 0; i < rabiscos.quantidade; i += 1) {
+    const x0 = rng.range(esquerda, direita);
+    const y0 = rng.range(f.pauta.topo, altura - r.tamanho * r.voltas);
+    const raio = rng.range(r.raioMin, r.raioMax);
+    const molinha = rng.chance(r.molinhas);
+    const giro = rng.range(0, Math.PI * 2);
+    ctx.beginPath();
+    for (let p = 0; p <= passos; p += 1) {
+      const t = (p / r.passosPorVolta) * Math.PI * 2 + giro;
+      const k = p / passos;
+      // Molinha: voltas do mesmo tamanho descendo; caracol: o raio abre.
+      const rr = molinha ? raio : (r.tamanho / 2) * k;
+      const x = x0 + rr * Math.cos(t);
+      const y = y0 + (molinha ? raio * r.voltas * k * r.descida : r.tamanho / 2) + rr * Math.sin(t);
+      if (p === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
+// Luz: gradiente radial da cor (no alfa pedido) ate ela mesma transparente.
+function pintarLuz(ctx, x, y, raio, cor, alfa, largura, altura, m) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, raio);
+  g.addColorStop(0, comAlfa(cor, alfa));
+  g.addColorStop(1, comAlfa(cor, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(-m, -m, largura + 2 * m, altura + 2 * m);
+}
+
+// '#rgb', '#rrggbb' ou 'rgb(a)(r, g, b[, a])' -> 'rgba(r, g, b, alfa)'. O fim
+// transparente de um gradiente tem que ser a MESMA cor com alfa 0: o canvas
+// interpola sem pre-multiplicar, e 'transparent' (preto) sujaria o meio do
+// caminho. Chamada so ao pintar uma camada (uma vez por clima), nunca por quadro.
+export function comAlfa(cor, alfa) {
+  let r;
+  let g;
+  let b;
+  if (cor.startsWith('#')) {
+    const hex = cor.length === 4 ? cor[1] + cor[1] + cor[2] + cor[2] + cor[3] + cor[3] : cor.slice(1, 7);
+    const n = parseInt(hex, 16);
+    r = (n >> 16) & 255;
+    g = (n >> 8) & 255;
+    b = n & 255;
+  } else {
+    const partes = cor.slice(cor.indexOf('(') + 1, cor.indexOf(')')).split(',');
+    r = Number(partes[0]);
+    g = Number(partes[1]);
+    b = Number(partes[2]);
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alfa})`;
+}
+
+// Vinheta nas bordas (a do clima) e, por cima, a vermelha do dano. Sem
+// camada, os gradientes nascem uma vez por clima, nao por quadro.
+function desenharVinheta(ctx, fx, clima, largura, altura) {
   const cam = fx.camadas;
   const forcaDano = fx.vinhetaDano > 0 ? fx.vinhetaDano / fx.cfg.flash.vinhetaDanoDuracao : 0;
   if (cam.vinheta) {
@@ -551,12 +720,13 @@ function desenharVinheta(ctx, fx, paleta, largura, altura) {
     }
     return;
   }
-  const f = fx.cfg.fundo;
   const g = fx.gradientes;
-  if (g.paleta !== paleta || !g.vinheta) {
-    g.paleta = paleta;
-    g.vinheta = gradienteDeBorda(ctx, f, largura, altura, paleta.vinheta);
-    if (!g.dano) g.dano = gradienteDeBorda(ctx, f, largura, altura, fx.cfg.flash.corVinhetaDano);
+  if (g.clima !== clima || !g.vinheta) {
+    const v = clima.vinheta;
+    const f = fx.cfg.flash;
+    g.clima = clima;
+    g.vinheta = gradienteDeBorda(ctx, largura, altura, v.cor, v.raioInterno, v.raioExterno);
+    if (!g.dano) g.dano = gradienteDeBorda(ctx, largura, altura, f.corVinhetaDano, f.vinhetaDanoRaioInterno, f.vinhetaDanoRaioExterno);
   }
   ctx.fillStyle = g.vinheta;
   ctx.fillRect(0, 0, largura, altura);
@@ -568,34 +738,60 @@ function desenharVinheta(ctx, fx, paleta, largura, altura) {
   }
 }
 
-function gradienteDeBorda(ctx, f, largura, altura, cor) {
+// Raios em fracao da meia-diagonal do canvas.
+function gradienteDeBorda(ctx, largura, altura, cor, raioInterno, raioExterno) {
   const meiaDiagonal = Math.hypot(largura, altura) / 2;
   const g = ctx.createRadialGradient(
-    largura / 2, altura / 2, f.vinhetaRaioInterno * meiaDiagonal,
-    largura / 2, altura / 2, f.vinhetaRaioExterno * meiaDiagonal
+    largura / 2, altura / 2, raioInterno * meiaDiagonal,
+    largura / 2, altura / 2, raioExterno * meiaDiagonal
   );
-  g.addColorStop(0, 'transparent');
+  g.addColorStop(0, comAlfa(cor, 0));
   g.addColorStop(1, cor);
   return g;
 }
 
 // A arena da avaliacao (av.arena). Com a Sala Lotada ela e menor que o
-// canvas: o lado de fora escurece e a borda marca a parede de verdade — sem
+// canvas: o lado de fora vira margem hachurada a lapis — um veu do papel do
+// clima e tracos a 45 graus — e a parede, uma linha grossa de caneta. Sem
 // isso o jogador bateria numa parede invisivel. Desenhado DEPOIS das
-// entidades: quem nasce na faixa de fora fica apagado ate cruzar a parede.
-// `folga` cobre o pedaco que o tremor descobre na borda do canvas.
-function desenharForaDaArena(ctx, arena, largura, altura, v, folga) {
+// entidades: quem nasce na faixa de fora fica apagado ate cruzar a parede
+// (pendencia 63). `folga` cobre o pedaco que o tremor descobre na borda. Com a
+// arena inteira, a parede e a beira da pagina: fina e clara.
+function desenharForaDaArena(ctx, arena, clima, largura, altura, v, folga) {
   const { esquerda, topo, direita, base } = arena;
-  if (esquerda > 0 || topo > 0 || direita < largura || base < altura) {
-    ctx.fillStyle = v.corForaArena;
-    ctx.fillRect(-folga, -folga, largura + 2 * folga, topo + folga);
-    ctx.fillRect(-folga, base, largura + 2 * folga, altura - base + folga);
-    ctx.fillRect(-folga, topo, esquerda + folga, base - topo);
-    ctx.fillRect(direita, topo, largura - direita + folga, base - topo);
+  const encolhida = esquerda > 0 || topo > 0 || direita < largura || base < altura;
+  if (encolhida) {
+    const f = v.foraDaArena;
+    const x0 = -folga;
+    const y0 = -folga;
+    const w = largura + 2 * folga;
+    const h = altura + 2 * folga;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0, w, h);
+    ctx.rect(esquerda, topo, direita - esquerda, base - topo);
+    ctx.clip('evenodd');
+    ctx.globalAlpha = f.veu;
+    ctx.fillStyle = clima.papel;
+    ctx.fillRect(x0, y0, w, h);
+    ctx.globalAlpha = f.alfa;
+    ctx.strokeStyle = f.cor;
+    ctx.lineWidth = f.largura;
+    ctx.beginPath();
+    for (let d = x0 - h; d < x0 + w; d += f.passo) {
+      ctx.moveTo(d, y0);
+      ctx.lineTo(d + h, y0 + h);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
-  ctx.strokeStyle = v.corBorda;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(esquerda + 1, topo + 1, direita - esquerda - 2, base - topo - 2);
+  const p = v.parede;
+  const l = encolhida ? p.largura : p.larguraInteira;
+  ctx.strokeStyle = p.cor;
+  ctx.lineWidth = l;
+  ctx.globalAlpha = encolhida ? 1 : p.alfaInteira;
+  ctx.strokeRect(esquerda + l / 2, topo + l / 2, direita - esquerda - l, base - topo - l);
+  ctx.globalAlpha = 1;
 }
 
 // ---------------------------------------------------------- entidades
@@ -670,7 +866,7 @@ function desenharAvisosDeSpawn(ctx, fx, estado) {
         fx.gradientes.aviso = g;
       }
       ctx.fillStyle = fx.gradientes.aviso;
-      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalCompositeOperation = a.composicao;
     }
     acesos += 1;
     // Acende e apaga: seno de meia volta ao longo da duracao.

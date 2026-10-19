@@ -116,6 +116,7 @@ import {
   textoQuantoFaltava,
   aplicarVariaveisCss,
   chipDoCoringa,
+  criarUi,
   chipDoModificador,
   dicaDaLoja,
   hudCobreAlguem,
@@ -155,7 +156,7 @@ import {
 } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
 import { criarRng } from '../src/rng.js';
-import { criarEfeitos, desenhar, flashDoInimigo, paletaDe, pontoDeEntrada } from '../src/render.js';
+import { climaDe, comAlfa, criarEfeitos, desenhar, flashDoInimigo, pontoDeEntrada } from '../src/render.js';
 import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
 import { analisarAvaliacao, ESCOPOS, gerarRelatorio, nomeFonte } from '../src/relatorio.js';
 
@@ -5191,12 +5192,26 @@ function checarTelasDeFim() {
 // momento.
 const CAMPOS_DO_CONTEXTO = ['fillStyle', 'strokeStyle', 'lineWidth', 'lineCap', 'lineJoin', 'globalAlpha', 'globalCompositeOperation', 'textAlign', 'textBaseline'];
 
+// Fase 15: cada traco guarda tambem a cor, a largura e o alfa; os fill()
+// entram em `preenchimentos`; os gradientes guardam as paradas; e tudo o que
+// e desenhado ganha `n`, a ordem no quadro (o veu de fora da arena tem que vir
+// depois dos inimigos). Com `reg.gravarCaminho`, moveTo/lineTo/arc/rect entram
+// em `caminho` (a pagina do caderno e a mesma toda vez?).
 function ctx2dFalso() {
-  const reg = { fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0, tracos: [], pilha: 0, restoreSemSave: 0 };
+  const reg = {
+    fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0, paradas: [], tracos: [],
+    preenchimentos: [], recortes: [], caminho: [], gravarCaminho: false, ordem: 0, pilha: 0, restoreSemSave: 0,
+  };
   let fonte = '';
   const t = [1, 0, 0, 1, 0, 0];
   const pilha = [];
-  const tracar = (tipo) => reg.tracos.push({ tipo, lineCap: ctx.lineCap, lineJoin: ctx.lineJoin, x: t[4], y: t[5] });
+  const tracar = (tipo) => reg.tracos.push({
+    tipo, lineCap: ctx.lineCap, lineJoin: ctx.lineJoin, x: t[4], y: t[5],
+    cor: ctx.strokeStyle, largura: ctx.lineWidth, alpha: ctx.globalAlpha, n: ++reg.ordem,
+  });
+  const caminho = (nome, args) => {
+    if (reg.gravarCaminho) reg.caminho.push(`${nome}(${Array.from(args, (v) => (typeof v === 'number' ? v.toFixed(3) : String(v))).join(',')})`);
+  };
   const ctx = {
     reg,
     fillStyle: '',
@@ -5234,26 +5249,30 @@ function ctx2dFalso() {
       reg.pilha = pilha.length;
     },
     beginPath() {},
-    moveTo() {},
-    lineTo() {},
-    arc() {},
-    rect() {},
-    fill() {},
+    moveTo() { caminho('moveTo', arguments); },
+    lineTo() { caminho('lineTo', arguments); },
+    arc() { caminho('arc', arguments); },
+    rect() { caminho('rect', arguments); },
+    // Fase 15: o lado de fora da arena encolhida e recortado ('evenodd').
+    clip(regra) { reg.recortes.push({ regra, n: ++reg.ordem }); },
+    fill() { reg.preenchimentos.push({ cor: ctx.fillStyle, alpha: ctx.globalAlpha, n: ++reg.ordem }); },
     stroke() { tracar('stroke'); },
     strokeRect() { tracar('strokeRect'); },
     strokeText() {},
     fillRect(x, y, w, h) {
-      reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha });
+      reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha, n: ++reg.ordem });
     },
     fillText(texto, x, y) {
-      reg.textos.push({ texto, x: t[0] * x + t[4], y: t[3] * y + t[5], fonte, cor: ctx.fillStyle, comp: ctx.globalCompositeOperation, alpha: ctx.globalAlpha });
+      reg.textos.push({ texto, x: t[0] * x + t[4], y: t[3] * y + t[5], fonte, cor: ctx.fillStyle, comp: ctx.globalCompositeOperation, alpha: ctx.globalAlpha, n: ++reg.ordem });
     },
     drawImage(img, x, y) {
-      reg.copias.push({ img, x: t[0] * x + t[4], y: t[3] * y + t[5], alpha: ctx.globalAlpha });
+      reg.copias.push({ img, x: t[0] * x + t[4], y: t[3] * y + t[5], alpha: ctx.globalAlpha, n: ++reg.ordem });
     },
     createRadialGradient() {
       reg.gradientes += 1;
-      return { addColorStop() {} };
+      const paradas = [];
+      reg.paradas.push(paradas);
+      return { addColorStop(posicao, cor) { paradas.push([posicao, cor]); } };
     },
     limpar() {
       reg.fontes = 0;
@@ -5262,6 +5281,9 @@ function ctx2dFalso() {
       reg.transformacoes.length = 0;
       reg.copias.length = 0;
       reg.tracos.length = 0;
+      reg.preenchimentos.length = 0;
+      reg.recortes.length = 0;
+      reg.caminho.length = 0;
     },
   };
   return ctx;
@@ -5638,24 +5660,27 @@ function checarFontesPorQuadro() {
   return `fontes (pendencia 16): ${umTipo} trocas de ctx.font num quadro com 400 de um tipo, ${misturados} com os 4 tipos misturados`;
 }
 
-// Uma paleta por periodo (o 1o claro, o 3o sombrio) e outra no TCC.
-function checarPaletas() {
-  const fundos = [];
+// Um clima por periodo (a pagina do caderno ao longo do semestre) e outro no
+// TCC. Fase 15: era "uma paleta por periodo" (o fundo de cada uma); agora e o
+// papel de cada clima, e a camada da pagina continua pintada uma vez por clima.
+function checarClimas() {
+  const tema = CONTEUDO.tema;
+  const papeis = [];
   for (let p = 0; p < CONTEUDO.periodos.length; p += 1) {
     const estado = avaliacaoCom(SEMENTE + 1209, [], [], p, 0);
     const ctx = ctx2dFalso();
     quadro(estado, ctx, criarEfeitos());
-    fundos.push(ctx.reg.retangulos[0].cor);
-    if (fundos[p] !== CONTEUDO.juice.paletas[p].fundo) falhar(0, `paletas: o ${p + 1}o periodo pintou o fundo ${fundos[p]}, content.js pede ${CONTEUDO.juice.paletas[p].fundo}`);
+    papeis.push(ctx.reg.retangulos[0].cor);
+    if (papeis[p] !== tema.climas[p].papel) falhar(0, `climas: o ${p + 1}o periodo pintou o papel ${papeis[p]}, content.js pede ${tema.climas[p].papel}`);
   }
   const tcc = estadoNoTcc(SEMENTE + 1210);
   const ctx = ctx2dFalso();
   quadro(tcc, ctx, criarEfeitos());
-  fundos.push(ctx.reg.retangulos[0].cor);
-  if (fundos[fundos.length - 1] !== CONTEUDO.juice.paletaTcc.fundo) falhar(0, 'paletas: o TCC nao usou a paleta dele');
-  if (new Set(fundos).size !== fundos.length) falhar(0, `paletas: periodos com o mesmo fundo (${fundos.join(', ')})`);
-  // No navegador o chao e as vinhetas viram camadas pintadas UMA vez por
-  // paleta e copiadas por quadro (o node acima pinta direto, sem camada).
+  papeis.push(ctx.reg.retangulos[0].cor);
+  if (papeis[papeis.length - 1] !== tema.climaTcc.papel) falhar(0, 'climas: o TCC nao usou o clima dele');
+  if (new Set(papeis).size !== papeis.length) falhar(0, `climas: periodos com o mesmo papel (${papeis.join(', ')})`);
+  // No navegador a pagina e as vinhetas viram camadas pintadas UMA vez por
+  // clima e copiadas por quadro (o node acima pinta direto, sem camada).
   const camadas = [];
   const fxCam = criarEfeitos();
   fxCam.criarCamada = (w, h) => {
@@ -5670,38 +5695,69 @@ function checarPaletas() {
     est.tempo += PASSO;
     quadro(est, ctxCam, fxCam);
   }
-  if (camadas.length !== 3) falhar(0, `paletas: 5 quadros na mesma paleta pintaram ${camadas.length} camadas, esperava 3 (chao, vinheta, dano) uma vez so`);
-  if (camadas[0].ctx2d.reg.retangulos[0].cor !== CONTEUDO.juice.paletas[0].fundo) falhar(0, 'paletas: a camada do chao nao foi pintada com o fundo da paleta');
+  if (camadas.length !== 3) falhar(0, `climas: 5 quadros no mesmo clima pintaram ${camadas.length} camadas, esperava 3 (pagina, vinheta, dano) uma vez so`);
+  if (camadas[0].ctx2d.reg.retangulos[0].cor !== tema.climas[0].papel) falhar(0, 'climas: a camada da pagina nao foi pintada com o papel do clima');
   const copiadas = ctxCam.reg.copias.map((c) => c.img);
-  if (!copiadas.includes(camadas[0]) || !copiadas.includes(camadas[1])) falhar(0, 'paletas: o quadro nao copiou as camadas do chao e da vinheta');
+  if (!copiadas.includes(camadas[0]) || !copiadas.includes(camadas[1])) falhar(0, 'climas: o quadro nao copiou as camadas da pagina e da vinheta');
   est.run.periodoIndex = CONTEUDO.periodos.length - 1;
   quadro(est, ctxCam, fxCam);
-  if (camadas.length !== 5 || camadas[3].ctx2d.reg.retangulos[0].cor !== CONTEUDO.juice.paletas[CONTEUDO.periodos.length - 1].fundo) {
-    falhar(0, `paletas: a troca de periodo deixou ${camadas.length} camadas (esperava 5: chao e vinheta novos)`);
+  if (camadas.length !== 5 || camadas[3].ctx2d.reg.retangulos[0].cor !== tema.climas[CONTEUDO.periodos.length - 1].papel) {
+    falhar(0, `climas: a troca de periodo deixou ${camadas.length} camadas (esperava 5: pagina e vinheta novas)`);
   }
-  return `paletas: ${fundos.join(' → ')} (TCC); chao e vinhetas pintados uma vez por paleta`;
+  return `climas: papel ${papeis.join(' → ')} (TCC); pagina e vinhetas pintadas uma vez por clima`;
 }
 
-// Os tempos das transicoes moram em content.js (juice.css) e o style.css so
-// os le: toda var(--x) do CSS e definida no proprio CSS ou em juice.css, e
-// toda variavel de juice.css e usada (e nao redefinida no CSS).
+// Os tempos das transicoes moram em content.js (juice.css), e as cores e as
+// fontes tambem (tema.css, fase 15); o style.css so os le. Toda var(--x) do
+// CSS e definida no proprio CSS, em juice.css ou em tema.css; toda variavel de
+// juice.css e usada; nenhuma das duas e redefinida no CSS; e o CSS nao tem cor
+// nem fonte escrita (fora de comentario): tudo e var(--...).
+const COR_ESCRITA = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(|\b(?:white|black|red|green|blue|yellow|orange|gray|grey|navy|pink|purple|cyan|magenta|brown|gold|silver)\b/i;
 function checarVariaveisCss() {
-  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const usadas = new Set([...css.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1]));
   const definidas = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
-  const doConteudo = Object.keys(CONTEUDO.juice.css);
+  const doJuice = Object.keys(CONTEUDO.juice.css);
+  const doTema = Object.keys(CONTEUDO.tema.css);
   for (const nome of usadas) {
-    if (!definidas.has(nome) && !doConteudo.includes(nome)) falhar(0, `css: style.css usa var(${nome}), que nao esta em juice.css nem no proprio CSS`);
+    if (!definidas.has(nome) && !doJuice.includes(nome) && !doTema.includes(nome)) {
+      falhar(0, `css: style.css usa var(${nome}), que nao esta em juice.css, em tema.css nem no proprio CSS`);
+    }
   }
-  for (const nome of doConteudo) {
+  for (const nome of doJuice) {
     if (!usadas.has(nome)) falhar(0, `css: juice.css define ${nome} e o style.css nao usa`);
     if (definidas.has(nome)) falhar(0, `css: ${nome} e definida no style.css — o numero tem que morar so em content.js`);
   }
+  for (const nome of doTema) {
+    if (definidas.has(nome)) falhar(0, `css: ${nome} e definida no style.css — a cor tem que morar so em content.js (tema)`);
+  }
+  // Cada declaracao `propriedade: valor;` (seletores como #palco nao contam).
+  let declaracoes = 0;
+  for (const m of css.matchAll(/([a-z-]+)\s*:\s*([^;{}]+);/gi)) {
+    declaracoes += 1;
+    const [, prop, valor] = m;
+    if (prop.startsWith('--')) continue;
+    if (COR_ESCRITA.test(valor)) falhar(0, `css: "${prop}: ${valor.trim()}" tem cor escrita — use var(--...) de tema.css (fase 15)`);
+    if (/^font(-family)?$/i.test(prop) && !/^\s*(inherit|var\(--fonte-[a-z-]+\))\s*$/.test(valor)) {
+      falhar(0, `css: "${prop}: ${valor.trim()}" tem fonte escrita — use var(--fonte-...) de tema.css (fase 15)`);
+    }
+  }
+  if (declaracoes < 100) falhar(0, `css: so ${declaracoes} declaracoes lidas do style.css, a leitura quebrou`);
   const escritas = {};
-  const n = aplicarVariaveisCss({ style: { setProperty: (k, v) => { escritas[k] = v; } } });
-  if (n !== doConteudo.length || doConteudo.some((k) => escritas[k] !== CONTEUDO.juice.css[k])) falhar(0, 'css: aplicarVariaveisCss nao escreveu todas as variaveis de juice.css');
+  const raiz = { style: { setProperty: (k, v) => { escritas[k] = v; } } };
+  const n = aplicarVariaveisCss(raiz);
+  if (n !== doJuice.length || doJuice.some((k) => escritas[k] !== CONTEUDO.juice.css[k])) falhar(0, 'css: aplicarVariaveisCss nao escreveu todas as variaveis de juice.css');
+  const nTema = aplicarVariaveisCss(raiz, CONTEUDO.tema.css);
+  if (nTema !== doTema.length || doTema.some((k) => escritas[k] !== CONTEUDO.tema.css[k])) falhar(0, 'css: aplicarVariaveisCss nao escreveu todas as variaveis de tema.css');
   if (aplicarVariaveisCss(null) !== 0 || aplicarVariaveisCss({}) !== 0) falhar(0, 'css: aplicarVariaveisCss sem :root deveria nao fazer nada');
-  return `css: ${doConteudo.length} variaveis de juice.css, todas usadas pelo style.css`;
+  // E o jogo de verdade as escreve: criarUi, num documento sem tela nenhuma,
+  // poe as duas no :root (sem as de tema.css o DOM fica sem cor nenhuma).
+  const noRoot = {};
+  criarUi({ getElementById: () => null, querySelectorAll: () => [], documentElement: { style: { setProperty: (k, v) => { noRoot[k] = v; } } } });
+  const faltam = [...doJuice, ...doTema].filter((k) => noRoot[k] !== (k in CONTEUDO.tema.css ? CONTEUDO.tema.css[k] : CONTEUDO.juice.css[k]));
+  if (faltam.length > 0) falhar(0, `css: criarUi nao escreveu no :root ${faltam.join(', ')}`);
+  const temaUsadas = doTema.filter((k) => usadas.has(k)).length;
+  return `css: ${doJuice.length} variaveis de juice.css, todas usadas; ${temaUsadas} de ${doTema.length} de tema.css usadas; ${declaracoes} declaracoes sem cor nem fonte escrita`;
 }
 
 // HUD e textos (pendencias 57, 64, 79): puros, sem DOM.
@@ -5755,7 +5811,7 @@ function checarHudETextos() {
 function checarValidadorDoJuice() {
   const casos = [
     ['um tipo de particula que nao existe', (c) => { c.juice.particulas.porTipo.naoExiste = { quantidade: 3 }; }, 'porTipo.naoExiste'],
-    ['menos paletas que periodos', (c) => { c.juice.paletas.pop(); }, 'juice.paletas'],
+    ['menos climas que periodos', (c) => { c.tema.climas.pop(); }, 'tema.climas'],
     ['variavel CSS sem --', (c) => { c.juice.css.fade = '200ms'; }, 'juice.css'],
     ['valor CSS que nao e numero', (c) => { c.juice.css['--fade-tela'] = 'rapido'; }, '--fade-tela'],
     ['particula com vida negativa', (c) => { c.juice.particulas.padrao.vidaMin = -1; }, 'vidaMin'],
@@ -5781,7 +5837,7 @@ function checarJuice() {
     checarAvisoDeSpawn(),
     checarOrbeNaArena(),
     checarFontesPorQuadro(),
-    checarPaletas(),
+    checarClimas(),
     checarVariaveisCss(),
     checarHudETextos(),
   ];
@@ -6796,27 +6852,249 @@ function checarVerificacaoNoNavegador() {
   return `conteudo verificado no navegador: ${casos.length} typos, cada um acusado pelo arquivo dele`;
 }
 
-// Pendencia 89: o menu nao herda a paleta do TCC, e o anuncio de um periodo
-// novo ja vem com a paleta dele.
-function checarPaletaForaDaArena() {
-  const cfg = CONTEUDO.juice;
+// Pendencia 89: o menu nao herda o clima do TCC, e o anuncio de um periodo
+// novo ja vem com o clima dele (fase 15: era a paleta; paletaDe virou climaDe).
+function checarClimaForaDaArena() {
+  const tema = CONTEUDO.tema;
   const tcc = estadoNoTcc(SEMENTE + 1416);
-  if (paletaDe(tcc) !== cfg.paletaTcc) falhar(0, 'paletas: a luta contra A Banca nao usa a paleta do TCC');
+  if (climaDe(tcc) !== tema.climaTcc) falhar(0, 'climas: a luta contra A Banca nao usa o clima do TCC');
   irParaTela(tcc, TELAS.MENU);
   const ctx = ctx2dFalso();
   quadro(tcc, ctx, criarEfeitos());
-  if (paletaDe(tcc) !== cfg.paletas[0] || ctx.reg.retangulos[0].cor !== cfg.paletas[0].fundo) falhar(0, 'paletas: o menu depois do TCC saiu com a paleta da defesa (pendencia 89)');
+  if (climaDe(tcc) !== tema.climas[0] || ctx.reg.retangulos[0].cor !== tema.climas[0].papel) falhar(0, 'climas: o menu depois do TCC saiu com o clima da defesa (pendencia 89)');
   const e = novoEstado(SEMENTE + 1417);
   comecarAvaliacao(e, 0, CONTEUDO.periodos[0].avaliacoes.length - 1);
   avancarRun(e);
-  if (e.tela !== TELAS.ANUNCIO || e.run.proxima.periodoIndex !== 1) falhar(0, 'paletas: o cenario nao chegou ao anuncio do 2o periodo');
-  if (paletaDe(e) !== cfg.paletas[1]) falhar(0, 'paletas: o anuncio do 2o periodo saiu com a paleta do 1o');
+  if (e.tela !== TELAS.ANUNCIO || e.run.proxima.periodoIndex !== 1) falhar(0, 'climas: o cenario nao chegou ao anuncio do 2o periodo');
+  if (climaDe(e) !== tema.climas[1]) falhar(0, 'climas: o anuncio do 2o periodo saiu com o clima do 1o');
   const f = novoEstado(SEMENTE + 1418);
   const ultimo = CONTEUDO.periodos.length - 1;
   comecarAvaliacao(f, ultimo, CONTEUDO.periodos[ultimo].avaliacoes.length - 1);
   avancarRun(f);
-  if (f.tela !== TELAS.TCC || paletaDe(f) !== cfg.paletaTcc) falhar(0, 'paletas: a tela do TCC nao usa a paleta da defesa');
-  return 'paletas: menu no 1o periodo, anuncio no periodo que vai comecar, tela do TCC na da defesa';
+  if (f.tela !== TELAS.TCC || climaDe(f) !== tema.climaTcc) falhar(0, 'climas: a tela do TCC nao usa o clima da defesa');
+  return 'climas: menu no 1o periodo, anuncio no periodo que vai comecar, tela do TCC na da defesa';
+}
+
+// ---------------------------------------------------------------- fase 15
+
+// Razao de contraste WCAG 2 entre duas cores #rrggbb opacas.
+function luminancia(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const canal = (c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * canal((n >> 16) & 255) + 0.7152 * canal((n >> 8) & 255) + 0.0722 * canal(n & 255);
+}
+
+function razaoDeContraste(a, b) {
+  const la = luminancia(a);
+  const lb = luminancia(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+// Tarefa 5: cada par de tema.contrastes passa do minimo dele.
+function checarContraste() {
+  const cores = CONTEUDO.tema.cores;
+  // A conta em si, contra valores conhecidos (preto/branco 21, iguais 1).
+  if (Math.abs(razaoDeContraste('#000000', '#ffffff') - 21) > 1e-9 || razaoDeContraste('#777777', '#777777') !== 1) {
+    falhar(0, 'contraste: a conta da razao WCAG esta errada');
+  }
+  const medidas = [];
+  for (const [texto, fundo, minimo] of CONTEUDO.tema.contrastes) {
+    const razao = razaoDeContraste(cores[texto], cores[fundo]);
+    if (!(razao >= minimo)) falhar(0, `contraste: ${texto} (${cores[texto]}) sobre ${fundo} (${cores[fundo]}) da ${razao.toFixed(2)}:1, o minimo e ${minimo}:1`);
+    medidas.push(`${texto}/${fundo} ${razao.toFixed(2)} (min ${minimo})`);
+  }
+  return `contraste (WCAG): ${medidas.join(' · ')}`;
+}
+
+// A pagina de um clima, pintada na camada de um desenho de verdade: devolve
+// o registro da camada da pagina e o da vinheta.
+function paginaDoClima(estado, aoCriar = () => {}) {
+  const camadas = [];
+  const fx = criarEfeitos();
+  aoCriar(fx);
+  fx.criarCamada = (w, h) => {
+    const c = { width: w, height: h, ctx2d: ctx2dFalso() };
+    c.ctx2d.reg.gravarCaminho = true;
+    c.getContext = () => c.ctx2d;
+    camadas.push(c);
+    return c;
+  };
+  const rngAntes = fx.rng.s;
+  quadro(estado, ctx2dFalso(), fx);
+  return { pagina: camadas[0].ctx2d.reg, vinheta: camadas[1].ctx2d.reg, fx, rngAntes };
+}
+
+// Tarefa 2: a pagina de cada clima tem o que o clima diz (e so isso), e sai
+// igual toda vez.
+function checarPaginaDoCaderno() {
+  const tema = CONTEUDO.tema;
+  const f = CONTEUDO.juice.fundo;
+  const v = CONTEUDO.visual;
+  const casos = CONTEUDO.periodos.map((_, p) => [`${p + 1}o periodo`, tema.climas[p], () => avaliacaoCom(SEMENTE + 1501, [], [], p, 0)]);
+  casos.push(['TCC', tema.climaTcc, () => estadoNoTcc(SEMENTE + 1502)]);
+  const assinaturas = [];
+  const arcosDasManchas = [];
+  for (const [rotulo, c, criar] of casos) {
+    const { pagina, vinheta, fx, rngAntes } = paginaDoClima(criar());
+    const contar = (cor) => pagina.tracos.filter((x) => x.cor === cor).length;
+    const onde = `pagina (${rotulo})`;
+    if (pagina.retangulos[0].cor !== c.papel) falhar(0, `${onde}: o papel saiu ${pagina.retangulos[0].cor}, o clima pede ${c.papel}`);
+    if (contar(c.pauta) !== (c.pauta === null ? 0 : 1)) falhar(0, `${onde}: pauta ${c.pauta === null ? 'desenhada num clima sem pauta' : 'faltando'}`);
+    if (contar(c.margem) !== (c.margem === null ? 0 : 1)) falhar(0, `${onde}: margem ${c.margem === null ? 'desenhada num clima sem margem' : 'faltando'}`);
+    if (contar(c.manchas.cor) !== 2 * c.manchas.quantidade) falhar(0, `${onde}: ${contar(c.manchas.cor)} arcos de cafe, o clima pede ${c.manchas.quantidade} marcas (2 arcos cada)`);
+    if (contar(c.vincos.cor) !== c.vincos.quantidade) falhar(0, `${onde}: ${contar(c.vincos.cor)} vincos, o clima pede ${c.vincos.quantidade}`);
+    if (contar(c.rabiscos.cor) !== c.rabiscos.quantidade) falhar(0, `${onde}: ${contar(c.rabiscos.cor)} rabiscos, o clima pede ${c.rabiscos.quantidade}`);
+    const furos = c.furos === null ? 0 : pagina.preenchimentos.filter((x) => x.cor === c.furos.cor).length;
+    if (furos !== (c.furos === null ? 0 : f.furos.quantidade)) falhar(0, `${onde}: ${furos} furos de fichario, esperava ${c.furos === null ? 0 : f.furos.quantidade}`);
+    // Sem timbrado, nenhum traco na tinta do timbrado do TCC (a pagina nao tem
+    // outro traco de tinta).
+    const timbrado = contar(c.timbrado === null ? tema.climaTcc.timbrado.cor : c.timbrado.cor);
+    if (timbrado !== (c.timbrado === null ? 0 : 2)) falhar(0, `${onde}: ${timbrado} linhas de borda timbrada, esperava ${c.timbrado === null ? 0 : 2}`);
+    const marcas = pagina.textos.filter((x) => c.marcaDagua !== null && x.texto === c.marcaDagua.emoji);
+    if (c.marcaDagua === null ? pagina.textos.length !== 0 : marcas.length !== 1) falhar(0, `${onde}: marca d'agua ${c.marcaDagua === null ? 'num clima sem ela' : 'faltando'}`);
+    if (marcas.length === 1 && (marcas[0].alpha !== c.marcaDagua.alfa || marcas[0].cor !== v.corEmoji)) {
+      falhar(0, `${onde}: a marca d'agua saiu com alfa ${marcas[0].alpha} e fillStyle ${marcas[0].cor} (o alfa e o globalAlpha; a cor, a opaca dos emoji)`);
+    }
+    // Luz do canto e luminaria: um gradiente cada, da cor no alfa pedido ate
+    // ela mesma transparente.
+    const luzes = [c.luz, c.luminaria].filter((l) => l !== null);
+    if (pagina.paradas.length !== luzes.length) falhar(0, `${onde}: ${pagina.paradas.length} gradientes de luz, o clima pede ${luzes.length}`);
+    luzes.forEach((l, i) => {
+      const esperadas = JSON.stringify([[0, comAlfa(l.cor, l.alfa)], [1, comAlfa(l.cor, 0)]]);
+      if (JSON.stringify(pagina.paradas[i]) !== esperadas) falhar(0, `${onde}: a luz saiu ${JSON.stringify(pagina.paradas[i])}, esperava ${esperadas}`);
+    });
+    // A vinheta termina na cor do clima e comeca nela mesma, transparente (o
+    // 'transparent' de antes e preto: o canvas interpola sem pre-multiplicar).
+    const vin = JSON.stringify(vinheta.paradas[0]);
+    if (vin !== JSON.stringify([[0, comAlfa(c.vinheta.cor, 0)], [1, c.vinheta.cor]])) falhar(0, `${onde}: a vinheta saiu ${vin}`);
+    // A pagina nao gasta o rng dos efeitos (as faiscas e o tremor seguem a
+    // mesma sequencia), e sai igual com o rng dos efeitos em outro ponto.
+    if (fx.rng.s !== rngAntes) falhar(0, `${onde}: pintar a pagina consumiu o rng dos efeitos`);
+    const outra = paginaDoClima(criar(), (fx2) => { for (let i = 0; i < 97; i += 1) fx2.rng.float(); });
+    if (outra.pagina.caminho.join(';') !== pagina.caminho.join(';')) falhar(0, `${onde}: a mesma pagina saiu diferente na 2a vez`);
+    assinaturas.push(JSON.stringify([pagina.caminho, pagina.tracos.map((x) => x.cor), pagina.retangulos.map((x) => x.cor)]));
+    arcosDasManchas.push(pagina.caminho.filter((x) => x.startsWith('arc(')).slice(0, 2 * c.manchas.quantidade));
+  }
+  if (new Set(assinaturas).size !== assinaturas.length) falhar(0, 'pagina: dois climas pintaram a mesma pagina');
+  // O mesmo desenho, o clima indo e voltando (2o -> 3o -> 2o periodo): a
+  // pagina repintada sai igual a primeira, e o rng dos efeitos nao andou.
+  const camadas = [];
+  const fx = criarEfeitos();
+  fx.criarCamada = (w, h) => {
+    const c = { width: w, height: h, ctx2d: ctx2dFalso() };
+    c.ctx2d.reg.gravarCaminho = true;
+    c.getContext = () => c.ctx2d;
+    camadas.push(c);
+    return c;
+  };
+  const vaiEVolta = avaliacaoCom(SEMENTE + 1505, [], [], 0, 0);
+  const rngAntes = fx.rng.s;
+  const paginas = [];
+  for (const p of [1, CONTEUDO.periodos.length - 1, 1]) {
+    vaiEVolta.run.periodoIndex = p;
+    const antes = camadas.length;
+    quadro(vaiEVolta, ctx2dFalso(), fx);
+    paginas.push(camadas[antes].ctx2d.reg.caminho.join(';'));
+  }
+  if (paginas[0] !== paginas[2] || paginas[0] === paginas[1]) falhar(0, 'pagina: o 2o periodo, repintado depois do 3o, saiu outra pagina');
+  if (fx.rng.s !== rngAntes) falhar(0, 'pagina: repintar a pagina consumiu o rng dos efeitos');
+  // O caderno e o mesmo: as marcas de cafe de um clima sao as primeiras do
+  // clima seguinte que tem mais (sementes por tipo de detalhe).
+  for (let i = 1; i < CONTEUDO.periodos.length; i += 1) {
+    const antes = arcosDasManchas[i - 1];
+    if (arcosDasManchas[i].slice(0, antes.length).join(';') !== antes.join(';')) falhar(0, `pagina: as marcas de cafe do ${i}o periodo nao estao no ${i + 1}o`);
+  }
+  const resumo = casos.map(([rotulo, c]) => `${rotulo} ${c.manchas.quantidade}/${c.vincos.quantidade}/${c.rabiscos.quantidade}`);
+  return `pagina do caderno: papel, pauta, margem, furos e detalhes de cada clima (manchas/vincos/rabiscos: ${resumo.join(', ')}); a mesma toda vez, sem gastar o rng dos efeitos`;
+}
+
+// Tarefa 2: o lado de fora da Sala Lotada e hachura a lapis por cima de tudo,
+// e a parede, uma linha grossa de caneta. Com a arena inteira, a parede e a
+// beira da pagina, fina e clara, e nao ha hachura.
+function checarForaDaArenaHachurada() {
+  const v = CONTEUDO.visual;
+  const sala = CONTEUDO.modificadores.find((m) => m.fatores && m.fatores.arena < 1);
+  const estado = avaliacaoCom(SEMENTE + 1503, [sala.id]);
+  const arena = estado.run.avaliacao.arena;
+  const tipo = CONTEUDO.inimigos[0];
+  spawnTipo(estado, tipo, arena.esquerda / 2, (arena.topo + arena.base) / 2); // na faixa de fora
+  const ctx = ctx2dFalso();
+  const fx = criarEfeitos();
+  quadro(estado, ctx, fx);
+  const clima = climaDe(estado);
+  const inimigo = ctx.reg.textos.find((x) => x.texto === tipo.emoji);
+  if (!inimigo) falhar(0, 'fora da arena: o inimigo da faixa de fora nem foi desenhado, o teste perdeu o sentido');
+  if (ctx.reg.recortes.length !== 1 || ctx.reg.recortes[0].regra !== 'evenodd') falhar(0, `fora da arena: recortes ${JSON.stringify(ctx.reg.recortes)}, esperava 1 'evenodd'`);
+  const veu = ctx.reg.retangulos.find((r) => r.cor === clima.papel && r.alpha === v.foraDaArena.veu);
+  if (!veu || !(veu.n > inimigo.n)) falhar(0, 'fora da arena: o veu de papel nao veio por cima do inimigo da faixa de fora (pendencia 63)');
+  const hachura = ctx.reg.tracos.find((x) => x.cor === v.foraDaArena.cor && x.alpha === v.foraDaArena.alfa && x.largura === v.foraDaArena.largura);
+  if (!hachura || !(hachura.n > veu.n)) falhar(0, 'fora da arena: sem hachura a lapis por cima do veu');
+  const parede = ctx.reg.tracos.filter((x) => x.tipo === 'strokeRect');
+  if (parede.length !== 1 || parede[0].largura !== v.parede.largura || parede[0].cor !== v.parede.cor || parede[0].alpha !== 1) {
+    falhar(0, `fora da arena: a parede da Sala Lotada saiu ${JSON.stringify(parede)}, esperava uma linha de caneta de ${v.parede.largura}px`);
+  }
+  const inteira = avaliacaoCom(SEMENTE + 1504, []);
+  const ctx2 = ctx2dFalso();
+  quadro(inteira, ctx2, criarEfeitos());
+  const beira = ctx2.reg.tracos.filter((x) => x.tipo === 'strokeRect');
+  if (ctx2.reg.recortes.length !== 0) falhar(0, 'fora da arena: a arena inteira foi hachurada');
+  if (beira.length !== 1 || beira[0].largura !== v.parede.larguraInteira || beira[0].alpha !== v.parede.alfaInteira) {
+    falhar(0, `fora da arena: com a arena inteira a parede saiu ${JSON.stringify(beira)}`);
+  }
+  return `fora da arena: veu de papel (${v.foraDaArena.veu}) e hachura a lapis por cima dos inimigos, parede de ${v.parede.largura}px; arena inteira so com a beira de ${v.parede.larguraInteira}px`;
+}
+
+// Criterio de aceite: render.js e ui.js nao tem cor nem fonte escrita — tudo
+// vem de tema, visual ou juice.
+function checarSemCorNoCodigo() {
+  // `rgba(${r}, ...)` monta a cor a partir de uma de content.js (comAlfa): o
+  // que reprova e numero escrito no lugar do canal.
+  const COR = /^(#[0-9a-f]{3,8}|(rgba?|hsla?)\(\s*\d.*|transparent|white|black|red|green|blue|yellow|orange|gray|grey|currentcolor)$/i;
+  const FONTE = /\d+(\.\d+)?px\s+["'a-z]|\b(sans-serif|serif|monospace|cursive|system-ui)\b/i;
+  const achados = [];
+  for (const arquivo of ['../src/render.js', '../src/ui.js']) {
+    const codigo = readFileSync(new URL(arquivo, import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split(/\r?\n/)
+      .map((linha) => linha.replace(/(^|[^:'"`])\/\/.*$/, '$1'))
+      .join('\n');
+    for (const m of codigo.matchAll(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g)) {
+      const texto = m[0].slice(1, -1).replace(/\$\{[^}]*\}/g, '').trim();
+      if (COR.test(texto) || FONTE.test(texto)) achados.push(`${arquivo.slice(3)}: ${m[0]}`);
+    }
+  }
+  if (achados.length > 0) falhar(0, `cor ou fonte escrita no codigo (tem que vir de content.js): ${achados.join(' · ')}`);
+  return 'render.js e ui.js sem cor nem fonte escrita';
+}
+
+// O validador conhece o tema.
+function checarValidadorDoTema() {
+  const casos = [
+    ['variavel do tema repetindo uma do juice', (c) => { c.tema.css['--fade-tela'] = '#ffffff'; }, '--fade-tela tambem esta em juice.css'],
+    ['cor torta no tema', (c) => { c.tema.cores.papel = 'creme'; }, 'tema.cores.papel'],
+    ['clima sem papel', (c) => { c.tema.climas[1].papel = undefined; }, 'tema.climas[1].papel'],
+    ['canto de luz inventado', (c) => { c.tema.climas[1].luz = { cor: '#ff9f43', canto: 'meio', alfa: 0.3, raio: 1 }; }, 'luz.canto'],
+    ['clima a mais', (c) => { c.tema.climas.push(c.tema.climas[0]); }, 'tema.climas'],
+    ['fonte sem familia generica', (c) => { c.tema.fontes.manuscrita = '"Segoe Print"'; }, 'tema.fontes.manuscrita'],
+    ['par de contraste com cor que nao existe', (c) => { c.tema.contrastes.push(['tinta', 'naoExiste', 4.5]); }, 'naoExiste'],
+    ['cor do tema que nao chega ao CSS', (c) => { delete c.tema.css['--lapis']; }, 'a cor lapis'],
+    ['timbrado sem espaco', (c) => { c.tema.climaTcc.timbrado.espaco = 0; }, 'timbrado.espaco'],
+    ['parede sem largura', (c) => { c.visual.parede.largura = 0; }, 'visual.parede.largura'],
+  ];
+  for (const [nome, mexer, trecho] of casos) {
+    const clone = structuredClone(CONTEUDO);
+    mexer(clone);
+    if (!validarConteudo(clone).erros.some((e) => e.includes(trecho))) falhar(0, `validador: aceitou ${nome}`);
+  }
+  return `validador: ${casos.length} temas podres recusados`;
+}
+
+function checarFase15() {
+  const partes = [checarContraste(), checarPaginaDoCaderno(), checarForaDaArenaHachurada(), checarSemCorNoCodigo(), checarValidadorDoTema()];
+  return partes.map((p) => `\n    ${p}`).join('');
 }
 
 function checarFase14() {
@@ -6851,7 +7129,7 @@ function checarFase14() {
     checarContextoReposto(),
     checarQuadroIsolado(),
     checarVerificacaoNoNavegador(),
-    checarPaletaForaDaArena(),
+    checarClimaForaDaArena(),
   ];
   return partes.map((p) => `\n    ${p}`).join('');
 }
@@ -6918,6 +7196,9 @@ const juice = checarJuice();
 // Fase 14: estados no mesmo tick, pausa fora de hora, a Banca, a pool cheia,
 // o quadro isolado e as pendencias de logica.
 const fase14 = checarFase14();
+// Fase 15 (v2): o caderno — contraste, a pagina de cada clima, a hachura da
+// Sala Lotada e o codigo sem cor escrita.
+const fase15 = checarFase15();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -7167,6 +7448,7 @@ console.log(
     `\n  audio (fase 11): ${audioDoJogo}` +
     `\n  juice (fase 12): ${juice}` +
     `\n  robustez (fase 14):${fase14}` +
+    `\n  caderno (fase 15):${fase15}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +

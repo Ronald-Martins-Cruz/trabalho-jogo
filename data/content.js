@@ -5,6 +5,44 @@
 // As chaves abaixo ja existem vazias de proposito: cada fase seguinte preenche
 // a sua sem mudar a forma do objeto debaixo dos testes.
 
+// v2 (fase 15): a paleta e as fontes do caderno, as mesmas para o canvas e
+// para o DOM (escopo v2, §2). Ficam aqui em cima porque `tema` (cores, css,
+// climas) e `visual` as citam: trocar uma cor e trocar aqui, uma vez. Os
+// valores sao os do escopo, menos os que reprovaram no contraste (ver
+// tema.contrastes e o handoff 15).
+const COR = {
+  papel: '#fdf8ec', // a pagina, as folhas de prova, o fundo das telas
+  papelSombra: '#e9e0c8', // dobra, segunda folha, borda de papel
+  pauta: '#a9c7e6', // as linhas azuis do caderno
+  margem: '#e3a1a1', // a linha vermelha da margem
+  tinta: '#22304a', // texto principal (caneta azul-escura)
+  tintaFraca: '#636f88', // texto secundario. Escopo: #6c7891, 4,19:1 no papel (pede 4,5)
+  lapis: '#8a8a8a', // tracos de lapis: rabiscos, hachura
+  canetaVermelha: '#c93c32', // correcao, HP, reprovado. Escopo: #d8433a, 4,14:1 como texto
+  // Nao estava no escopo: o marca-verde (post-it, com tinta por cima) nao
+  // pode ser ao mesmo tempo claro para 4,5:1 com a tinta e escuro para 3:1
+  // no papel. A barra de XP e o "aprovado" escrito usam esta.
+  canetaVerde: '#2e7d4f',
+  marcaAmarelo: '#fff07a', // marca-texto, destaque, post-it 1
+  marcaVerde: '#b6f0c3', // aprovado, post-it 2
+  marcaRosa: '#ffb3c1', // post-it 3
+  marcaAzul: '#bfe0ff', // post-it 4
+  marcaLaranja: '#ffd59a', // post-it 5, avisos
+  moeda: '#e9b949', // creditos (◉)
+  carimbo: '#c8102e', // tinta de carimbo (APROVADO, JUBILADO, conceito)
+  adesivo: '#ffffff', // o contorno recortado das figurinhas, o botao
+  sombra: 'rgba(34, 48, 74, 0.25)', // sombra de figurinha, de post-it, de folha
+  mesa: '#a07850', // a mesa em volta da cena. Escopo: #6b4b2f, 1,68:1 com a tinta (pede 3)
+};
+
+// So fontes do sistema (restricao 2). A maquina da apresentacao e Windows,
+// onde as tres existem; em Mac e Linux caem para o nome seguinte.
+const FONTE = {
+  texto: '"Segoe UI", "Trebuchet MS", system-ui, -apple-system, sans-serif',
+  manuscrita: '"Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", cursive',
+  carimbo: 'Impact, "Arial Black", "Franklin Gothic Medium", sans-serif',
+};
+
 export const CONTEUDO = {
   // Multiplicador global de dificuldade. Toda funcao de escalonamento
   // (vida de inimigo, taxa de spawn, dano) multiplica por ele. Existe desde o
@@ -58,7 +96,13 @@ export const CONTEUDO = {
   // render.js desenha. O fundo (cor por periodo) e os efeitos da fase 12
   // (tremor, particulas, numeros, flashes) moram em `juice`, logo abaixo.
   visual: {
-    corBorda: 'rgba(120, 140, 255, 0.35)',
+    // A parede da arena: com a Sala Lotada, uma linha grossa de caneta; com a
+    // arena inteira ela e a beira da pagina, e fica fina e clara.
+    parede: { cor: COR.tinta, largura: 4, larguraInteira: 1.5, alfaInteira: 0.3 },
+    // O que fica fora da arena encolhida, POR CIMA das entidades (pendencia
+    // 63: quem nasce ali aparece apagado ate cruzar a parede): um veu do papel
+    // do clima e hachura a lapis a 45 graus.
+    foraDaArena: { veu: 0.72, cor: COR.lapis, alfa: 0.55, passo: 9, largura: 1 },
     // O fillStyle de todo emoji. Tem que ser opaco: o navegador aplica o alfa
     // do fillStyle ao emoji colorido (com o das carteiras, 0,08, o bando sumia).
     corEmoji: '#ffffff',
@@ -90,7 +134,9 @@ export const CONTEUDO = {
       },
     },
     tamanhoEmojiJogador: 30,
-    corSombraPausa: 'rgba(5, 6, 14, 0.6)',
+    // A arena por baixo da pausa e da carta, apagada em tinta: as telas em DOM
+    // por cima dela ja trazem o veu de papel.
+    corSombraPausa: 'rgba(34, 48, 74, 0.25)',
     corRastro: '#8fd6ff', // rastro simples do jogador (fase 01)
     rastroAlphaMax: 0.35,
     rastroRaioFator: 0.55, // multiplica jogador.raio para o raio do ponto do rastro
@@ -98,14 +144,10 @@ export const CONTEUDO = {
     emojiInimigoFator: 2.2, // tamanho do emoji = raio do inimigo x este fator
     emojiProjetilFator: 2.6, // tamanho do emoji = raio do projetil x este fator
     emojiOrbeFator: 2.4, // tamanho do emoji = raio do orbe de xp x este fator
-    corSombraCarta: 'rgba(5, 6, 14, 0.72)', // escurece a arena atras da carta
+    corSombraCarta: 'rgba(34, 48, 74, 0.3)', // apaga a arena atras da carta
     emojiSateliteFator: 2.2, // tamanho do emoji = raioColisao da caneta orbital x este fator
     corOndaTelegrafo: 'rgba(255, 210, 90, 0.55)', // anel do telegrafo do Resumo (comportamento ondaArea)
     corFeixe: 'rgba(255, 235, 59, 0.32)', // faixa translucida do Marca-texto (comportamento feixe)
-    // O que fica fora da arena encolhida (regras.arena < 1). Fase 12: desenhado
-    // POR CIMA dos inimigos (pendencia 63) — quem nasce na faixa de fora aparece
-    // apagado ate cruzar a parede, e nao "pela metade dentro da tela".
-    corForaArena: 'rgba(0, 0, 0, 0.78)',
     // A Banca (fase 10). O emoji e maior que o corpo de colisao (banca.raio):
     // o raio fica preso pela regra da grade de separacao (separacao.gradePasso)
     // e o tamanho na tela e o que diz "chefe".
@@ -160,7 +202,10 @@ export const CONTEUDO = {
     // arena.limites.particles). Cada entrada de `porTipo` (id de inimigo ou da
     // Banca) sobrescreve so os campos que traz; o resto vem de `padrao`.
     particulas: {
-      composicao: 'lighter', // soma luz: as faiscas brilham sobre o fundo escuro
+      // Era 'lighter' (luz somada, para o fundo escuro da v1). No papel claro a
+      // soma da branco e as faiscas sumiam (fase 15); a fase 17 as troca por
+      // confete de papel.
+      composicao: 'source-over',
       maxPorQuadro: 220, // teto de particulas novas por quadro (horda + explosao)
       padrao: {
         quantidade: 8,
@@ -235,30 +280,38 @@ export const CONTEUDO = {
       jogadorDuracao: 0.2,
       vinhetaDanoDuracao: 0.35,
       corVinhetaDano: 'rgba(255, 30, 60, 0.55)',
+      // Raios da vinheta vermelha, em fracao da meia-diagonal (eram os da
+      // vinheta do chao; cada clima agora tem os seus).
+      vinhetaDanoRaioInterno: 0.5,
+      vinhetaDanoRaioExterno: 1,
     },
-    // O chao da sala: piso em grade e fileiras de carteiras, uma paleta por
-    // periodo (o 1o claro, o 3o sombrio) e uma para o TCC. A vinheta escurece
-    // as bordas; raios em fracao da meia-diagonal do canvas.
+    // A pagina do caderno (v2, fase 15): o desenho dela, em px do canvas. As
+    // cores e o que cada periodo acrescenta (manchas, luz, timbrado) moram nos
+    // climas, em `tema`. Tudo isso e pintado uma vez por clima numa camada
+    // fora da tela; os sorteios usam o rng do juice reiniciado com `semente`,
+    // e por isso a pagina de um clima e sempre a mesma.
     fundo: {
-      passoPiso: 60, // px entre as linhas do piso
-      // px. A mesa e o assento logo atras dela.
-      carteira: { passoX: 96, passoY: 72, largura: 40, altura: 18, assentoLargura: 20, assentoAltura: 8, assentoDistancia: 5 },
-      vinhetaRaioInterno: 0.5,
-      vinhetaRaioExterno: 1,
+      semente: 15,
+      pauta: { passo: 30, topo: 66, largura: 1 }, // a 1a linha em `topo`, as outras a cada `passo`
+      margem: { x: 78, largura: 1.5 }, // a linha vertical da margem
+      furos: { x: 26, raio: 7, quantidade: 4, largura: 1.5 }, // os furos de fichario, na borda esquerda
+      // Marca de xicara: um anel inteiro e, deslocado, um arco incompleto.
+      mancha: { raioMin: 24, raioMax: 36, largura: 3.5, arco: 0.65, desvio: 4, folga: 40 },
+      // Vinco: uma dobra atravessando a pagina, em `trechos` com tremor.
+      vinco: { largura: 1, trechos: 5, desvio: 6 },
+      // Rabisco a lapis na faixa da margem (entre os furos e a linha vermelha):
+      // uma molinha (`voltas` de raio entre raioMin e raioMax, descendo `descida`
+      // raios por volta) ou um caracol que abre ate `tamanho`/2; `molinhas` e a
+      // fracao de molinhas. `passosPorVolta` e a resolucao do traco.
+      rabisco: { voltas: 4, passosPorVolta: 12, raioMin: 3.5, raioMax: 6.5, descida: 1.6, tamanho: 18, molinhas: 0.5, largura: 1.1 },
     },
-    paletas: [
-      // 1o periodo: comeco do semestre, sala clara.
-      { fundo: '#232a4a', piso: 'rgba(160, 180, 255, 0.09)', carteira: 'rgba(170, 190, 255, 0.08)', vinheta: 'rgba(4, 5, 14, 0.4)' },
-      // 2o: fim de tarde.
-      { fundo: '#201838', piso: 'rgba(200, 150, 255, 0.08)', carteira: 'rgba(210, 160, 255, 0.07)', vinheta: 'rgba(6, 3, 14, 0.55)' },
-      // 3o: madrugada antes da prova.
-      { fundo: '#180c14', piso: 'rgba(255, 110, 130, 0.07)', carteira: 'rgba(255, 120, 140, 0.06)', vinheta: 'rgba(0, 0, 0, 0.72)' },
-    ],
-    paletaTcc: { fundo: '#15110a', piso: 'rgba(255, 200, 100, 0.07)', carteira: 'rgba(255, 210, 130, 0.06)', vinheta: 'rgba(0, 0, 0, 0.75)' },
     // Aviso de spawn: um brilho na parede, no ponto por onde o inimigo recem-
     // nascido (fora da arena visivel) vai entrar. Nasce junto com ele — ele
     // leva ~1,3s para cruzar arena.margemSpawn — e some em `duracao`.
     avisoSpawn: {
+      // Era 'lighter' (fixo no render): luz somada sobre o fundo escuro. No
+      // papel claro a soma da branco e o aviso sumia (fase 15).
+      composicao: 'source-over',
       duracao: 0.9, // s de vida do inimigo em que o aviso aparece
       raio: 36, // px
       alphaMax: 0.75,
@@ -275,7 +328,7 @@ export const CONTEUDO = {
       '--deslize-carta': '320ms',
       '--deslize-distancia': '3em',
       '--atraso-entre-cartas': '70ms',
-      '--carimbo': '420ms',
+      '--duracao-carimbo': '420ms', // era --carimbo, que virou a cor do carimbo (tema.css)
       '--atraso-carimbo': '220ms',
       '--carimbo-escala': '2.6',
       '--carimbo-giro': '-7deg',
@@ -289,6 +342,138 @@ export const CONTEUDO = {
       '--hud-fade': '150ms',
       '--hud-translucido': '0.3', // opacidade do topo do HUD com alguem embaixo
     },
+  },
+
+  // O caderno (v2, fase 15): a paleta e as fontes do jogo inteiro, e os
+  // climas da pagina. O canvas le daqui (render.js); o DOM le `css`, que o
+  // ui.js escreve no :root ao lado de juice.css — o style.css nao tem cor
+  // nenhuma escrita, so var(--...).
+  tema: {
+    cores: COR,
+    fontes: FONTE,
+    // Um clima por periodo (o estado do caderno ao longo do semestre) e o do
+    // TCC. Cada um e so cor, luz e detalhe:
+    //   papel, pauta, margem: cores da pagina (pauta/margem null: sem elas);
+    //   furos: { cor, borda } dos furos de fichario, ou null;
+    //   luz: { cor, canto, alfa, raio } — gradiente entrando por um canto
+    //     (raio em fracao da diagonal), ou null;
+    //   luminaria: { cor, alfa, raio } — o cone de luz no meio (raio em fracao
+    //     da meia-diagonal), ou null;
+    //   vinheta: { cor, raioInterno, raioExterno } — por cima de tudo, raios em
+    //     fracao da meia-diagonal;
+    //   manchas, vincos, rabiscos: { quantidade, cor };
+    //   timbrado: { cor, margem, espaco, larguraExterna, larguraInterna } — a
+    //     borda dupla, ou null;
+    //   marcaDagua: { emoji, alfa, tamanho }, ou null.
+    climas: [
+      // Manha (1o periodo): a pagina creme limpa.
+      {
+        papel: COR.papel,
+        pauta: COR.pauta,
+        margem: COR.margem,
+        furos: { cor: COR.mesa, borda: COR.papelSombra },
+        luz: null,
+        luminaria: null,
+        vinheta: { cor: 'rgba(34, 48, 74, 0.16)', raioInterno: 0.62, raioExterno: 1.05 },
+        manchas: { quantidade: 0, cor: 'rgba(122, 74, 34, 0.3)' },
+        vincos: { quantidade: 0, cor: 'rgba(90, 70, 40, 0.18)' },
+        rabiscos: { quantidade: 0, cor: COR.lapis },
+        timbrado: null,
+        marcaDagua: null,
+      },
+      // Fim de tarde (2o): papel amarelado, luz laranja pelo canto, cafe.
+      {
+        papel: '#f8ebcb',
+        pauta: '#a2bcd8',
+        margem: '#dd9a90',
+        furos: { cor: COR.mesa, borda: '#e2d2ac' },
+        luz: { cor: '#ff9f43', canto: 'superiorDireito', alfa: 0.3, raio: 0.9 },
+        luminaria: null,
+        vinheta: { cor: 'rgba(110, 60, 20, 0.26)', raioInterno: 0.55, raioExterno: 1.05 },
+        manchas: { quantidade: 2, cor: 'rgba(122, 74, 34, 0.3)' },
+        vincos: { quantidade: 0, cor: 'rgba(90, 70, 40, 0.18)' },
+        rabiscos: { quantidade: 2, cor: COR.lapis },
+        timbrado: null,
+        marcaDagua: null,
+      },
+      // Madrugada (3o): a pagina sob a luminaria, gasta.
+      {
+        papel: '#ecd9ac',
+        pauta: '#93abc6',
+        margem: '#d38c80',
+        furos: { cor: COR.mesa, borda: '#d8c69c' },
+        luz: null,
+        luminaria: { cor: '#ffc56b', alfa: 0.5, raio: 0.7 },
+        vinheta: { cor: 'rgba(22, 14, 8, 0.86)', raioInterno: 0.22, raioExterno: 0.98 },
+        manchas: { quantidade: 4, cor: 'rgba(110, 62, 24, 0.34)' },
+        vincos: { quantidade: 2, cor: 'rgba(80, 60, 30, 0.22)' },
+        rabiscos: { quantidade: 7, cor: COR.lapis },
+        timbrado: null,
+        marcaDagua: null,
+      },
+    ],
+    // A defesa (TCC): papel branco timbrado, sem pauta, o 🎓 em marca d'agua.
+    climaTcc: {
+      papel: COR.adesivo,
+      pauta: null,
+      margem: null,
+      furos: null,
+      luz: null,
+      luminaria: null,
+      vinheta: { cor: 'rgba(34, 48, 74, 0.42)', raioInterno: 0.45, raioExterno: 1.02 },
+      manchas: { quantidade: 0, cor: 'rgba(122, 74, 34, 0.3)' },
+      vincos: { quantidade: 0, cor: 'rgba(90, 70, 40, 0.18)' },
+      rabiscos: { quantidade: 0, cor: COR.lapis },
+      timbrado: { cor: COR.tinta, margem: 14, espaco: 6, larguraExterna: 3, larguraInterna: 1 },
+      marcaDagua: { emoji: '🎓', alfa: 0.05, tamanho: 300 },
+    },
+    // As variaveis CSS que o ui.js escreve no :root (aplicarVariaveisCss),
+    // ao lado das de juice.css. O validador recusa um nome repetido entre os
+    // dois mapas, e o smoke, uma delas redefinida no style.css.
+    css: {
+      '--papel': COR.papel,
+      '--papel-sombra': COR.papelSombra,
+      '--pauta': COR.pauta,
+      '--margem': COR.margem,
+      '--tinta': COR.tinta,
+      '--tinta-fraca': COR.tintaFraca,
+      '--lapis': COR.lapis,
+      '--caneta-vermelha': COR.canetaVermelha,
+      '--caneta-verde': COR.canetaVerde,
+      '--marca-amarelo': COR.marcaAmarelo,
+      '--marca-verde': COR.marcaVerde,
+      '--marca-rosa': COR.marcaRosa,
+      '--marca-azul': COR.marcaAzul,
+      '--marca-laranja': COR.marcaLaranja,
+      '--moeda': COR.moeda,
+      '--carimbo': COR.carimbo,
+      '--adesivo': COR.adesivo,
+      '--sombra': COR.sombra,
+      '--mesa': COR.mesa,
+      '--fonte-texto': FONTE.texto,
+      '--fonte-manuscrita': FONTE.manuscrita,
+      '--fonte-carimbo': FONTE.carimbo,
+    },
+    // [cor do texto, cor do fundo, razao minima] (nomes de `cores`): o smoke
+    // calcula a razao de contraste WCAG de cada par e reprova abaixo dela.
+    // 4,5 e texto comum; 3 e texto grande e o que nao e texto (barras).
+    contrastes: [
+      ['tinta', 'papel', 4.5], // texto
+      ['tintaFraca', 'papel', 4.5], // rotulo fraco
+      ['tinta', 'adesivo', 4.5], // texto no botao (o adesivo)
+      ['tinta', 'marcaAmarelo', 4.5], // texto nos post-its
+      ['tinta', 'marcaVerde', 4.5],
+      ['tinta', 'marcaRosa', 4.5],
+      ['tinta', 'marcaAzul', 4.5],
+      ['tinta', 'marcaLaranja', 4.5],
+      ['tinta', 'moeda', 4.5], // creditos marcados de dourado
+      ['canetaVermelha', 'papel', 3], // barra de HP
+      ['canetaVerde', 'papel', 3], // barra de XP
+      ['canetaVermelha', 'papel', 4.5], // correcao escrita (aviso da loja, "faltava")
+      ['canetaVerde', 'papel', 4.5], // "aprovado", nivel, conceito A
+      ['carimbo', 'papel', 4.5], // o conceito carimbado
+      ['tinta', 'mesa', 3], // o que for escrito na mesa
+    ],
   },
 
   // O jogador. Fase 01 completa (aceleracao, atrito, i-frames, raio de coleta).
@@ -2692,6 +2877,20 @@ export function validarConteudo(conteudo = CONTEUDO) {
 
   // Juice (fase 12). So aparencia, mas um numero podre aqui vira NaN no
   // desenho, ou uma particula que nunca morre e enche a pool.
+  const exigeCor = (valor, caminho) => {
+    if (typeof valor !== 'string' || !/^(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))$/.test(valor)) {
+      erros.push(`${caminho}: esperava uma cor #hex ou rgb()/rgba(), veio ${JSON.stringify(valor)}`);
+    }
+  };
+  // O render faz o fim transparente dos gradientes (luz, luminaria, vinheta)
+  // a partir da propria cor: so #rrggbb, #rgb ou rgb()/rgba() com tres numeros.
+  const exigeCorDeGradiente = (valor, caminho) => {
+    exigeCor(valor, caminho);
+    if (typeof valor === 'string' && valor.startsWith('rgb') && !/^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\)$/.test(valor)) {
+      erros.push(`${caminho}: rgb()/rgba() com virgulas e tres canais numericos, veio ${JSON.stringify(valor)}`);
+    }
+  };
+
   if (exigeObjeto(conteudo.juice, 'juice')) {
     const j = conteudo.juice;
     exigeNumero(j.semente, 'juice.semente', { min: 0 });
@@ -2700,11 +2899,6 @@ export function validarConteudo(conteudo = CONTEUDO) {
     if (typeof corEmoji !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(corEmoji)) {
       erros.push(`visual.corEmoji: esperava uma cor opaca #rrggbb, veio ${JSON.stringify(corEmoji)} (o alfa dela apagaria todo emoji)`);
     }
-    const exigeCor = (valor, caminho) => {
-      if (typeof valor !== 'string' || !/^(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))$/.test(valor)) {
-        erros.push(`${caminho}: esperava uma cor #hex ou rgb()/rgba(), veio ${JSON.stringify(valor)}`);
-      }
-    };
     // A forma no lugar do emoji que a maquina nao tem (fase 14). Todo emoji
     // que o canvas desenha precisa de cor propria: com a padrao, o bando
     // inteiro vira circulos iguais.
@@ -2799,43 +2993,62 @@ export function validarConteudo(conteudo = CONTEUDO) {
       exigeNumero(f.escalaPop, 'juice.flash.escalaPop', { min: 0, max: 1 });
       exigeNumero(f.jogadorDuracao, 'juice.flash.jogadorDuracao', { min: 0.02, max: 1 });
       exigeNumero(f.vinhetaDanoDuracao, 'juice.flash.vinhetaDanoDuracao', { min: 0, max: 2 });
-      exigeCor(f.corVinhetaDano, 'juice.flash.corVinhetaDano');
-    }
-    if (exigeObjeto(j.fundo, 'juice.fundo')) {
-      const f = j.fundo;
-      exigeNumero(f.passoPiso, 'juice.fundo.passoPiso', { min: 8 });
-      exigeNumero(f.vinhetaRaioInterno, 'juice.fundo.vinhetaRaioInterno', { min: 0, max: 2 });
-      exigeNumero(f.vinhetaRaioExterno, 'juice.fundo.vinhetaRaioExterno', {
-        min: Number.isFinite(f.vinhetaRaioInterno) ? f.vinhetaRaioInterno + 0.01 : 0,
+      exigeCorDeGradiente(f.corVinhetaDano, 'juice.flash.corVinhetaDano');
+      exigeNumero(f.vinhetaDanoRaioInterno, 'juice.flash.vinhetaDanoRaioInterno', { min: 0, max: 2 });
+      exigeNumero(f.vinhetaDanoRaioExterno, 'juice.flash.vinhetaDanoRaioExterno', {
+        min: Number.isFinite(f.vinhetaDanoRaioInterno) ? f.vinhetaDanoRaioInterno + 0.01 : 0,
         max: 3,
       });
-      if (exigeObjeto(f.carteira, 'juice.fundo.carteira')) {
-        exigeNumero(f.carteira.passoX, 'juice.fundo.carteira.passoX', { min: 16 });
-        exigeNumero(f.carteira.passoY, 'juice.fundo.carteira.passoY', { min: 16 });
-        exigeNumero(f.carteira.largura, 'juice.fundo.carteira.largura', { min: 1, max: f.carteira.passoX });
-        exigeNumero(f.carteira.altura, 'juice.fundo.carteira.altura', { min: 1, max: f.carteira.passoY });
-        exigeNumero(f.carteira.assentoLargura, 'juice.fundo.carteira.assentoLargura', { min: 0, max: f.carteira.largura });
-        exigeNumero(f.carteira.assentoAltura, 'juice.fundo.carteira.assentoAltura', { min: 0 });
-        exigeNumero(f.carteira.assentoDistancia, 'juice.fundo.carteira.assentoDistancia', { min: 0 });
-        if (f.carteira.altura + f.carteira.assentoDistancia + f.carteira.assentoAltura > f.carteira.passoY) {
-          erros.push('juice.fundo.carteira: mesa + assento passam do passoY (as fileiras se encostam)');
-        }
+    }
+    // A pagina do caderno (fase 15): so geometria; as cores sao dos climas.
+    if (exigeObjeto(j.fundo, 'juice.fundo')) {
+      const f = j.fundo;
+      const largura = conteudo.arena && Number.isFinite(conteudo.arena.largura) ? conteudo.arena.largura : Infinity;
+      const altura = conteudo.arena && Number.isFinite(conteudo.arena.altura) ? conteudo.arena.altura : Infinity;
+      exigeNumero(f.semente, 'juice.fundo.semente', { min: 0 });
+      if (exigeObjeto(f.pauta, 'juice.fundo.pauta')) {
+        exigeNumero(f.pauta.passo, 'juice.fundo.pauta.passo', { min: 8 });
+        exigeNumero(f.pauta.topo, 'juice.fundo.pauta.topo', { min: 0, max: altura });
+        exigeNumero(f.pauta.largura, 'juice.fundo.pauta.largura', { min: 0.5, max: 4 });
+      }
+      if (exigeObjeto(f.margem, 'juice.fundo.margem')) {
+        exigeNumero(f.margem.x, 'juice.fundo.margem.x', { min: 0, max: largura / 2 });
+        exigeNumero(f.margem.largura, 'juice.fundo.margem.largura', { min: 0.5, max: 6 });
+      }
+      if (exigeObjeto(f.furos, 'juice.fundo.furos')) {
+        exigeNumero(f.furos.quantidade, 'juice.fundo.furos.quantidade', { min: 0, max: 12 });
+        exigeNumero(f.furos.raio, 'juice.fundo.furos.raio', { min: 1, max: 30 });
+        exigeNumero(f.furos.x, 'juice.fundo.furos.x', { min: 0, max: f.margem && Number.isFinite(f.margem.x) ? f.margem.x : largura });
+        exigeNumero(f.furos.largura, 'juice.fundo.furos.largura', { min: 0, max: 6 });
+      }
+      if (exigeObjeto(f.mancha, 'juice.fundo.mancha')) {
+        const m = f.mancha;
+        exigeNumero(m.raioMin, 'juice.fundo.mancha.raioMin', { min: 2 });
+        exigeNumero(m.raioMax, 'juice.fundo.mancha.raioMax', { min: Number.isFinite(m.raioMin) ? m.raioMin : 2, max: altura / 4 });
+        exigeNumero(m.largura, 'juice.fundo.mancha.largura', { min: 0.5, max: 20 });
+        exigeNumero(m.arco, 'juice.fundo.mancha.arco', { min: 0.05, max: 0.95 }); // o 2o arco e incompleto
+        exigeNumero(m.desvio, 'juice.fundo.mancha.desvio', { min: 0 });
+        exigeNumero(m.folga, 'juice.fundo.mancha.folga', { min: 0 });
+      }
+      if (exigeObjeto(f.vinco, 'juice.fundo.vinco')) {
+        exigeNumero(f.vinco.largura, 'juice.fundo.vinco.largura', { min: 0.5, max: 6 });
+        exigeNumero(f.vinco.trechos, 'juice.fundo.vinco.trechos', { min: 1, max: 40 });
+        exigeNumero(f.vinco.desvio, 'juice.fundo.vinco.desvio', { min: 0 });
+      }
+      if (exigeObjeto(f.rabisco, 'juice.fundo.rabisco')) {
+        exigeNumero(f.rabisco.voltas, 'juice.fundo.rabisco.voltas', { min: 1, max: 20 });
+        exigeNumero(f.rabisco.passosPorVolta, 'juice.fundo.rabisco.passosPorVolta', { min: 3, max: 60 });
+        exigeNumero(f.rabisco.raioMin, 'juice.fundo.rabisco.raioMin', { min: 0.5 });
+        exigeNumero(f.rabisco.raioMax, 'juice.fundo.rabisco.raioMax', { min: Number.isFinite(f.rabisco.raioMin) ? f.rabisco.raioMin : 0.5 });
+        exigeNumero(f.rabisco.descida, 'juice.fundo.rabisco.descida', { min: 0, max: 10 });
+        exigeNumero(f.rabisco.molinhas, 'juice.fundo.rabisco.molinhas', { min: 0, max: 1 });
+        exigeNumero(f.rabisco.tamanho, 'juice.fundo.rabisco.tamanho', { min: 2 });
+        exigeNumero(f.rabisco.largura, 'juice.fundo.rabisco.largura', { min: 0.5, max: 6 });
       }
     }
-    // "Uma mudanca de paleta por periodo": uma paleta para cada periodo da run.
-    const exigePaleta = (p, caminho) => {
-      if (!exigeObjeto(p, caminho)) return;
-      for (const k of ['fundo', 'piso', 'carteira', 'vinheta']) exigeCor(p[k], `${caminho}.${k}`);
-    };
-    if (!Array.isArray(j.paletas)) erros.push('juice.paletas: esperava um array');
-    else {
-      const periodos = Array.isArray(conteudo.periodos) ? conteudo.periodos.length : 0;
-      if (j.paletas.length < periodos) erros.push(`juice.paletas: ${j.paletas.length} paletas para ${periodos} periodos`);
-      j.paletas.forEach((p, i) => exigePaleta(p, `juice.paletas[${i}]`));
-    }
-    exigePaleta(j.paletaTcc, 'juice.paletaTcc');
     if (exigeObjeto(j.avisoSpawn, 'juice.avisoSpawn')) {
       const a = j.avisoSpawn;
+      if (!['source-over', 'lighter', 'multiply'].includes(a.composicao)) erros.push(`juice.avisoSpawn.composicao: "${a.composicao}" (use source-over, lighter ou multiply)`);
       exigeNumero(a.duracao, 'juice.avisoSpawn.duracao', { min: 0.1, max: 3 });
       exigeNumero(a.raio, 'juice.avisoSpawn.raio', { min: 1 });
       exigeNumero(a.alphaMax, 'juice.avisoSpawn.alphaMax', { min: 0, max: 1 });
@@ -2855,6 +3068,131 @@ export function validarConteudo(conteudo = CONTEUDO) {
           erros.push(`juice.css.${nome}: "${valor}" nao e um numero CSS (200ms, 1.12, 0.5em)`);
         }
       }
+    }
+  }
+
+  // A parede e o lado de fora da arena encolhida (fase 15).
+  if (exigeObjeto(conteudo.visual, 'visual')) {
+    const v = conteudo.visual;
+    if (exigeObjeto(v.parede, 'visual.parede')) {
+      exigeCor(v.parede.cor, 'visual.parede.cor');
+      exigeNumero(v.parede.largura, 'visual.parede.largura', { min: 0.5, max: 16 });
+      exigeNumero(v.parede.larguraInteira, 'visual.parede.larguraInteira', { min: 0.5, max: 16 });
+      exigeNumero(v.parede.alfaInteira, 'visual.parede.alfaInteira', { min: 0, max: 1 });
+    }
+    if (exigeObjeto(v.foraDaArena, 'visual.foraDaArena')) {
+      const f = v.foraDaArena;
+      exigeNumero(f.veu, 'visual.foraDaArena.veu', { min: 0, max: 1 });
+      exigeCor(f.cor, 'visual.foraDaArena.cor');
+      exigeNumero(f.alfa, 'visual.foraDaArena.alfa', { min: 0, max: 1 });
+      exigeNumero(f.passo, 'visual.foraDaArena.passo', { min: 3 });
+      exigeNumero(f.largura, 'visual.foraDaArena.largura', { min: 0.5, max: 6 });
+    }
+  }
+
+  // O tema do caderno (fase 15): a paleta e as fontes do jogo, os climas da
+  // pagina e o mapa de variaveis CSS.
+  if (exigeObjeto(conteudo.tema, 'tema')) {
+    const t = conteudo.tema;
+    const cores = exigeObjeto(t.cores, 'tema.cores') ? t.cores : {};
+    for (const [nome, cor] of Object.entries(cores)) exigeCor(cor, `tema.cores.${nome}`);
+    // As 18 do escopo v2 (§2); a fase 15 acrescentou canetaVerde.
+    const DO_ESCOPO = [
+      'papel', 'papelSombra', 'pauta', 'margem', 'tinta', 'tintaFraca', 'lapis', 'canetaVermelha',
+      'marcaAmarelo', 'marcaVerde', 'marcaRosa', 'marcaAzul', 'marcaLaranja', 'moeda', 'carimbo',
+      'adesivo', 'sombra', 'mesa', 'canetaVerde',
+    ];
+    for (const nome of DO_ESCOPO) if (!(nome in cores)) erros.push(`tema.cores.${nome}: ausente`);
+    if (exigeObjeto(t.fontes, 'tema.fontes')) {
+      for (const nome of ['texto', 'manuscrita', 'carimbo']) {
+        const f = t.fontes[nome];
+        // A pilha termina numa familia generica: o nome que falta cai nela.
+        if (typeof f !== 'string' || !/(sans-serif|serif|cursive|monospace|system-ui)\s*$/.test(f)) {
+          erros.push(`tema.fontes.${nome}: esperava uma pilha de fontes terminada numa familia generica, veio ${JSON.stringify(f)}`);
+        }
+      }
+    }
+    const CANTOS = ['superiorEsquerdo', 'superiorDireito', 'inferiorEsquerdo', 'inferiorDireito'];
+    const exigeClima = (c, caminho) => {
+      if (!exigeObjeto(c, caminho)) return;
+      exigeCor(c.papel, `${caminho}.papel`);
+      for (const k of ['pauta', 'margem']) if (c[k] !== null) exigeCor(c[k], `${caminho}.${k}`);
+      if (c.furos !== null && exigeObjeto(c.furos, `${caminho}.furos`)) {
+        exigeCor(c.furos.cor, `${caminho}.furos.cor`);
+        exigeCor(c.furos.borda, `${caminho}.furos.borda`);
+      }
+      if (c.luz !== null && exigeObjeto(c.luz, `${caminho}.luz`)) {
+        exigeCorDeGradiente(c.luz.cor, `${caminho}.luz.cor`);
+        if (!CANTOS.includes(c.luz.canto)) erros.push(`${caminho}.luz.canto: "${c.luz.canto}" (use ${CANTOS.join(', ')})`);
+        exigeNumero(c.luz.alfa, `${caminho}.luz.alfa`, { min: 0, max: 1 });
+        exigeNumero(c.luz.raio, `${caminho}.luz.raio`, { min: 0.05, max: 2 });
+      }
+      if (c.luminaria !== null && exigeObjeto(c.luminaria, `${caminho}.luminaria`)) {
+        exigeCorDeGradiente(c.luminaria.cor, `${caminho}.luminaria.cor`);
+        exigeNumero(c.luminaria.alfa, `${caminho}.luminaria.alfa`, { min: 0, max: 1 });
+        exigeNumero(c.luminaria.raio, `${caminho}.luminaria.raio`, { min: 0.05, max: 2 });
+      }
+      if (exigeObjeto(c.vinheta, `${caminho}.vinheta`)) {
+        exigeCorDeGradiente(c.vinheta.cor, `${caminho}.vinheta.cor`);
+        exigeNumero(c.vinheta.raioInterno, `${caminho}.vinheta.raioInterno`, { min: 0, max: 2 });
+        exigeNumero(c.vinheta.raioExterno, `${caminho}.vinheta.raioExterno`, {
+          min: Number.isFinite(c.vinheta.raioInterno) ? c.vinheta.raioInterno + 0.01 : 0,
+          max: 3,
+        });
+      }
+      for (const k of ['manchas', 'vincos', 'rabiscos']) {
+        if (!exigeObjeto(c[k], `${caminho}.${k}`)) continue;
+        exigeNumero(c[k].quantidade, `${caminho}.${k}.quantidade`, { min: 0, max: 40 });
+        exigeCor(c[k].cor, `${caminho}.${k}.cor`);
+      }
+      if (c.timbrado !== null && exigeObjeto(c.timbrado, `${caminho}.timbrado`)) {
+        exigeCor(c.timbrado.cor, `${caminho}.timbrado.cor`);
+        exigeNumero(c.timbrado.margem, `${caminho}.timbrado.margem`, { min: 0, max: 100 });
+        exigeNumero(c.timbrado.espaco, `${caminho}.timbrado.espaco`, { min: 1, max: 40 });
+        exigeNumero(c.timbrado.larguraExterna, `${caminho}.timbrado.larguraExterna`, { min: 0.5, max: 10 });
+        exigeNumero(c.timbrado.larguraInterna, `${caminho}.timbrado.larguraInterna`, { min: 0.5, max: 10 });
+      }
+      if (c.marcaDagua !== null && exigeObjeto(c.marcaDagua, `${caminho}.marcaDagua`)) {
+        exigeTexto(c.marcaDagua.emoji, `${caminho}.marcaDagua.emoji`);
+        exigeNumero(c.marcaDagua.alfa, `${caminho}.marcaDagua.alfa`, { min: 0, max: 1 });
+        exigeNumero(c.marcaDagua.tamanho, `${caminho}.marcaDagua.tamanho`, { min: 8, max: 1000 });
+      }
+    };
+    // Um clima por periodo da run, e o do TCC.
+    if (!Array.isArray(t.climas)) erros.push('tema.climas: esperava um array');
+    else {
+      const periodos = Array.isArray(conteudo.periodos) ? conteudo.periodos.length : 0;
+      if (t.climas.length !== periodos) erros.push(`tema.climas: ${t.climas.length} climas para ${periodos} periodos (um por periodo)`);
+      t.climas.forEach((c, i) => exigeClima(c, `tema.climas[${i}]`));
+    }
+    exigeClima(t.climaTcc, 'tema.climaTcc');
+    if (exigeObjeto(t.css, 'tema.css')) {
+      const doJuice = conteudo.juice && conteudo.juice.css && typeof conteudo.juice.css === 'object' ? conteudo.juice.css : {};
+      for (const [nome, valor] of Object.entries(t.css)) {
+        if (!/^--[a-z0-9-]+$/.test(nome)) erros.push(`tema.css: "${nome}" nao e nome de variavel CSS (--assim)`);
+        if (nome in doJuice) erros.push(`tema.css: ${nome} tambem esta em juice.css (uma escreveria por cima da outra)`);
+        if (nome.startsWith('--fonte-')) exigeTexto(valor, `tema.css.${nome}`);
+        else exigeCor(valor, `tema.css.${nome}`);
+      }
+      // Toda cor e toda fonte do tema chega ao CSS, com o mesmo valor.
+      const css = Object.values(t.css);
+      for (const [nome, cor] of Object.entries(cores)) if (!css.includes(cor)) erros.push(`tema.css: a cor ${nome} (${cor}) nao virou variavel CSS`);
+      for (const [nome, f] of Object.entries(t.fontes || {})) if (!css.includes(f)) erros.push(`tema.css: a fonte ${nome} nao virou variavel CSS`);
+    }
+    if (!Array.isArray(t.contrastes) || t.contrastes.length === 0) erros.push('tema.contrastes: esperava uma lista de pares');
+    else {
+      t.contrastes.forEach((par, i) => {
+        const caminho = `tema.contrastes[${i}]`;
+        if (!Array.isArray(par) || par.length !== 3) {
+          erros.push(`${caminho}: esperava [corDoTexto, corDoFundo, minimo]`);
+          return;
+        }
+        for (const nome of par.slice(0, 2)) {
+          if (!(nome in cores)) erros.push(`${caminho}: "${nome}" nao e cor de tema.cores`);
+          else if (!/^#[0-9a-fA-F]{6}$/.test(cores[nome])) erros.push(`${caminho}: ${nome} precisa ser opaca (#rrggbb) para medir o contraste`);
+        }
+        exigeNumero(par[2], `${caminho}[2]`, { min: 1, max: 21 });
+      });
     }
   }
 

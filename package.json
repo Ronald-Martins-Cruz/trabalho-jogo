@@ -11,7 +11,8 @@
     "sim": "node test/sim.mjs",
     "fuzz": "node test/fuzz.mjs",
     "dom": "node --expose-gc test/dom.mjs",
-    "serve": "node test/serve.mjs"
+    "serve": "node test/serve.mjs",
+    "fotos": "node test/fotos.mjs"
   },
   "license": "MIT"
 }

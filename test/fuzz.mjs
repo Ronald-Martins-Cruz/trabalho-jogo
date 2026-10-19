@@ -121,7 +121,8 @@ function ctxFalso() {
     },
     createRadialGradient: () => ({ addColorStop() {} }),
   };
-  for (const nome of ['setTransform', 'translate', 'rotate', 'beginPath', 'moveTo', 'lineTo', 'arc', 'rect', 'fill', 'stroke',
+  // `clip`: fase 15 (o lado de fora da Sala Lotada).
+  for (const nome of ['setTransform', 'translate', 'rotate', 'beginPath', 'moveTo', 'lineTo', 'arc', 'rect', 'clip', 'fill', 'stroke',
     'strokeRect', 'strokeText', 'fillRect', 'fillText', 'drawImage']) {
     ctx[nome] = () => {};
   }

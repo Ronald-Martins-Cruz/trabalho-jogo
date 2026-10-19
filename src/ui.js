@@ -121,9 +121,11 @@ export function criarUi(doc) {
   };
 
   // Fase 12: os tempos das transicoes moram em content.js (juice.css) e o CSS
-  // so os le como variaveis. A apresentacao da Banca na tela do TCC sai dos
-  // numeros de banca.fases, e e fixa: escrita uma vez.
+  // so os le como variaveis; fase 15: as cores e as fontes tambem (tema.css).
+  // A apresentacao da Banca na tela do TCC sai dos numeros de banca.fases, e
+  // e fixa: escrita uma vez.
   aplicarVariaveisCss(doc.documentElement);
+  aplicarVariaveisCss(doc.documentElement, CONTEUDO.tema.css);
   texto(el.tccDescricao, textoDaBancaNoTcc());
 
   // Recomeca a animacao de entrada (CSS, classe `entrando`) de um bloco que ja
@@ -945,8 +947,9 @@ export function textoDaBancaNoTcc(banca = CONTEUDO.banca, modelo = CONTEUDO.text
   return preencher(modelo, { fases: banca.fases.length, limiar: Math.round(banca.fases[0].ate * 100) });
 }
 
-// Escreve cada variavel de juice.css no :root (style.css so as le). Devolve
-// quantas escreveu; sem `style` (node, DOM falso) nao faz nada.
+// Escreve cada variavel de um mapa (juice.css; tema.css) no :root (style.css
+// so as le). Devolve quantas escreveu; sem `style` (node, DOM falso) nao faz
+// nada.
 export function aplicarVariaveisCss(raiz, css = CONTEUDO.juice.css) {
   if (!raiz || !raiz.style || typeof raiz.style.setProperty !== 'function') return 0;
   let n = 0;

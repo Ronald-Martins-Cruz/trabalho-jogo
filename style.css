@@ -1,17 +1,10 @@
 /* Semana de Provas — telas, HUD e cartas.
-   Tipografia so com fontes do sistema: nenhuma webfont baixada. */
+   Tipografia so com fontes do sistema: nenhuma webfont baixada.
 
-:root {
-  --fundo: #06070f;
-  --painel: rgba(13, 15, 26, 0.88);
-  --tinta: #e8ecff;
-  --tinta-fraca: #8b93c0;
-  --neon: #7aa2ff;
-  --neon-quente: #ffb860;
-  --hp: #ff5d7a;
-  --xp: #56d8a6;
-  --borda: rgba(122, 162, 255, 0.35);
-}
+   v2 (fase 15): o caderno na mesa. Nenhuma cor nem fonte e escrita aqui:
+   todas sao variaveis de content.js (tema.css, e os tempos em juice.css) que
+   o ui.js escreve no :root. Alfa e sempre color-mix(in srgb, var(--x) N%,
+   transparent). Este arquivo guarda as formas, os tamanhos e os keyframes. */
 
 * {
   box-sizing: border-box;
@@ -22,24 +15,91 @@ html, body {
   margin: 0;
 }
 
+/* A mesa do estudante, em volta da cena: madeira (veios finos sobre um
+   gradiente mais claro no meio, como debaixo da luz). */
 body {
   display: grid;
   place-items: center;
-  background: radial-gradient(circle at 50% 30%, #131735 0%, var(--fundo) 70%);
+  background-color: var(--mesa);
+  background-image:
+    repeating-linear-gradient(
+      92deg,
+      transparent 0 1.6em,
+      color-mix(in srgb, var(--tinta) 12%, transparent) 1.6em 1.72em,
+      transparent 1.72em 3.4em,
+      color-mix(in srgb, var(--papel) 9%, transparent) 3.4em 4.6em
+    ),
+    repeating-linear-gradient(
+      88deg,
+      transparent 0 5.3em,
+      color-mix(in srgb, var(--tinta) 8%, transparent) 5.3em 5.5em,
+      transparent 5.5em 9.1em
+    ),
+    radial-gradient(
+      ellipse at 50% 42%,
+      color-mix(in srgb, var(--mesa) 82%, var(--papel)) 0%,
+      var(--mesa) 55%,
+      color-mix(in srgb, var(--mesa) 72%, var(--tinta)) 100%
+    );
   color: var(--tinta);
-  font-family: ui-monospace, "Cascadia Mono", "Consolas", "DejaVu Sans Mono", monospace;
+  font-family: var(--fonte-texto);
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
+/* Objetos parados na mesa, fora do caminho: so nas janelas que tem mesa dos
+   lados (mais largas que a cena mais 10em), centrados na faixa livre. */
+.mesa-objeto {
+  position: fixed;
+  z-index: 0;
+  font-size: clamp(2rem, calc((100vw - 100vh * 16 / 9) * 0.28), 5.5rem);
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0.05em 0.08em 0.04em var(--sombra));
+}
+
+.mesa-cafe {
+  left: calc((100vw - 100vh * 16 / 9) / 4 - 0.5em);
+  bottom: 9vh;
+  rotate: -10deg;
+}
+
+.mesa-lapis {
+  left: calc((100vw - 100vh * 16 / 9) / 4 - 0.5em);
+  top: 12vh;
+  rotate: 30deg;
+  font-size: clamp(1.6rem, calc((100vw - 100vh * 16 / 9) * 0.2), 4rem);
+}
+
+.mesa-livros {
+  right: calc((100vw - 100vh * 16 / 9) / 4 - 0.5em);
+  top: 30vh;
+  rotate: 6deg;
+}
+
+@media (max-width: calc(100vh * 16 / 9 + 10em)) {
+  .mesa-objeto {
+    display: none;
+  }
+}
+
 /* A cena mantem 16:9 e todo o resto e dimensionado em em a partir dela,
-   entao a UI escala junto com o canvas em qualquer tela. */
+   entao a UI escala junto com o canvas em qualquer tela. E a pagina do
+   caderno sobre a mesa: papel, duas folhas por baixo e a sombra. */
 .cena {
   position: relative;
+  z-index: 1;
   width: min(100vw, calc(100vh * 16 / 9));
   aspect-ratio: 16 / 9;
   font-size: min(1.85vw, 3.28vh);
-  box-shadow: 0 0 4em rgba(0, 0, 0, 0.8);
+  background: var(--papel);
+  box-shadow:
+    0.2em 0.25em 0 color-mix(in srgb, var(--papel-sombra) 70%, var(--papel)),
+    0.4em 0.5em 0 var(--papel-sombra),
+    0.4em 0.5em 0.15em 0.05em var(--sombra),
+    0 1.4em 3em color-mix(in srgb, var(--tinta) 45%, transparent);
   overflow: hidden;
 }
 
@@ -67,75 +127,108 @@ body {
 /* ---------------------------------------------------------------- menu */
 
 .menu {
-  background: linear-gradient(180deg, rgba(6, 7, 15, 0.92), rgba(6, 7, 15, 0.98));
+  background: color-mix(in srgb, var(--papel) 86%, transparent);
   text-align: center;
 }
 
+/* Escrito a mao, com um risco de marca-texto por baixo. */
 .titulo {
   margin: 0;
+  padding: 0 0.25em;
+  font-family: var(--fonte-manuscrita);
   font-size: 3.4em;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-weight: 700;
   color: var(--tinta);
-  text-shadow: 0 0 0.35em rgba(122, 162, 255, 0.75), 0 0 1.2em rgba(122, 162, 255, 0.35);
+  background: linear-gradient(
+    transparent 58%,
+    color-mix(in srgb, var(--marca-amarelo) 90%, transparent) 58% 90%,
+    transparent 90%
+  );
 }
 
 .subtitulo {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 1.05em;
   color: var(--tinta-fraca);
 }
 
 .dica {
   margin: 0.6em 0 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 0.8em;
   color: var(--tinta-fraca);
-  opacity: 0.8;
+}
+
+/* A manuscrita do sistema (Segoe Print) tem ascendente e descendente
+   enormes: com a altura de linha normal cada linha dela ganha ~50% de altura,
+   e a colacao passava do quadro 16:9. */
+.titulo,
+.subtitulo,
+.dica,
+.titulo-pausa,
+.titulo-resultado,
+.titulo-jubilado,
+.titulo-carta,
+.subtitulo-carta,
+.titulo-loja,
+.titulo-anuncio,
+.titulo-tcc,
+.titulo-colacao {
+  line-height: 1.25;
 }
 
 /* --------------------------------------------------------------- botoes */
 
+/* O adesivo: branco, cantos redondos, contorno de tinta e sombra; levanta
+   (e entorta um pouco) no hover e no foco. */
 .botao {
   font: inherit;
   font-size: 1.1em;
-  letter-spacing: 0.12em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 0.55em 2.2em;
   color: var(--tinta);
-  background: rgba(122, 162, 255, 0.08);
-  border: 1px solid var(--borda);
-  border-radius: 0.3em;
+  background: var(--adesivo);
+  border: 0.12em solid var(--tinta);
+  border-radius: 0.8em;
+  box-shadow: 0 0.16em 0 var(--tinta), 0 0.4em 0.8em var(--sombra);
   cursor: pointer;
   transition: transform 90ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
 .botao:hover,
 .botao:focus-visible {
-  background: rgba(122, 162, 255, 0.2);
-  box-shadow: 0 0 1.2em rgba(122, 162, 255, 0.35);
-  transform: translateY(-2px);
+  transform: translateY(-0.12em) rotate(-1deg);
+  box-shadow: 0 0.28em 0 var(--tinta), 0 0.7em 1.1em var(--sombra);
   outline: none;
 }
 
+.botao:focus-visible {
+  outline: 0.12em dashed var(--tinta);
+  outline-offset: 0.3em;
+}
+
 .botao:active {
-  transform: translateY(1px);
+  transform: translateY(0.08em);
+  box-shadow: 0 0.06em 0 var(--tinta), 0 0.2em 0.4em var(--sombra);
 }
 
 .botao-destaque {
-  border-color: var(--neon-quente);
-  color: var(--neon-quente);
-  background: rgba(255, 184, 96, 0.08);
-}
-
-.botao-destaque:hover,
-.botao-destaque:focus-visible {
-  background: rgba(255, 184, 96, 0.2);
-  box-shadow: 0 0 1.2em rgba(255, 184, 96, 0.35);
+  background: var(--marca-amarelo);
 }
 
 .botao-discreto {
   font-size: 0.85em;
   color: var(--tinta-fraca);
+  border-color: var(--tinta-fraca);
+  box-shadow: 0 0.16em 0 var(--tinta-fraca), 0 0.4em 0.8em var(--sombra);
+}
+
+.botao-discreto:hover,
+.botao-discreto:focus-visible {
+  box-shadow: 0 0.28em 0 var(--tinta-fraca), 0 0.7em 1.1em var(--sombra);
 }
 
 /* ----------------------------------------------------------------- hud */
@@ -144,7 +237,8 @@ body {
    o rodape dos coringas. Antes ele cobria o terco de cima do canvas, e a
    parede da Sala Lotada e A Banca sumiam por baixo dele (pendencias 63/79).
    Fica por cima da pausa e da carta: o jogador le o HP e passa o mouse nos
-   coringas com o jogo parado. */
+   coringas com o jogo parado. O texto escrito sobre a pagina ganha um halo
+   do papel: sobre a vinheta da madrugada ele continua legivel. */
 .hud {
   justify-content: flex-start;
   padding: 0 1em;
@@ -211,7 +305,7 @@ body {
   display: flex;
   flex-direction: column;
   line-height: 1.15;
-  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.9);
+  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
 }
 
 .periodo {
@@ -223,14 +317,17 @@ body {
 
 .avaliacao {
   font-size: 1em;
+  font-weight: 600;
   color: var(--tinta);
 }
 
 .timer {
   font-size: 1.75em;
+  font-weight: 700;
   line-height: 1.1;
-  letter-spacing: 0.08em;
-  text-shadow: 0 0 0.4em rgba(122, 162, 255, 0.6);
+  letter-spacing: 0.04em;
+  color: var(--tinta);
+  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
 }
 
 /* Ultimos segundos (hud.timerUrgente). A classe vem do ESTADO, pintada por
@@ -238,8 +335,7 @@ body {
    correria sozinha com o jogo pausado — por isso ui.js poe .parado no timer
    fora da tela de avaliacao, e a animacao congela junto com o mundo. */
 .timer.urgente {
-  color: var(--hp);
-  text-shadow: 0 0 0.5em rgba(255, 93, 122, 0.8);
+  color: var(--caneta-vermelha);
   animation: pulsar-timer var(--pulso-timer) ease-in-out infinite;
 }
 
@@ -257,7 +353,7 @@ body {
   align-items: baseline;
   justify-self: end;
   gap: 0.4em;
-  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.9);
+  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
 }
 
 .hud-nivel .rotulo {
@@ -269,14 +365,15 @@ body {
 
 .hud-nivel .valor {
   font-size: 1.6em;
-  color: var(--xp);
+  font-weight: 700;
+  color: var(--caneta-verde);
 }
 
 .barra {
   position: relative;
   width: 100%;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid var(--borda);
+  background: color-mix(in srgb, var(--papel) 85%, transparent);
+  border: 1px solid var(--tinta);
   border-radius: 0.2em;
   overflow: hidden;
 }
@@ -297,13 +394,13 @@ body {
 }
 
 .barra-xp .preenchimento {
-  background: linear-gradient(90deg, rgba(86, 216, 166, 0.5), var(--xp));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--caneta-verde) 55%, var(--marca-verde)), var(--caneta-verde));
   width: 0;
   transition-duration: var(--tween-xp);
 }
 
 .barra-hp .preenchimento {
-  background: linear-gradient(90deg, rgba(255, 93, 122, 0.6), var(--hp));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--caneta-vermelha) 65%, var(--marca-rosa)), var(--caneta-vermelha));
 }
 
 /* O tween do HP: a barra cai rapido e o fantasma claro fica para tras, depois
@@ -312,7 +409,7 @@ body {
   position: absolute;
   inset: 0 auto 0 0;
   width: 100%;
-  background: rgba(255, 228, 234, 0.8);
+  background: var(--marca-rosa);
   transition: width var(--tween-hp-fantasma) ease-in var(--atraso-hp-fantasma);
 }
 
@@ -322,23 +419,25 @@ body {
   display: grid;
   place-items: center;
   font-size: 0.7em;
+  font-weight: 700;
   letter-spacing: 0.08em;
-  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.9);
+  color: var(--tinta);
+  text-shadow: 0 0 0.2em var(--papel), 0 0 0.4em var(--papel);
 }
 
 /* --------------------------------------------------------------- pausa */
 
 .pausa {
-  background: rgba(6, 7, 15, 0.72);
+  background: color-mix(in srgb, var(--papel) 72%, transparent);
   backdrop-filter: blur(2px);
 }
 
 .titulo-pausa {
   margin: 0 0 0.4em;
+  font-family: var(--fonte-manuscrita);
   font-size: 2.2em;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--neon);
+  font-weight: 700;
+  color: var(--tinta);
 }
 
 /* ------------------------------------------------------------ resultado */
@@ -347,7 +446,7 @@ body {
    decomposicao logo abaixo: e ela que ensina o jogador a jogar melhor, entao
    nao pode ser rodape. */
 .resultado {
-  background: radial-gradient(circle at 50% 35%, rgba(19, 35, 30, 0.9), rgba(6, 7, 15, 0.97));
+  background: color-mix(in srgb, var(--papel) 92%, transparent);
   gap: 0.45em;
 }
 
@@ -361,11 +460,10 @@ body {
 
 .titulo-resultado {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 2.4em;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--xp);
-  text-shadow: 0 0 0.5em rgba(86, 216, 166, 0.55);
+  font-weight: 700;
+  color: var(--caneta-verde);
 }
 
 .nota-caixa {
@@ -373,23 +471,26 @@ body {
   align-items: baseline;
   gap: 0.7em;
   padding: 0.35em 1.4em;
-  border: 1px solid var(--borda);
+  border: 0.1em solid var(--tinta);
   border-radius: 0.4em;
-  background: rgba(122, 162, 255, 0.07);
+  background: var(--adesivo);
+  box-shadow: 0 0.3em 0.8em var(--sombra);
 }
 
+/* A nota em caneta vermelha, como o professor escreve. */
 .nota-valor {
+  font-family: var(--fonte-carimbo);
   font-size: 3.6em;
   line-height: 1;
-  letter-spacing: 0.04em;
-  text-shadow: 0 0 0.35em rgba(122, 162, 255, 0.6);
+  letter-spacing: 0.02em;
+  color: var(--caneta-vermelha);
 }
 
 .nota-conceito {
   font-size: 1.1em;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--neon-quente);
+  color: var(--carimbo);
 }
 
 .decomposicao {
@@ -399,26 +500,29 @@ body {
   text-align: center;
 }
 
+/* Os creditos marcados de dourado (um risco de marca-texto na cor da moeda). */
 .creditos {
   margin: 0.1em 0 0.4em;
+  padding: 0 0.25em;
   font-size: 1.15em;
-  letter-spacing: 0.08em;
-  color: var(--neon-quente);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--tinta);
+  background: linear-gradient(transparent 55%, color-mix(in srgb, var(--moeda) 75%, transparent) 55% 92%, transparent 92%);
 }
 
 /* ------------------------------------------------------------- jubilado */
 
 .jubilado {
-  background: radial-gradient(circle at 50% 35%, rgba(46, 12, 22, 0.92), rgba(6, 7, 15, 0.97));
+  background: color-mix(in srgb, var(--papel) 92%, transparent);
 }
 
 .titulo-jubilado {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 2.8em;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--hp);
-  text-shadow: 0 0 0.5em rgba(255, 93, 122, 0.6);
+  font-weight: 700;
+  color: var(--caneta-vermelha);
 }
 
 /* ------------------------------------------------------------ relatorio */
@@ -438,9 +542,9 @@ body {
   font-size: 0.72em;
   white-space: nowrap;
   color: var(--tinta-fraca);
-  border: 1px dashed var(--borda);
+  border: 1px dashed var(--lapis);
   border-radius: 0.35em;
-  background: rgba(6, 7, 15, 0.7);
+  background: var(--papel);
 }
 
 .relatorio-rotulo {
@@ -457,7 +561,7 @@ body {
 
 .relatorio-status {
   min-width: 1em;
-  color: var(--xp);
+  color: var(--caneta-verde);
 }
 
 /* --------------------------------------------------------------- cartas */
@@ -466,22 +570,22 @@ body {
    opera. As opcoes sao <button> de verdade: foco, Enter e clique vem de graca
    do navegador, e o teclado continua funcionando se o mouse falhar. */
 .carta {
-  background: radial-gradient(circle at 50% 40%, rgba(19, 23, 53, 0.82), rgba(6, 7, 15, 0.94));
+  background: color-mix(in srgb, var(--papel) 78%, transparent);
   backdrop-filter: blur(2px);
   gap: 0.5em;
 }
 
 .titulo-carta {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 1.9em;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--xp);
-  text-shadow: 0 0 0.5em rgba(86, 216, 166, 0.55);
+  font-weight: 700;
+  color: var(--caneta-verde);
 }
 
 .subtitulo-carta {
   margin: 0 0 0.4em;
+  font-family: var(--fonte-manuscrita);
   font-size: 0.9em;
   color: var(--tinta-fraca);
 }
@@ -504,22 +608,24 @@ body {
   font: inherit;
   text-align: center;
   color: var(--tinta);
-  background: linear-gradient(180deg, rgba(23, 28, 60, 0.95), rgba(11, 13, 28, 0.95));
-  border: 1px solid var(--borda);
+  background: var(--adesivo);
+  border: 0.1em solid var(--tinta);
   border-radius: 0.5em;
+  box-shadow: 0 0.25em 0.6em var(--sombra);
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
 /* O destaque sai SO de `cartas.selecionada`: passar o mouse e focar com Tab
    escrevem nesse campo (ui.js -> apontarCarta), e o sincronizar de cada frame
    pinta a classe a partir dele. Um `:hover` independente aqui poria duas
    cartas levantadas ao mesmo tempo — a do mouse e a do cursor — e foi
-   exatamente esse o bug que a revisao da fase 04 pegou. */
+   exatamente esse o bug que a revisao da fase 04 pegou. A selecionada e a
+   marcada de marca-texto. */
 .carta-opcao.selecionada {
   transform: translateY(-0.5em);
-  border-color: var(--neon);
-  box-shadow: 0 0.6em 1.6em rgba(0, 0, 0, 0.55), 0 0 1.6em rgba(122, 162, 255, 0.45);
+  background: var(--marca-amarelo);
+  box-shadow: 0 0.8em 1.4em var(--sombra);
   outline: none;
 }
 
@@ -528,11 +634,8 @@ body {
 }
 
 .carta-opcao.carta-nova {
-  border-color: var(--neon-quente);
-}
-
-.carta-opcao.carta-nova.selecionada {
-  box-shadow: 0 0.6em 1.6em rgba(0, 0, 0, 0.55), 0 0 1.6em rgba(255, 184, 96, 0.45);
+  border-color: var(--carimbo);
+  border-style: dashed;
 }
 
 .carta-atalho {
@@ -541,7 +644,7 @@ body {
   left: 0.5em;
   font-size: 0.7em;
   color: var(--tinta-fraca);
-  border: 1px solid var(--borda);
+  border: 1px solid var(--lapis);
   border-radius: 0.25em;
   padding: 0 0.35em;
 }
@@ -553,18 +656,20 @@ body {
 
 .carta-nome {
   font-size: 1em;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .carta-nivel {
   font-size: 0.75em;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--xp);
+  color: var(--caneta-verde);
 }
 
 .carta-nova .carta-nivel {
-  color: var(--neon-quente);
+  color: var(--carimbo);
 }
 
 .carta-descricao {
@@ -574,13 +679,20 @@ body {
   color: var(--tinta-fraca);
 }
 
+/* No marca-texto, o texto fraco vira tinta: o contraste do rotulo fraco e
+   medido sobre o papel. */
+.carta-opcao.selecionada .carta-descricao,
+.carta-opcao.selecionada .carta-atalho {
+  color: var(--tinta);
+}
+
 /* ----------------------------------------------------------------- loja */
 
 /* A loja reusa a carta (.carta-opcao) para os itens: mesmo tamanho, mesmo
    destaque. Como nas cartas, NAO ha :hover proprio: o destaque sai so de
    .selecionada, que ui.js pinta a partir do cursor em estado.loja. */
 .loja {
-  background: radial-gradient(circle at 50% 30%, rgba(40, 30, 12, 0.9), rgba(6, 7, 15, 0.97));
+  background: color-mix(in srgb, var(--papel) 92%, transparent);
   gap: 0.4em;
 }
 
@@ -605,11 +717,10 @@ body {
 
 .titulo-loja {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 1.4em;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--neon-quente);
-  text-shadow: 0 0 0.5em rgba(255, 184, 96, 0.5);
+  font-weight: 700;
+  color: var(--tinta);
 }
 
 .loja-creditos {
@@ -619,20 +730,22 @@ body {
 
 .loja-preco {
   font-size: 0.85em;
-  letter-spacing: 0.08em;
-  color: var(--neon-quente);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--tinta);
 }
 
 .loja-item.raridade-medio {
-  border-color: rgba(86, 216, 166, 0.55);
+  border-color: var(--caneta-verde);
 }
 
 .loja-item.raridade-caro {
-  border-color: rgba(255, 184, 96, 0.7);
+  border-color: var(--moeda);
+  border-width: 0.16em;
 }
 
 .loja-item.sem-credito .loja-preco {
-  color: var(--hp);
+  color: var(--caneta-vermelha);
 }
 
 .loja-item.vendido {
@@ -649,19 +762,15 @@ body {
   margin-top: 0.3em;
 }
 
+/* O cursor da loja nos botoes: levantado e com um halo de marca-texto azul
+   (o amarelo ja e o do botao de destaque). */
 .loja-acao.selecionada {
-  background: rgba(122, 162, 255, 0.22);
-  box-shadow: 0 0 1.2em rgba(122, 162, 255, 0.45);
-  transform: translateY(-2px);
-}
-
-.botao-destaque.loja-acao.selecionada {
-  background: rgba(255, 184, 96, 0.22);
-  box-shadow: 0 0 1.2em rgba(255, 184, 96, 0.45);
+  transform: translateY(-0.12em) rotate(-1deg);
+  box-shadow: 0 0.28em 0 var(--tinta), 0 0 0 0.3em var(--marca-azul), 0 0.7em 1.1em var(--sombra);
 }
 
 .loja-acao.sem-credito {
-  color: var(--hp);
+  color: var(--caneta-vermelha);
 }
 
 /* Rerrolar sem nada novo para sortear: a loja recusa, o botao avisa antes. */
@@ -673,14 +782,8 @@ body {
    do teclado acenderiam dois botoes ao mesmo tempo. */
 .loja-acao:hover:not(.selecionada),
 .loja-acao:focus-visible:not(.selecionada) {
-  background: rgba(122, 162, 255, 0.08);
-  box-shadow: none;
+  box-shadow: 0 0.16em 0 var(--tinta), 0 0.4em 0.8em var(--sombra);
   transform: none;
-}
-
-.botao-destaque.loja-acao:hover:not(.selecionada),
-.botao-destaque.loja-acao:focus-visible:not(.selecionada) {
-  background: rgba(255, 184, 96, 0.08);
 }
 
 .loja-rotulo {
@@ -705,23 +808,27 @@ body {
   padding: 0.35em 0.4em;
   font: inherit;
   color: var(--tinta);
-  background: rgba(23, 28, 60, 0.85);
-  border: 1px solid var(--borda);
+  background: var(--adesivo);
+  border: 1px solid var(--tinta-fraca);
   border-radius: 0.4em;
+  box-shadow: 0 0.15em 0.4em var(--sombra);
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease;
 }
 
+/* Vender e corrigir de vermelho. */
 .loja-slot.selecionada {
   transform: translateY(-0.3em);
-  border-color: var(--hp);
-  box-shadow: 0 0 1.2em rgba(255, 93, 122, 0.4);
+  border-color: var(--caneta-vermelha);
+  background: var(--marca-rosa);
+  box-shadow: 0 0.5em 0.9em var(--sombra);
   outline: none;
 }
 
 .loja-slot.vazio {
   opacity: 0.35;
   border-style: dashed;
+  border-color: var(--lapis);
   cursor: default;
 }
 
@@ -744,11 +851,15 @@ body {
   color: var(--tinta-fraca);
 }
 
+.loja-slot.selecionada .loja-slot-venda {
+  color: var(--tinta);
+}
+
 .loja-aviso {
   min-height: 1.2em;
   margin: 0.2em 0 0;
   font-size: 0.85em;
-  color: var(--hp);
+  color: var(--caneta-vermelha);
 }
 
 /* O rodape do HUD: coringas da run e modificadores da avaliacao, cada grupo
@@ -775,7 +886,7 @@ body {
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--tinta-fraca);
-  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.9);
+  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
 }
 
 .hud-chips {
@@ -789,17 +900,18 @@ body {
   place-items: center;
   width: 1.9em;
   height: 1.9em;
-  border: 1px solid var(--borda);
-  border-radius: 0.35em;
-  background: rgba(10, 12, 28, 0.65);
+  border: 1px solid var(--tinta);
+  border-radius: 0.45em;
+  background: var(--adesivo);
+  box-shadow: 0 0.1em 0.3em var(--sombra);
   pointer-events: auto;
   cursor: help;
 }
 
-/* Modificador nao e coisa do jogador: borda tracejada e na cor do anuncio. */
+/* Modificador nao e coisa do jogador: borda tracejada, em caneta vermelha. */
 .hud-grupo-mods .hud-chip {
   border-style: dashed;
-  border-color: rgba(255, 184, 96, 0.55);
+  border-color: var(--caneta-vermelha);
 }
 
 .hud-chip-emoji {
@@ -831,10 +943,11 @@ body {
   padding: 0.45em 0.6em;
   font-size: 0.72em;
   text-align: left;
-  background: rgba(8, 10, 22, 0.96);
-  border: 1px solid var(--borda);
-  border-radius: 0.35em;
-  box-shadow: 0 0.4em 1.2em rgba(0, 0, 0, 0.6);
+  color: var(--tinta);
+  background: var(--marca-amarelo);
+  border: 1px solid color-mix(in srgb, var(--tinta) 25%, transparent);
+  border-radius: 0.2em;
+  box-shadow: 0 0.4em 1em var(--sombra);
   opacity: 0;
   visibility: hidden;
   translate: 0 0.4em;
@@ -850,20 +963,22 @@ body {
 }
 
 .hud-tooltip-nome {
-  color: var(--neon-quente);
+  font-weight: 700;
+  color: var(--tinta);
 }
 
 .hud-tooltip-descricao {
   line-height: 1.35;
-  color: var(--tinta-fraca);
+  color: var(--tinta);
 }
 
 /* -------------------------------------------------------------- anuncio */
 
 /* A "carta" da avaliacao antes de ela comecar: periodo, materia em destaque,
-   duracao e a lista de modificadores com emoji e descricao (design §9). */
+   duracao e a lista de modificadores com emoji e descricao (design §9). Os
+   modificadores sao avisos num post-it laranja. */
 .anuncio {
-  background: radial-gradient(circle at 50% 35%, rgba(22, 26, 58, 0.92), rgba(6, 7, 15, 0.97));
+  background: color-mix(in srgb, var(--papel) 92%, transparent);
   gap: 0.5em;
   text-align: center;
 }
@@ -871,9 +986,10 @@ body {
 .anuncio-novo-periodo {
   margin: 0;
   font-size: 0.75em;
+  font-weight: 700;
   letter-spacing: 0.3em;
   text-transform: uppercase;
-  color: var(--neon-quente);
+  color: var(--caneta-vermelha);
 }
 
 .anuncio-periodo {
@@ -886,10 +1002,10 @@ body {
 
 .titulo-anuncio {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 2.6em;
-  letter-spacing: 0.06em;
+  font-weight: 700;
   color: var(--tinta);
-  text-shadow: 0 0 0.35em rgba(122, 162, 255, 0.7);
 }
 
 .anuncio-linha {
@@ -917,9 +1033,10 @@ body {
   column-gap: 0.7em;
   align-items: center;
   padding: 0.55em 0.9em;
-  border: 1px solid var(--borda);
-  border-radius: 0.45em;
-  background: var(--painel);
+  border: 1px solid color-mix(in srgb, var(--tinta) 20%, transparent);
+  border-radius: 0.2em;
+  background: var(--marca-laranja);
+  box-shadow: 0 0.25em 0.6em var(--sombra);
   text-align: left;
 }
 
@@ -931,12 +1048,13 @@ body {
 
 .anuncio-mod-nome {
   font-size: 1em;
-  color: var(--neon-quente);
+  font-weight: 700;
+  color: var(--tinta);
 }
 
 .anuncio-mod-descricao {
   font-size: 0.82em;
-  color: var(--tinta-fraca);
+  color: var(--tinta);
 }
 
 .anuncio-sem-modificador {
@@ -948,19 +1066,21 @@ body {
 /* ------------------------------------------------------------------ tcc */
 
 /* O anuncio da defesa: a mesma familia visual do anuncio de avaliacao, com
-   a Banca apresentada antes da luta (o que ela faz e que ela avisa). */
+   a Banca apresentada antes da luta (o que ela faz e que ela avisa). Folha
+   branca, como o papel timbrado da defesa. */
 .tcc {
-  background: radial-gradient(circle at 50% 35%, rgba(40, 34, 12, 0.92), rgba(6, 7, 15, 0.97));
+  background: color-mix(in srgb, var(--adesivo) 93%, transparent);
   text-align: center;
   gap: 0.6em;
 }
 
 .titulo-tcc {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 2.8em;
-  letter-spacing: 0.3em;
-  color: var(--neon-quente);
-  text-shadow: 0 0 0.5em rgba(255, 184, 96, 0.55);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--tinta);
 }
 
 .tcc-banca {
@@ -970,9 +1090,10 @@ body {
   column-gap: 0.9em;
   width: min(36em, 88%);
   padding: 0.7em 1em;
-  border: 1px solid rgba(255, 93, 122, 0.45);
+  border: 0.1em solid var(--caneta-vermelha);
   border-radius: 0.5em;
-  background: var(--painel);
+  background: var(--papel);
+  box-shadow: 0 0.3em 0.8em var(--sombra);
   text-align: left;
 }
 
@@ -984,9 +1105,10 @@ body {
 .tcc-banca-nome {
   margin: 0 0 0.2em;
   font-size: 1.15em;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--hp);
+  color: var(--caneta-vermelha);
 }
 
 .tcc-banca-descricao {
@@ -1014,10 +1136,11 @@ body {
   justify-content: space-between;
   font-size: 0.85em;
   letter-spacing: 0.1em;
-  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.9);
+  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
 }
 
 .banca-nome {
+  font-weight: 700;
   text-transform: uppercase;
   color: var(--tinta);
 }
@@ -1028,19 +1151,19 @@ body {
 
 .barra-banca {
   height: 0.9em;
-  border-color: rgba(255, 93, 122, 0.5);
+  border-color: var(--caneta-vermelha);
 }
 
 .banca-hud .barra-banca .preenchimento {
-  background: linear-gradient(90deg, rgba(122, 162, 255, 0.55), var(--neon));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tinta) 55%, var(--papel)), var(--tinta));
 }
 
 .banca-hud.fase-2 .barra-banca .preenchimento {
-  background: linear-gradient(90deg, rgba(255, 93, 122, 0.6), var(--hp));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--caneta-vermelha) 65%, var(--marca-rosa)), var(--caneta-vermelha));
 }
 
 .banca-hud.fase-2 .banca-fase {
-  color: var(--hp);
+  color: var(--caneta-vermelha);
 }
 
 /* A pausa entre fases: a barra pisca, junto com a aura no canvas. A animacao
@@ -1051,8 +1174,8 @@ body {
 }
 
 @keyframes pulsar-banca {
-  from { box-shadow: 0 0 0 rgba(255, 93, 122, 0); }
-  to { box-shadow: 0 0 1em rgba(255, 93, 122, 0.8); }
+  from { box-shadow: 0 0 0 color-mix(in srgb, var(--caneta-vermelha) 0%, transparent); }
+  to { box-shadow: 0 0 1em color-mix(in srgb, var(--caneta-vermelha) 80%, transparent); }
 }
 
 .banca-marcas {
@@ -1066,7 +1189,7 @@ body {
   top: -0.15em;
   bottom: -0.15em;
   width: 2px;
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--tinta);
 }
 
 /* -------------------------------------------------------------- colacao */
@@ -1077,7 +1200,7 @@ body {
 /* A tela mais cheia do jogo: tudo tem que caber no 16:9 sem rolar, com folga
    embaixo para a barra de relatorio (debug) nao cobrir o botao. */
 .colacao {
-  background: radial-gradient(circle at 50% 30%, rgba(48, 38, 10, 0.94), rgba(6, 7, 15, 0.98));
+  background: color-mix(in srgb, var(--papel) 94%, transparent);
   gap: 0.25em;
   padding-bottom: 2.6em;
   text-align: center;
@@ -1085,11 +1208,11 @@ body {
 
 .titulo-colacao {
   margin: 0;
+  font-family: var(--fonte-manuscrita);
   font-size: 1.9em;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--neon-quente);
-  text-shadow: 0 0 0.5em rgba(255, 184, 96, 0.6), 0 0 1.4em rgba(255, 184, 96, 0.3);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--tinta);
 }
 
 .colacao-caixa {
@@ -1113,9 +1236,10 @@ body {
   gap: 0.15em;
   width: 13.5em;
   padding: 0.5em 0.6em;
-  border: 1px solid var(--borda);
+  border: 1px solid var(--papel-sombra);
   border-radius: 0.45em;
-  background: var(--painel);
+  background: var(--adesivo);
+  box-shadow: 0 0.2em 0.5em var(--sombra);
 }
 
 .colacao-periodo-nome {
@@ -1160,16 +1284,17 @@ body {
   grid-row: 1 / span 2;
   min-width: 1.1em;
   font-size: 1.05em;
-  color: var(--neon-quente);
+  font-weight: 700;
+  color: var(--tinta);
 }
 
 .colacao-linha.conceito-A .colacao-conceito-av {
-  color: var(--xp);
+  color: var(--caneta-verde);
 }
 
 .colacao-linha.conceito-F .colacao-conceito-av,
 .colacao-linha.conceito-D .colacao-conceito-av {
-  color: var(--hp);
+  color: var(--caneta-vermelha);
 }
 
 .colacao-rotulo {
@@ -1197,8 +1322,8 @@ body {
 }
 
 .colacao-recorde.novo {
-  color: var(--xp);
-  text-shadow: 0 0 0.5em rgba(86, 216, 166, 0.5);
+  font-weight: 700;
+  color: var(--caneta-verde);
 }
 
 /* ---------------------------------------------------- jubilado e menu */
@@ -1212,16 +1337,19 @@ body {
 .jubilado-faltava {
   margin: 0;
   font-size: 0.9em;
-  color: var(--hp);
+  color: var(--caneta-vermelha);
   text-align: center;
   max-width: 40em;
 }
 
 .menu-recorde {
   margin: 0.3em 0 0;
+  padding: 0 0.25em;
   font-size: 0.9em;
-  letter-spacing: 0.06em;
-  color: var(--neon-quente);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--tinta);
+  background: linear-gradient(transparent 55%, color-mix(in srgb, var(--moeda) 75%, transparent) 55% 92%, transparent 92%);
 }
 
 /* ----------------------------------------------------------------- som */
@@ -1237,9 +1365,10 @@ body {
   line-height: 1;
   padding: 0.3em 0.4em;
   color: var(--tinta);
-  background: rgba(10, 12, 28, 0.6);
-  border: 1px solid var(--borda);
-  border-radius: 0.3em;
+  background: var(--adesivo);
+  border: 1px solid var(--tinta-fraca);
+  border-radius: 0.45em;
+  box-shadow: 0 0.1em 0.3em var(--sombra);
   cursor: pointer;
   opacity: 0.75;
 }
@@ -1298,17 +1427,19 @@ body {
 }
 
 /* O conceito do boletim e da colacao chega como um carimbo: cai grande e
-   torto e assenta, depois do fade da tela. */
+   torto e assenta, depois do fade da tela. Fonte de carimbo, tinta de
+   carimbo (a cor vem de quem o usa: .nota-conceito). */
 .carimbo {
   display: inline-block;
   padding: 0.12em 0.5em;
-  border: 2px solid currentColor;
+  font-family: var(--fonte-carimbo);
+  border: 0.12em solid currentColor;
   border-radius: 0.3em;
   rotate: var(--carimbo-giro);
 }
 
 .camada:not(.oculto) .carimbo {
-  animation: carimbar var(--carimbo) ease-in var(--atraso-carimbo) backwards;
+  animation: carimbar var(--duracao-carimbo) ease-in var(--atraso-carimbo) backwards;
 }
 
 @keyframes carimbar {
