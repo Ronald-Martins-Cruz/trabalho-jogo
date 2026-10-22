@@ -787,24 +787,42 @@ function checarEmoji() {
     nav.ctx.gravar = true;
     rodar(quadros(nav, 1));
     nav.ctx.gravar = false;
-    const desenhados = new Set(nav.ctx.reg.textos.map((t) => t.texto));
     const fx = efeitosDe(nav.ctx);
     const marcados = fx.emojiFaltando ? [...fx.emojiFaltando] : [];
     if (marcados.sort().join() !== [...caso.espera].sort().join()) {
       falhar(onde, `marcou como faltando [${marcados.join(' ')}], esperava [${caso.espera.join(' ')}]`);
     }
-    for (const x of caso.espera) {
-      if (desenhados.has(x)) falhar(onde, `${x} foi desenhado como texto (tofu na tela)`);
-      const cor = cores[x] || CONTEUDO.visual.emojiFallback.corPadrao;
-      if (!nav.ctx.reg.formas.some((f) => f.cor === cor)) falhar(onde, `nenhuma forma na cor de ${x} (${cor})`);
+    // Fase 16: todo emoji de entidade e uma figurinha, cozida na folha (fora
+    // da arvore) e copiada com drawImage — o quadro nao escreve emoji nenhum.
+    const noQuadro = nav.ctx.reg.textos.filter((t) => emojisDoCanvas().includes(t.texto));
+    if (noQuadro.length > 0) falhar(onde, `${noQuadro[0].texto} escrito com fillText no quadro, fora do cozimento`);
+    if (!fx.folha.camada) {
+      falhar(onde, 'o desenho nao criou a folha de figurinhas');
+      semErros(nav, onde);
+      continue;
     }
-    // A forma troca o fillStyle e o devolve: o emoji seguinte sai na cor de
-    // sempre (opaca; um alfa nela apagaria o emoji colorido).
-    const tortos = nav.ctx.reg.textos.filter((t) => emojisDoCanvas().includes(t.texto) && t.cor !== CONTEUDO.visual.corEmoji);
-    if (tortos.length > 0) falhar(onde, `${tortos[0].texto} desenhado com fillStyle ${tortos[0].cor} (a cor da forma vazou)`);
+    const folha = fx.folha.camada.getContext('2d').reg;
+    const silhueta = fx.folha.silhueta.getContext('2d').reg;
+    const escritos = [...folha.textos, ...silhueta.textos];
+    const cozidos = new Set(escritos.map((t) => t.texto));
+    const naTela = 1 + CONTEUDO.inimigos.length;
+    if (nav.ctx.reg.copias < naTela) falhar(onde, `${nav.ctx.reg.copias} copias no quadro para ${naTela} figurinhas na tela`);
+    // O emoji que falta e cozido como a forma colorida do fallback (fase 14),
+    // com o mesmo contorno: a forma esta na silhueta e na folha, e e uma
+    // figurinha do cache como as outras.
+    for (const x of caso.espera) {
+      if (cozidos.has(x)) falhar(onde, `${x} foi cozido como texto (tofu na figurinha)`);
+      const cor = cores[x] || CONTEUDO.visual.emojiFallback.corPadrao;
+      if (!folha.formas.some((f) => f.cor === cor) || !silhueta.formas.some((f) => f.cor === cor)) falhar(onde, `nenhuma forma na cor de ${x} (${cor}) cozida na folha`);
+      if (![...fx.figurinhas.keys()].some((k) => k.startsWith(`${x}|`))) falhar(onde, `${x} sem figurinha no cache (a forma tem que ganhar o contorno)`);
+    }
+    // A forma troca o fillStyle e o devolve: o emoji seguinte e cozido na cor
+    // de sempre (opaca; um alfa nela apagaria o emoji colorido).
+    const tortos = escritos.filter((t) => emojisDoCanvas().includes(t.texto) && t.cor !== CONTEUDO.visual.corEmoji);
+    if (tortos.length > 0) falhar(onde, `${tortos[0].texto} cozido com fillStyle ${tortos[0].cor} (a cor da forma vazou)`);
     for (const x of caso.espera.length > 0 ? presentes : emojisDoCanvas()) {
-      const naTela = x === CONTEUDO.jogador.emoji || CONTEUDO.inimigos.some((i) => i.emoji === x);
-      if (naTela && !desenhados.has(x)) falhar(onde, `${x} (com fonte) nao foi desenhado como texto`);
+      const naTelaAgora = x === CONTEUDO.jogador.emoji || CONTEUDO.inimigos.some((i) => i.emoji === x);
+      if (naTelaAgora && !cozidos.has(x)) falhar(onde, `${x} (com fonte) nao foi cozido como texto`);
     }
     if (nav.ctx.pilha() !== 0) falhar(onde, `${nav.ctx.pilha()} save() sem restore()`);
     semErros(nav, onde);
@@ -826,7 +844,7 @@ function contadores(nav) {
   return {
     ...nav.contar(),
     pools: JSON.stringify(pools),
-    efeitos: `${fx.particulas.criados}/${fx.particulas.capacidade} ${fx.numeros.criados}/${fx.numeros.capacidade} fontes ${fx.fontes.size} rajadas ${fx.rajadas.size}`,
+    efeitos: `${fx.particulas.criados}/${fx.particulas.capacidade} ${fx.numeros.criados}/${fx.numeros.capacidade} fontes ${fx.fontes.size} rajadas ${fx.rajadas.size} figurinhas ${fx.figurinhas.size}`,
     eventos: e.eventos.length,
     audio: nav.audio.contextos,
     pilha: nav.ctx.pilha(),

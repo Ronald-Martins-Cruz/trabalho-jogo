@@ -133,6 +133,61 @@ export const CONTEUDO = {
         '❓': '#ff9ff3',
       },
     },
+    // Figurinhas (v2, fase 16): todo emoji de entidade e um adesivo colado na
+    // pagina — o emoji, um contorno branco recortado (a silhueta dele,
+    // dilatada) e a sombra do recorte, cozidos UMA vez por (emoji, tamanho,
+    // variante) numa folha de figurinhas fora da tela e copiados com
+    // drawImage. Por baixo, uma sombra eliptica no chao. A vida (balanco,
+    // inclinacao, espelho) sai do que o estado ja tem (estado.tempo, nasc,
+    // velocidade): nada e escrito em entidade. Tamanhos em fracao do tamanho
+    // do emoji, salvo onde diz px.
+    figurinhas: {
+      // A silhueta desenhada em `passos` deslocamentos em volta, a
+      // `espessura` x tamanho de distancia.
+      contorno: { espessura: 0.085, passos: 12, cor: COR.adesivo },
+      // A sombra do recorte: a silhueta com contorno, deslocada (a luz vem de
+      // cima e da esquerda, igual para toda figurinha e as duas variantes).
+      recorte: { dx: 0.045, dy: 0.075, alfa: 0.55, cor: COR.sombra },
+      // A sombra no chao: elipse de semi-eixo `raio` x tamanho, achatada por
+      // `razao` (altura/largura), `dy` x tamanho abaixo do centro do emoji.
+      // Cozida na celula, por baixo de tudo e sem girar: desenhada a parte,
+      // num caminho por quadro, custava mais que as proprias figurinhas.
+      chao: { raio: 0.36, razao: 0.3, dy: 0.5, alfa: 0.2, cor: COR.sombra },
+      // Sobe e desce ate `amplitude` px (no pixel inteiro), em `frequencia`
+      // Hz; a fase de cada um e o nasc dele (contado do 1o da avaliacao) x
+      // `fasePorNasc` (rad; o angulo de ouro espalha bem).
+      balanco: { amplitude: 1.6, frequencia: 1.5, fasePorNasc: 2.39996 },
+      // Inclina na direcao em que anda: `graus` no maximo, atingido a
+      // `velocidade` px/s de velocidade horizontal. A inclinacao e COZIDA em
+      // `niveis` degraus para cada lado (com 2: 0, metade e o maximo): girar
+      // a figurinha no desenho custa 10x mais no raster por CPU (fase 16,
+      // medido), e cada degrau e so mais uma celula na folha.
+      inclinacao: { graus: 8, velocidade: 120, niveis: 2 },
+      // Anda para a esquerda: a variante espelhada (cozida a parte, para a
+      // sombra do recorte ficar do mesmo lado). Abaixo de `limiarEspelho`
+      // px/s, o jogador e os inimigos continuam virados para onde estavam.
+      espelhar: true,
+      limiarEspelho: 12,
+      // O lado da celula de cada figurinha na folha: tamanho x `margem` (cabe
+      // o emoji inclinado, o contorno e a sombra do recorte).
+      margem: 1.6,
+      teto: 160, // figurinhas cozidas, no maximo (a run inteira cozinha ~60)
+      // A folha de figurinhas: um canvas so, `lado` x `lado` px, e `espaco`
+      // px vazios entre as celulas (o filtro do drawImage nao pega a vizinha).
+      atlas: { lado: 1024, espaco: 2 },
+      // O que muda por entidade (o resto vem de cima). Todas as seis aparecem.
+      porEntidade: {
+        jogador: {},
+        inimigo: {},
+        // A Banca: balanco lento e pesado, nao se vira, sombra maior.
+        banca: { balanco: { amplitude: 2.4, frequencia: 0.6 }, espelhar: false, chao: { raio: 0.46, alfa: 0.26 } },
+        orbe: { inclinacao: { graus: 0 } },
+        // Projeteis e satelites da caneta: em voo, sem balanco.
+        projetil: { balanco: { amplitude: 0 } },
+        // O ❓ da Banca: sem balanco, e nunca espelhado (viraria um ⸮).
+        pergunta: { balanco: { amplitude: 0 }, espelhar: false },
+      },
+    },
     tamanhoEmojiJogador: 30,
     // A arena por baixo da pausa e da carta, apagada em tinta: as telas em DOM
     // por cima dela ja trazem o veu de papel.
@@ -2884,8 +2939,13 @@ export function validarConteudo(conteudo = CONTEUDO) {
   };
   // O render faz o fim transparente dos gradientes (luz, luminaria, vinheta)
   // a partir da propria cor: so #rrggbb, #rgb ou rgb()/rgba() com tres numeros.
+  // Pendencia 105: comAlfa le um #rgba de 4 digitos como #rrggbb, e o #hex de 8
+  // perderia o alfa sem aviso — o validador recusa os dois aqui.
   const exigeCorDeGradiente = (valor, caminho) => {
     exigeCor(valor, caminho);
+    if (typeof valor === 'string' && valor.startsWith('#') && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(valor)) {
+      erros.push(`${caminho}: so #rgb ou #rrggbb (o alfa vem de outro campo), veio ${JSON.stringify(valor)}`);
+    }
     if (typeof valor === 'string' && valor.startsWith('rgb') && !/^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\)$/.test(valor)) {
       erros.push(`${caminho}: rgb()/rgba() com virgulas e tres canais numericos, veio ${JSON.stringify(valor)}`);
     }
@@ -3088,6 +3148,102 @@ export function validarConteudo(conteudo = CONTEUDO) {
       exigeNumero(f.passo, 'visual.foraDaArena.passo', { min: 3 });
       exigeNumero(f.largura, 'visual.foraDaArena.largura', { min: 0.5, max: 6 });
     }
+    validarFigurinhas(v.figurinhas, conteudo);
+  }
+
+  // As figurinhas (fase 16). Um numero podre aqui vira um sprite vazio, um
+  // contorno que vaza para a celula vizinha da folha ou um emoji girando.
+  function validarFigurinhas(fig, c) {
+    const raiz = 'visual.figurinhas';
+    if (!exigeObjeto(fig, raiz)) return;
+    // Os tres blocos que cada entidade pode sobrescrever; `parcial` e a
+    // sobrescrita (so confere o que ela traz).
+    const exigeVida = (o, caminho, parcial) => {
+      const campo = (bloco, nome, faixa) => {
+        if (parcial && (o[bloco] === undefined || o[bloco][nome] === undefined)) return;
+        exigeNumero(o[bloco][nome], `${caminho}.${bloco}.${nome}`, faixa);
+      };
+      for (const bloco of ['balanco', 'inclinacao', 'chao']) {
+        if (parcial && o[bloco] === undefined) continue;
+        if (!exigeObjeto(o[bloco], `${caminho}.${bloco}`)) return;
+      }
+      campo('balanco', 'amplitude', { min: 0, max: 12 });
+      campo('balanco', 'frequencia', { min: 0, max: 8 });
+      campo('balanco', 'fasePorNasc', { min: 0, max: 2 * Math.PI });
+      campo('inclinacao', 'graus', { min: 0, max: 45 });
+      campo('inclinacao', 'velocidade', { min: 1 });
+      campo('chao', 'raio', { min: 0, max: 1 });
+      campo('chao', 'razao', { min: 0.05, max: 1 });
+      campo('chao', 'dy', { min: -1, max: 1 });
+      campo('chao', 'alfa', { min: 0, max: 1 });
+      // A cor da sombra vira rgba(...) no render (comAlfa): tem que ser legivel.
+      if (!parcial || (o.chao && o.chao.cor !== undefined)) exigeCorDeGradiente(o.chao.cor, `${caminho}.chao.cor`);
+      if ((!parcial || o.espelhar !== undefined) && typeof o.espelhar !== 'boolean') erros.push(`${caminho}.espelhar: esperava true ou false`);
+      for (const chave of Object.keys(o)) {
+        if (!['balanco', 'inclinacao', 'chao', 'espelhar'].includes(chave) && parcial) erros.push(`${caminho}.${chave}: nao e coisa que uma entidade sobrescreva`);
+      }
+    };
+    exigeVida(fig, raiz, false);
+    // Os degraus cozidos sao um so para o jogo: o indice das figurinhas conta com eles.
+    if (fig.inclinacao && exigeNumero(fig.inclinacao.niveis, `${raiz}.inclinacao.niveis`, { min: 1, max: 6 }) && !Number.isInteger(fig.inclinacao.niveis)) {
+      erros.push(`${raiz}.inclinacao.niveis: esperava um inteiro`);
+    }
+    for (const [nome, o] of Object.entries(fig.porEntidade || {})) {
+      if (o && o.inclinacao && o.inclinacao.niveis !== undefined) erros.push(`${raiz}.porEntidade.${nome}.inclinacao.niveis: os degraus sao um so para todas (so graus e velocidade mudam)`);
+    }
+    if (exigeObjeto(fig.contorno, `${raiz}.contorno`)) {
+      exigeNumero(fig.contorno.espessura, `${raiz}.contorno.espessura`, { min: 0, max: 0.3 });
+      if (exigeNumero(fig.contorno.passos, `${raiz}.contorno.passos`, { min: 4, max: 32 }) && !Number.isInteger(fig.contorno.passos)) {
+        erros.push(`${raiz}.contorno.passos: esperava um inteiro`);
+      }
+      exigeCor(fig.contorno.cor, `${raiz}.contorno.cor`);
+    }
+    if (exigeObjeto(fig.recorte, `${raiz}.recorte`)) {
+      exigeNumero(fig.recorte.dx, `${raiz}.recorte.dx`, { min: -0.3, max: 0.3 });
+      exigeNumero(fig.recorte.dy, `${raiz}.recorte.dy`, { min: -0.3, max: 0.3 });
+      exigeNumero(fig.recorte.alfa, `${raiz}.recorte.alfa`, { min: 0, max: 1 });
+      exigeCorDeGradiente(fig.recorte.cor, `${raiz}.recorte.cor`);
+    }
+    exigeNumero(fig.limiarEspelho, `${raiz}.limiarEspelho`, { min: 0, max: 200 });
+    // A celula tem que caber o emoji, o contorno dos dois lados e a sombra.
+    const contorno = fig.contorno && typeof fig.contorno.espessura === 'number' ? fig.contorno.espessura : 0;
+    const desvio = fig.recorte && typeof fig.recorte.dx === 'number' && typeof fig.recorte.dy === 'number' ? Math.max(Math.abs(fig.recorte.dx), Math.abs(fig.recorte.dy)) : 0;
+    exigeNumero(fig.margem, `${raiz}.margem`, { min: 1 + 2 * (contorno + desvio), max: 4 });
+    if (exigeNumero(fig.teto, `${raiz}.teto`, { min: 1, max: 1024 }) && !Number.isInteger(fig.teto)) erros.push(`${raiz}.teto: esperava um inteiro`);
+    if (exigeObjeto(fig.atlas, `${raiz}.atlas`)) {
+      for (const [nome, faixa] of [['lado', { min: 64, max: 4096 }], ['espaco', { min: 0, max: 16 }]]) {
+        if (exigeNumero(fig.atlas[nome], `${raiz}.atlas.${nome}`, faixa) && !Number.isInteger(fig.atlas[nome])) erros.push(`${raiz}.atlas.${nome}: esperava um inteiro`);
+      }
+      // A maior figurinha do jogo (A Banca) cabe na folha.
+      const maior = c.visual && c.visual.banca && typeof c.visual.banca.tamanhoEmoji === 'number' ? c.visual.banca.tamanhoEmoji : 0;
+      if (typeof fig.margem === 'number' && Math.ceil(maior * fig.margem) > fig.atlas.lado) {
+        erros.push(`${raiz}.atlas.lado: ${fig.atlas.lado}px nao cabe A Banca (${maior}px x margem ${fig.margem})`);
+      }
+    }
+    if (exigeObjeto(fig.porEntidade, `${raiz}.porEntidade`)) {
+      const ENTIDADES = ['jogador', 'inimigo', 'banca', 'orbe', 'projetil', 'pergunta'];
+      for (const nome of ENTIDADES) if (!(nome in fig.porEntidade)) erros.push(`${raiz}.porEntidade.${nome}: ausente (o render desenha essa entidade; {} herda tudo)`);
+      for (const [nome, o] of Object.entries(fig.porEntidade)) {
+        if (!ENTIDADES.includes(nome)) erros.push(`${raiz}.porEntidade.${nome}: o render nao desenha essa entidade (${ENTIDADES.join(', ')})`);
+        else if (exigeObjeto(o, `${raiz}.porEntidade.${nome}`)) exigeVida(o, `${raiz}.porEntidade.${nome}`, true);
+      }
+    }
+    // Cada emoji do canvas e de uma entidade so: o cache nao tem o perfil na
+    // chave, e a celula sai cozida com o perfil (a sombra no chao, o giro
+    // maximo) de quem aparecer primeiro. Os mesmos emoji de emojisDoCanvas.
+    const donos = new Map();
+    const dono = (emoji, nome) => {
+      if (typeof emoji !== 'string') return;
+      const ja = donos.get(emoji);
+      if (ja === undefined) donos.set(emoji, nome);
+      else if (ja !== nome) erros.push(`${raiz}: o emoji ${emoji} e de duas entidades (${ja} e ${nome}); a figurinha sairia com o perfil de quem aparece primeiro`);
+    };
+    dono(c.jogador && c.jogador.emoji, 'jogador');
+    dono(c.xpOrbe && c.xpOrbe.emoji, 'orbe');
+    dono(c.banca && c.banca.emoji, 'banca');
+    dono(c.banca && c.banca.pergunta && c.banca.pergunta.emoji, 'pergunta');
+    for (const a of Array.isArray(c.armas) ? c.armas : []) dono(a && a.emoji, 'projetil');
+    for (const i of Array.isArray(c.inimigos) ? c.inimigos : []) dono(i && i.emoji, 'inimigo');
   }
 
   // O tema do caderno (fase 15): a paleta e as fontes do jogo, os climas da

@@ -34,10 +34,33 @@ export function efeitosDe(ctx) {
   return fx;
 }
 
-export function criarEfeitos(cfg = CONTEUDO.juice, tema = CONTEUDO.tema) {
+export function criarEfeitos(cfg = CONTEUDO.juice, tema = CONTEUDO.tema, fig = CONTEUDO.visual.figurinhas) {
   return {
     cfg,
     tema,
+    // Figurinhas (fase 16). O cache: `${emoji}|${tamanho}|${variante}|${degrau}`
+    // (variante 'normal' ou 'espelhada'; degrau da inclinacao, -niveis..niveis)
+    // -> { camada, sx, sy, largura, altura, cx, cy } — a celula dela na folha
+    // (`camada`), e o centro do emoji na celula. O indice e o mesmo cache sem
+    // montar string no caminho quente: emoji -> tamanho -> [variante x degrau].
+    fig,
+    figurinhas: new Map(),
+    indiceFigurinhas: new Map(),
+    // A folha de figurinhas e os dois rascunhos do cozimento (a silhueta e a
+    // silhueta dilatada): tres canvas, criados no 1o quadro com figurinha e
+    // nunca mais. `x`, `y`, `linha`: onde cabe a proxima (prateleiras).
+    folha: { tentada: false, camada: null, silhueta: null, dilatada: null, x: 0, y: 0, linha: 0 },
+    perfis: montarPerfis(fig),
+    corRecorte: comAlfa(fig.recorte.cor, 1), // a sombra do recorte, opaca: o alfa e o globalAlpha
+    // Para onde o jogador esta virado: so muda acima de limiarEspelho (parado,
+    // ele continua olhando para onde andava). Estado do desenho, nao do jogo.
+    jogadorEspelhado: false,
+    bancaVx: 0, // a velocidade do corpo da Banca, lida no laco dos inimigos
+    // A fase do balanco e o nasc RELATIVO ao primeiro visto na avaliacao: o
+    // nasc absoluto conta todo nascimento da pool desde que a pagina abriu, e
+    // a mesma run num navegador usado balancaria diferente de um novo.
+    baseNascInimigo: Infinity,
+    baseNascOrbe: Infinity,
     rng: criarRng(cfg.semente), // nunca o da simulacao
     // O da pagina (pintarPagina): reiniciado em cfg.fundo.semente a cada
     // pintura, para o mesmo clima sair sempre a mesma pagina — e sem mexer na
@@ -74,8 +97,13 @@ export function criarEfeitos(cfg = CONTEUDO.juice, tema = CONTEUDO.tema) {
     // `criarCamada` (w, h) -> canvas pode ser trocada (o smoke passa a dele).
     camadas: { clima: null, chao: null, vinheta: null, dano: null, criadas: 0 },
     criarCamada: null,
-    // Para o smoke e para medir: o que o ultimo quadro fez.
-    diag: { fontes: 0, avisos: 0, numerosAgrupados: 0, numerosDescartados: 0, particulasDescartadas: 0 },
+    // Para o smoke e para medir: o que o ultimo quadro fez (figurinhasCozidas,
+    // figurinhasRecusadas: neste quadro; as recusadas sairam sem contorno,
+    // com a folha cheia ou o teto atingido).
+    diag: {
+      fontes: 0, avisos: 0, numerosAgrupados: 0, numerosDescartados: 0, particulasDescartadas: 0,
+      figurinhasCozidas: 0, figurinhasRecusadas: 0,
+    },
   };
 }
 
@@ -115,6 +143,8 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
   fx.tamanhoFonte = -1;
   fx.diag.fontes = 0;
   fx.diag.avisos = 0;
+  fx.diag.figurinhasCozidas = 0;
+  fx.diag.figurinhasRecusadas = 0;
 
   // O tremor e so isto: o mundo inteiro desenhado deslocado. Nenhuma posicao
   // de entidade muda.
@@ -204,6 +234,9 @@ function limparEfeitos(fx) {
   fx.tremorY = 0;
   fx.flashJogador = 0;
   fx.vinhetaDano = 0;
+  fx.jogadorEspelhado = false;
+  fx.baseNascInimigo = Infinity;
+  fx.baseNascOrbe = Infinity;
 }
 
 function envelhecer(fx, dt) {
@@ -370,23 +403,34 @@ function somarNumero(fx, x, y, valor, doJogador) {
 // flash, de qualquer arma ou fonte. O objeto da pool sozinho NAO identifica o
 // inimigo — com nasc diferente, e outro inimigo e a memoria recomeca.
 export function flashDoInimigo(fx, e, agora) {
+  return memoriaDoInimigo(fx, e, agora).flash;
+}
+
+// O que o desenho lembra de cada inimigo entre quadros: o HP (o flash) e o
+// lado para onde ele esta virado (fase 16: o espelho so muda acima de
+// limiarEspelho, senao quem passa por cima do jogador piscaria de lado). Mora
+// em fx.golpes, nunca no inimigo.
+function memoriaDoInimigo(fx, e, agora) {
   const duracao = fx.cfg.flash.duracao;
   let g = fx.golpes.get(e);
   if (g === undefined) {
-    g = { nasc: e.nasc, hp: e.hp, ate: 0 };
+    g = { nasc: e.nasc, hp: e.hp, ate: 0, flash: 0, esquerda: false };
     fx.golpes.set(e, g);
-    return 0;
-  }
-  if (g.nasc !== e.nasc) {
+  } else if (g.nasc !== e.nasc) {
     g.nasc = e.nasc;
     g.hp = e.hp;
     g.ate = 0;
-    return 0;
+    g.esquerda = false;
+  } else {
+    if (e.hp < g.hp) g.ate = agora + duracao;
+    g.hp = e.hp;
   }
-  if (e.hp < g.hp) g.ate = agora + duracao;
-  g.hp = e.hp;
   const resta = g.ate - agora;
-  return resta > 0 ? Math.min(1, resta / duracao) : 0;
+  g.flash = resta > 0 ? Math.min(1, resta / duracao) : 0;
+  const limiar = fx.fig.limiarEspelho;
+  if (e.vx < -limiar) g.esquerda = true;
+  else if (e.vx > limiar) g.esquerda = false;
+  return g;
 }
 
 // O ponto da parede da arena por onde quem esta em (ex, ey) entra andando
@@ -799,42 +843,61 @@ function desenharForaDaArena(ctx, arena, clima, largura, altura, v, folga) {
 // estado.enemies guarda so os inimigos ativos da pool — o que nao esta em uso
 // nao aparece aqui, entao nao precisa de teste de `ativo` no desenho.
 //
-// Desenhados por TAMANHO, do maior para o menor: uma troca de fonte por
-// tamanho, e nao uma por inimigo numa horda misturada (pendencia 16) — e o
-// 📄 grande fica por baixo de quem anda em volta dele. A 1a passada so le:
-// guarda o flash de cada um (flashDoInimigo tem que ver todo inimigo, todo
-// quadro) e junta os tamanhos.
+// Desenhados por TAMANHO, do maior para o menor: o 📄 grande fica por baixo
+// de quem anda em volta dele (era tambem uma troca de fonte por tamanho, e
+// nao por inimigo — pendencia 16; com as figurinhas, a fonte so muda no
+// cozimento). A 1a passada so le: guarda o flash e o lado de cada um
+// (memoriaDoInimigo tem que ver todo inimigo, todo quadro) e junta os
+// tamanhos.
 const TAMANHOS = [];
 const doMaiorParaOMenor = (a, b) => b - a;
 let flashes = new Float32Array(0);
+let esquerdas = new Uint8Array(0);
 
 function desenharInimigos(ctx, fx, estado, v) {
   const inimigos = estado.enemies;
   const n = inimigos.length;
   const agora = estado.tempo;
-  if (flashes.length < n) flashes = new Float32Array(Math.max(n, CONTEUDO.arena.limites.enemies));
+  if (flashes.length < n) {
+    flashes = new Float32Array(Math.max(n, CONTEUDO.arena.limites.enemies));
+    esquerdas = new Uint8Array(flashes.length);
+  }
   TAMANHOS.length = 0;
   fx.flashBanca = 0;
+  fx.bancaVx = 0;
+  const perfil = fx.perfis.inimigo;
+  let bando = 0;
   for (let i = 0; i < n; i += 1) {
     const e = inimigos[i];
-    flashes[i] = flashDoInimigo(fx, e, agora);
+    const g = memoriaDoInimigo(fx, e, agora);
+    flashes[i] = g.flash;
+    esquerdas[i] = g.esquerda ? 1 : 0;
     // O chefe tem desenho proprio (desenharBanca), por cima do bando.
     if (e.chefe) {
-      fx.flashBanca = flashes[i];
+      fx.flashBanca = g.flash;
+      fx.bancaVx = e.vx;
       continue;
     }
+    if (e.nasc < fx.baseNascInimigo) fx.baseNascInimigo = e.nasc;
+    bando += 1;
     const tamanho = e.raio * v.emojiInimigoFator;
     if (!TAMANHOS.includes(tamanho)) TAMANHOS.push(tamanho);
   }
+  if (bando === 0) return;
   TAMANHOS.sort(doMaiorParaOMenor);
-  ctx.fillStyle = v.corEmoji;
+  const o = OPCOES;
+  o.perfil = perfil;
+  o.vy = 0;
   for (let t = 0; t < TAMANHOS.length; t += 1) {
     const tamanho = TAMANHOS[t];
     for (let i = 0; i < n; i += 1) {
       const e = inimigos[i];
       if (e.chefe || e.raio * v.emojiInimigoFator !== tamanho) continue;
-      if (flashes[i] > 0) desenharComFlash(ctx, fx, e.emoji, e.x, e.y, tamanho, flashes[i]);
-      else desenharEmoji(ctx, fx, e.emoji, e.x, e.y, tamanho);
+      o.vx = e.vx;
+      o.nasc = e.nasc - fx.baseNascInimigo;
+      o.espelhada = esquerdas[i] === 1;
+      o.flash = flashes[i];
+      desenharFigurinha(ctx, fx, e.emoji, e.x, e.y, tamanho, o);
     }
   }
 }
@@ -955,6 +1018,7 @@ function desenharNumeros(ctx, fx) {
 function desenharBanca(ctx, fx, b, v) {
   if (b.estado === ESTADOS_BANCA.DERROTADA) return;
   const vb = v.banca;
+  const perfil = fx.perfis.banca;
   let cor = vb.corAura[b.fase];
   if (b.estado === ESTADOS_BANCA.TRANSICAO) {
     const t = b.duracaoEstado - b.relogio;
@@ -964,9 +1028,14 @@ function desenharBanca(ctx, fx, b, v) {
   ctx.beginPath();
   ctx.arc(b.x, b.y, vb.raioAura, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = v.corEmoji;
-  if (fx.flashBanca > 0) desenharComFlash(ctx, fx, CONTEUDO.banca.emoji, b.x, b.y, vb.tamanhoEmoji, fx.flashBanca);
-  else desenharEmoji(ctx, fx, CONTEUDO.banca.emoji, b.x, b.y, vb.tamanhoEmoji);
+  const o = OPCOES;
+  o.perfil = perfil;
+  o.vx = fx.bancaVx;
+  o.vy = 0;
+  o.nasc = 0; // uma so: a fase nao importa
+  o.espelhada = false;
+  o.flash = fx.flashBanca;
+  desenharFigurinha(ctx, fx, CONTEUDO.banca.emoji, b.x, b.y, vb.tamanhoEmoji, o);
 }
 
 // O aviso de cada padrao (contrato da fase 10, tarefa 4): nasce fraco e
@@ -1067,11 +1136,19 @@ function avisoDaHorda(ctx, b, params, progresso) {
 // As perguntas do leque: por cima dos inimigos, como os projeteis do jogador
 // — e o que o jogador mais precisa enxergar.
 function desenharPerguntas(ctx, fx, perguntas, v) {
+  if (perguntas.length === 0) return;
   const cfg = CONTEUDO.banca.pergunta;
   const tamanho = cfg.raio * v.banca.emojiPerguntaFator;
-  ctx.fillStyle = v.corEmoji;
+  const o = OPCOES;
+  o.perfil = fx.perfis.pergunta;
+  o.espelhada = null;
+  o.flash = 0;
   for (let i = 0; i < perguntas.length; i += 1) {
-    desenharEmoji(ctx, fx, cfg.emoji, perguntas[i].x, perguntas[i].y, tamanho);
+    const p = perguntas[i];
+    o.vx = p.vx;
+    o.vy = p.vy;
+    o.nasc = p.nasc;
+    desenharFigurinha(ctx, fx, cfg.emoji, p.x, p.y, tamanho, o);
   }
 }
 
@@ -1097,10 +1174,17 @@ function desenharTransicaoDaBanca(ctx, fx, b, largura, altura, v) {
 // aparecer por cima de quem ele vai acertar para a leitura funcionar no meio
 // do bando.
 function desenharProjeteis(ctx, fx, projeteis, v) {
-  ctx.fillStyle = v.corEmoji;
+  if (projeteis.length === 0) return;
+  const o = OPCOES;
+  o.perfil = fx.perfis.projetil;
+  o.espelhada = null;
+  o.flash = 0;
   for (let i = 0; i < projeteis.length; i += 1) {
     const p = projeteis[i];
-    desenharEmoji(ctx, fx, p.emoji, p.x, p.y, p.raio * v.emojiProjetilFator);
+    o.vx = p.vx;
+    o.vy = p.vy;
+    o.nasc = p.nasc;
+    desenharFigurinha(ctx, fx, p.emoji, p.x, p.y, p.raio * v.emojiProjetilFator, o);
   }
 }
 
@@ -1109,6 +1193,7 @@ function desenharProjeteis(ctx, fx, projeteis, v) {
 // nascimento leva o orbe da borda ate ~36px para fora, e ele continua
 // coletavel la — a simulacao nao muda, so o lugar onde ele aparece.
 function desenharOrbes(ctx, fx, orbes, arena, v) {
+  if (orbes.length === 0) return;
   // Todo orbe tem o mesmo raio (CONTEUDO.xpOrbe.raio), so o valor muda — o
   // tamanho sai da conta uma vez, fora do laco.
   const raio = CONTEUDO.xpOrbe.raio;
@@ -1117,11 +1202,19 @@ function desenharOrbes(ctx, fx, orbes, arena, v) {
   const xMax = arena.direita - raio;
   const yMin = arena.topo + raio;
   const yMax = arena.base - raio;
-  ctx.fillStyle = v.corEmoji;
+  for (let i = 0; i < orbes.length; i += 1) if (orbes[i].nasc < fx.baseNascOrbe) fx.baseNascOrbe = orbes[i].nasc;
+  const o = OPCOES;
+  o.perfil = fx.perfis.orbe;
+  o.espelhada = null;
+  o.flash = 0;
   for (let i = 0; i < orbes.length; i += 1) {
-    const x = Math.min(xMax, Math.max(xMin, orbes[i].x));
-    const y = Math.min(yMax, Math.max(yMin, orbes[i].y));
-    desenharEmoji(ctx, fx, CONTEUDO.xpOrbe.emoji, x, y, tamanho);
+    const orbe = orbes[i];
+    const x = Math.min(xMax, Math.max(xMin, orbe.x));
+    const y = Math.min(yMax, Math.max(yMin, orbe.y));
+    o.vx = orbe.vx;
+    o.vy = orbe.vy;
+    o.nasc = orbe.nasc - fx.baseNascOrbe;
+    desenharFigurinha(ctx, fx, CONTEUDO.xpOrbe.emoji, x, y, tamanho, o);
   }
 }
 
@@ -1130,16 +1223,26 @@ function desenharJogador(ctx, fx, player, v) {
   if (!player.vivo) return;
   desenharRastro(ctx, player, v);
 
+  // Para onde ele olha: so vira acima do limiar (parado, continua olhando
+  // para onde andava).
+  const limiar = fx.fig.limiarEspelho;
+  if (player.vx < -limiar) fx.jogadorEspelhado = true;
+  else if (player.vx > limiar) fx.jogadorEspelhado = false;
+
   // Pisca-pisca durante os i-frames: alterna com base no proprio contador de
   // invulnerabilidade (que so anda durante a avaliacao), nunca em estado.tempo.
   const piscando =
     player.invulneravel > 0 && Math.floor(player.invulneravel / v.piscaIntervalo) % 2 === 1;
   if (piscando) return;
 
-  ctx.fillStyle = v.corEmoji;
-  const flash = fx.flashJogador > 0 ? fx.flashJogador / fx.cfg.flash.jogadorDuracao : 0;
-  if (flash > 0) desenharComFlash(ctx, fx, CONTEUDO.jogador.emoji, player.x, player.y, v.tamanhoEmojiJogador, flash);
-  else desenharEmoji(ctx, fx, CONTEUDO.jogador.emoji, player.x, player.y, v.tamanhoEmojiJogador);
+  const o = OPCOES;
+  o.perfil = fx.perfis.jogador;
+  o.vx = player.vx;
+  o.vy = player.vy;
+  o.nasc = 0;
+  o.espelhada = fx.jogadorEspelhado;
+  o.flash = fx.flashJogador > 0 ? fx.flashJogador / fx.cfg.flash.jogadorDuracao : 0;
+  desenharFigurinha(ctx, fx, CONTEUDO.jogador.emoji, player.x, player.y, v.tamanhoEmojiJogador, o);
 }
 
 // Rastro: um traco que afina para tras, pelos pontos do buffer circular, do
@@ -1194,12 +1297,20 @@ function desenharArmasEspeciais(ctx, fx, player, v) {
   }
 }
 
+// Os satelites da caneta: figurinhas de projetil (sem balanco); sem
+// velocidade guardada, nao inclinam nem espelham.
 function desenharOrbital(ctx, fx, player, arma, dados, nivel, v) {
   const tamanho = nivel.raioColisao * v.emojiSateliteFator;
-  ctx.fillStyle = v.corEmoji;
+  const o = OPCOES;
+  o.perfil = fx.perfis.projetil;
+  o.vx = 0;
+  o.vy = 0;
+  o.nasc = 0;
+  o.espelhada = false;
+  o.flash = 0;
   for (let s = 0; s < nivel.quantidade; s += 1) {
     const pos = posicaoSatelite(player, arma, nivel, s);
-    desenharEmoji(ctx, fx, dados.emoji, pos.x, pos.y, tamanho);
+    desenharFigurinha(ctx, fx, dados.emoji, pos.x, pos.y, tamanho, o);
   }
 }
 
@@ -1337,19 +1448,287 @@ function mesmosPixels(a, b) {
   return true;
 }
 
-// O flash: o emoji "incha" (escala do contexto, nao fonte nova) e e
-// redesenhado em modo aditivo, que clareia so os pixels dele.
-function desenharComFlash(ctx, fx, emoji, x, y, tamanho, forca) {
-  const f = fx.cfg.flash;
-  const escala = 1 + f.escalaPop * forca;
-  ctx.setTransform(escala, 0, 0, escala, x + fx.tremorX, y + fx.tremorY);
+// ---------------------------------------------------------- figurinhas
+
+// Cada entidade e um adesivo (fase 16): o emoji com contorno branco recortado
+// e a sombra do recorte, e por baixo a sombra no chao, cozidos uma vez por
+// (emoji, tamanho, variante, degrau) na folha de figurinhas e copiados com
+// um drawImage so.
+// A vida sai do que o estado ja tem: balanco (seno de estado.tempo, fase pelo
+// nasc), inclinacao (pela velocidade), espelho (andando para a esquerda) — e
+// o flash/pop da fase 12, uma 2a passada do MESMO sprite em 'lighter'.
+//
+// `opcoes` (desenharFigurinha):
+//   perfil     fx.perfis.<entidade> (jogador, inimigo, banca, orbe, projetil, pergunta)
+//   vx, vy     velocidade, px/s: a inclinacao e, sem `espelhada`, o lado
+//   nasc       a fase do balanco (x balanco.fasePorNasc): o nasc relativo ao
+//              1o da avaliacao (fx.baseNasc*), nunca o absoluto da pool
+//   espelhada  true/false: o lado lembrado por quem chama; null: pela vx
+//   flash      0..1: o pop e a 2a passada
+// Os grupos reusam OPCOES: nenhum objeto por figurinha por quadro.
+const OPCOES = { perfil: null, vx: 0, vy: 0, nasc: 0, espelhada: null, flash: 0 };
+const VOLTA = Math.PI * 2;
+
+// O perfil de cada entidade: os numeros de cima com o que ela sobrescreve,
+// montados uma vez (criarEfeitos), com o que o quadro usa ja calculado.
+function montarPerfis(fig) {
+  const perfis = {};
+  for (const [nome, o] of Object.entries(fig.porEntidade)) {
+    const balanco = { ...fig.balanco, ...(o.balanco || {}) };
+    const inclinacao = { ...fig.inclinacao, ...(o.inclinacao || {}) };
+    const chao = { ...fig.chao, ...(o.chao || {}) };
+    perfis[nome] = {
+      nome,
+      balanco,
+      inclinacao,
+      chao,
+      espelhar: o.espelhar === undefined ? fig.espelhar : o.espelhar,
+      omega: VOLTA * balanco.frequencia,
+      inclinacaoMax: (inclinacao.graus * Math.PI) / 180,
+      corChao: comAlfa(chao.cor, chao.alfa),
+    };
+  }
+  return perfis;
+}
+
+// Uma figurinha no mundo. Quem chama esta no transform do mundo (com o
+// tremor) e e nele que ela devolve o contexto, com alfa 1 e 'source-over'.
+//
+// O raster por CPU do Chrome (o caso pessimista que o --perf mede) copia uma
+// celula da folha no caminho rapido so quando ela cai em pixel inteiro e sem
+// giro nem escala: girar custa ~10x, posicao fracionaria ~2x (fase 16,
+// medido). Por isso a inclinacao e cozida em degraus (`inclinacao.niveis`) e
+// a figurinha e grudada no pixel inteiro; so o pop do flash escala. A
+// sombra no chao e cozida na celula, por baixo da figurinha: desenhada a
+// parte, num caminho de 400 elipses, custava mais que as 400 figurinhas.
+export function desenharFigurinha(ctx, fx, emoji, x, y, tamanho, opcoes = OPCOES) {
+  const p = opcoes.perfil;
+  const espelhada = p.espelhar && (opcoes.espelhada === null ? opcoes.vx < -fx.fig.limiarEspelho : opcoes.espelhada);
+  // Sobe e volta: 0 a `amplitude` px para cima (a sombra no chao, cozida na
+  // celula, vai junto).
+  const b = p.balanco;
+  const sobe = b.amplitude > 0 ? b.amplitude * 0.5 * (1 + Math.sin(p.omega * fx.relogio + opcoes.nasc * b.fasePorNasc)) : 0;
+  // O degrau da inclinacao: -niveis..niveis, pela velocidade horizontal.
+  let nivel = 0;
+  if (p.inclinacaoMax > 0) {
+    const k = opcoes.vx / p.inclinacao.velocidade;
+    nivel = Math.round((k > 1 ? 1 : k < -1 ? -1 : k) * fx.fig.inclinacao.niveis);
+  }
+  const flash = opcoes.flash;
+  const escala = flash > 0 ? 1 + fx.cfg.flash.escalaPop * flash : 1;
+  const tx = fx.tremorX;
+  const ty = fx.tremorY;
+  const f = figurinha(ctx, fx, emoji, tamanho, espelhada, nivel, p);
+  if (f !== null) {
+    let dx;
+    let dy;
+    if (escala === 1) {
+      // No pixel inteiro do canvas (o mundo ja esta deslocado pelo tremor).
+      dx = Math.round(x + tx) - tx - f.cx;
+      dy = Math.round(y - sobe + ty) - ty - f.cy;
+    } else {
+      ctx.setTransform(escala, 0, 0, escala, x + tx, y - sobe + ty);
+      dx = -f.cx;
+      dy = -f.cy;
+    }
+    ctx.drawImage(f.camada, f.sx, f.sy, f.largura, f.altura, dx, dy, f.largura, f.altura);
+    if (flash > 0) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = fx.cfg.flash.alpha * flash;
+      ctx.drawImage(f.camada, f.sx, f.sy, f.largura, f.altura, dx, dy, f.largura, f.altura);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (escala !== 1) ctx.setTransform(1, 0, 0, 1, tx, ty);
+    return;
+  }
+  // Sem folha (o node sem criarCamada) ou com ela cheia: o emoji direto,
+  // sem contorno, com a mesma vida (o giro e o espelho sao do contexto).
+  const angulo = (nivel / fx.fig.inclinacao.niveis) * p.inclinacaoMax;
+  const cos = Math.cos(angulo) * escala;
+  const sen = Math.sin(angulo) * escala;
+  if (espelhada) ctx.setTransform(-cos, -sen, -sen, cos, x + tx, y - sobe + ty);
+  else ctx.setTransform(cos, sen, -sen, cos, x + tx, y - sobe + ty);
+  ctx.fillStyle = CONTEUDO.visual.corEmoji;
   desenharEmoji(ctx, fx, emoji, 0, 0, tamanho);
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = f.alpha * forca;
-  glifo(ctx, fx, emoji, 0, 0, tamanho);
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.setTransform(1, 0, 0, 1, fx.tremorX, fx.tremorY);
+  if (flash > 0) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = fx.cfg.flash.alpha * flash;
+    glifo(ctx, fx, emoji, 0, 0, tamanho);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.setTransform(1, 0, 0, 1, tx, ty);
+}
+
+// A figurinha do cache, cozida na primeira vez que aparece. null: nao ha
+// folha (node sem criarCamada) ou ela nao coube (a folha cheia, o teto).
+// A recusa tambem fica guardada: nao se tenta de novo a cada quadro. O indice
+// e emoji -> tamanho -> celulas [variante x degrau], sem string no caminho
+// quente; o degrau e de um so jogo (inclinacao.niveis), e cada emoji e de
+// uma entidade so (o perfil que cozinha e o primeiro que pede).
+const RECUSADA = { recusada: true };
+
+function figurinha(ctx, fx, emoji, tamanho, espelhada, nivel, perfil) {
+  let porTamanho = fx.indiceFigurinhas.get(emoji);
+  if (porTamanho === undefined) {
+    porTamanho = new Map();
+    fx.indiceFigurinhas.set(emoji, porTamanho);
+  }
+  const niveis = fx.fig.inclinacao.niveis;
+  let celulas = porTamanho.get(tamanho);
+  if (celulas === undefined) {
+    celulas = new Array(2 * (2 * niveis + 1)).fill(null);
+    porTamanho.set(tamanho, celulas);
+  }
+  const i = (espelhada ? 2 * niveis + 1 : 0) + nivel + niveis;
+  let f = celulas[i];
+  if (f === null) {
+    f = cozinhar(ctx, fx, emoji, tamanho, espelhada, nivel, perfil);
+    celulas[i] = f;
+  }
+  if (f === RECUSADA) {
+    fx.diag.figurinhasRecusadas += 1;
+    return null;
+  }
+  return f;
+}
+
+// A folha e os dois rascunhos, uma vez por fx. Sem como criar camada, nenhum.
+function prepararFolha(ctx, fx) {
+  const folha = fx.folha;
+  if (folha.tentada) return folha.camada !== null;
+  folha.tentada = true;
+  const lado = fx.fig.atlas.lado;
+  const camada = novaCamada(ctx, fx, lado, lado);
+  if (!camada) return false;
+  folha.silhueta = novaCamada(ctx, fx, 1, 1);
+  folha.dilatada = novaCamada(ctx, fx, 1, 1);
+  folha.camada = camada;
+  return true;
+}
+
+// O cozimento (escopo §3.2, decisao 4), numa celula quadrada da folha:
+//   0. a sombra no chao, a elipse do perfil, nivelada (nao gira com o degrau);
+//   1. o emoji (ou a forma colorida do fallback, fase 14) na `silhueta`, com
+//      visual.corEmoji — e aqui que o invariante da fase 12 vale agora;
+//   2. 'source-in' na cor do adesivo: sobra so a silhueta, branca;
+//   3. a silhueta desenhada em `passos` deslocamentos em volta, na `dilatada`;
+//   4. a dilatada na cor da sombra, na folha, deslocada e com o alfa dela;
+//   5. a dilatada branca, na folha: o contorno;
+//   6. o emoji por cima.
+// A variante espelhada e o emoji desenhado com escala (-1, 1), e o degrau da
+// inclinacao, girado, nos passos 1 e 6; a sombra do recorte fica do mesmo
+// lado em todas. O lado da celula e par: o centro cai em pixel inteiro. Tudo
+// recortado na celula: nada vaza para a vizinha.
+function cozinhar(ctx, fx, emoji, tamanho, espelhada, nivel, perfil) {
+  const fig = fx.fig;
+  const angulo = (nivel / fig.inclinacao.niveis) * perfil.inclinacaoMax;
+  if (!prepararFolha(ctx, fx) || fx.figurinhas.size >= fig.teto) return RECUSADA;
+  const folha = fx.folha;
+  const ladoFolha = fig.atlas.lado;
+  const espaco = fig.atlas.espaco;
+  const lado = 2 * Math.ceil((tamanho * fig.margem) / 2);
+  if (folha.x + lado > ladoFolha) {
+    folha.x = 0;
+    folha.y += folha.linha + espaco;
+    folha.linha = 0;
+  }
+  if (folha.y + lado > ladoFolha) return RECUSADA;
+  const sx = folha.x;
+  const sy = folha.y;
+  folha.x += lado + espaco;
+  if (lado > folha.linha) folha.linha = lado;
+
+  const meio = lado / 2;
+  const silhueta = rascunho(folha.silhueta, lado);
+  const dilatada = rascunho(folha.dilatada, lado);
+  const c = folha.camada.getContext('2d');
+
+  pintarFigura(silhueta, fx, emoji, tamanho, meio, meio, espelhada, angulo);
+  silhueta.globalCompositeOperation = 'source-in';
+  silhueta.fillStyle = fig.contorno.cor;
+  silhueta.fillRect(0, 0, lado, lado);
+  silhueta.globalCompositeOperation = 'source-over';
+
+  const raio = fig.contorno.espessura * tamanho;
+  dilatada.drawImage(folha.silhueta, 0, 0);
+  for (let k = 0; k < fig.contorno.passos; k += 1) {
+    const a = (VOLTA * k) / fig.contorno.passos;
+    dilatada.drawImage(folha.silhueta, Math.cos(a) * raio, Math.sin(a) * raio);
+  }
+  dilatada.globalCompositeOperation = 'source-in';
+  dilatada.fillStyle = fx.corRecorte;
+  dilatada.fillRect(0, 0, lado, lado);
+
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = 'source-over';
+  c.beginPath();
+  c.rect(sx, sy, lado, lado);
+  c.clip();
+  c.clearRect(sx, sy, lado, lado);
+  const chao = perfil.chao;
+  if (chao.alfa > 0 && chao.raio > 0) {
+    const rx = chao.raio * tamanho;
+    c.fillStyle = perfil.corChao;
+    c.setTransform(rx, 0, 0, rx * chao.razao, sx + meio, sy + meio + chao.dy * tamanho);
+    c.beginPath();
+    c.arc(0, 0, 1, 0, VOLTA);
+    c.fill();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+  }
+  c.globalAlpha = fig.recorte.alfa;
+  c.drawImage(folha.dilatada, sx + fig.recorte.dx * tamanho, sy + fig.recorte.dy * tamanho);
+  c.globalAlpha = 1;
+  dilatada.fillStyle = fig.contorno.cor;
+  dilatada.fillRect(0, 0, lado, lado);
+  dilatada.globalCompositeOperation = 'source-over';
+  c.drawImage(folha.dilatada, sx, sy);
+  pintarFigura(c, fx, emoji, tamanho, sx + meio, sy + meio, espelhada, angulo);
+  c.restore();
+
+  const f = { camada: folha.camada, sx, sy, largura: lado, altura: lado, cx: meio, cy: meio };
+  fx.figurinhas.set(`${emoji}|${tamanho}|${espelhada ? 'espelhada' : 'normal'}|${nivel}`, f);
+  fx.diag.figurinhasCozidas += 1;
+  return f;
+}
+
+// Um rascunho do tamanho da celula, limpo e com o contexto no padrao. Mudar o
+// tamanho do canvas ja limpa (e zera o contexto); senao, clearRect.
+function rascunho(camada, lado) {
+  if (camada.width !== lado || camada.height !== lado) {
+    camada.width = lado;
+    camada.height = lado;
+  }
+  const c = camada.getContext('2d');
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = 'source-over';
+  c.clearRect(0, 0, lado, lado);
+  return c;
+}
+
+// O emoji (ou a forma do fallback) centrado em (x, y), espelhado (escala
+// -1, 1) e girado se pedido, sempre com visual.corEmoji: o navegador aplica o
+// alfa do fillStyle ao emoji colorido (fase 12).
+function pintarFigura(c, fx, emoji, tamanho, x, y, espelhada, angulo) {
+  let fonte = fx.fontes.get(tamanho);
+  if (fonte === undefined) {
+    fonte = `${tamanho}px ${CONTEUDO.visual.fonteEmoji}`;
+    fx.fontes.set(tamanho, fonte);
+  }
+  const m = espelhada ? -1 : 1;
+  const cos = Math.cos(angulo);
+  const sen = Math.sin(angulo);
+  c.setTransform(cos * m, sen * m, -sen, cos, x, y);
+  c.font = fonte;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillStyle = CONTEUDO.visual.corEmoji;
+  glifo(c, fx, emoji, 0, 0, tamanho);
+  c.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function usarFonte(ctx, fx, fonte) {

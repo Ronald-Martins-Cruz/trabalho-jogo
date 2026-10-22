@@ -12,6 +12,18 @@
 //   npm run fotos -- --saida <pasta>      onde gravar (padrao: <temp>/semana-de-provas-fotos)
 //   npm run fotos -- --so loja,clima      so as cenas cujo nome contem um dos trechos
 //   CHROME=<caminho> npm run fotos        outro Chrome/Chromium
+//   npm run fotos -- --perf               nao fotografa: mede o desenho (fase 16)
+//
+// O --perf e o metodo do handoff 12, refeito como codigo: o Chrome sem janela
+// com o canvas em raster por CPU (sem GPU, que e o caso pessimista), 400
+// inimigos misturados andando para o jogador. Duas medidas:
+//   - so o desenho: `desenhar` num canvas fora da tela, quadro a quadro, com
+//     getImageData de 1 pixel para forcar o raster, e a ablacao (so a arena;
+//     + numeros; + 800 faiscas; tudo);
+//   - o laco real: o jogo rodando, com a horda completada a 400 e 2 mortes e
+//     2 golpes injetados por quadro; o intervalo entre quadros.
+// Antes de medir, conta os Chrome sem janela que nao sao deste processo (um
+// orfao deixa tudo mais lento — surpresa do handoff 12).
 //
 // Sem Chrome na maquina, avisa e sai com 0: nao pode reprovar quem nao tem
 // navegador. Fecha o Chrome pelo protocolo (Browser.close) e confere que
@@ -33,6 +45,13 @@ const opcao = (nome, padrao) => {
 };
 const SAIDA = resolve(opcao('--saida', join(tmpdir(), 'semana-de-provas-fotos')));
 const SO = opcao('--so', '').split(',').map((s) => s.trim()).filter(Boolean);
+const PERF = args.includes('--perf');
+// O --perf: quadros medidos (depois do aquecimento) por linha da ablacao,
+// rodadas de cada linha, e segundos do laco real.
+const PERF_QUADROS = 150;
+const PERF_AQUECIMENTO = 30;
+const PERF_RODADAS = 2;
+const PERF_LACO = 6;
 const TAMANHOS = [[1920, 1080], [1280, 720]];
 const ESPERA_CDP = 30000; // ms por comando do protocolo
 
@@ -103,13 +122,13 @@ async function conectar(url) {
     }
     pendentes.clear();
   };
-  const enviar = (metodo, params = {}, sessionId = undefined) =>
+  const enviar = (metodo, params = {}, sessionId = undefined, espera = ESPERA_CDP) =>
     new Promise((ok, erro) => {
       id += 1;
       const relogio = setTimeout(() => {
         pendentes.delete(id);
-        erro(new Error(`${metodo}: sem resposta em ${ESPERA_CDP / 1000}s`));
-      }, ESPERA_CDP);
+        erro(new Error(`${metodo}: sem resposta em ${espera / 1000}s`));
+      }, espera);
       pendentes.set(id, { ok, erro, metodo, relogio });
       ws.send(JSON.stringify(sessionId ? { id, method: metodo, params, sessionId } : { id, method: metodo, params }));
     });
@@ -130,9 +149,12 @@ async function conectar(url) {
   return { ws, enviar, esperarEvento, ouvir: (f) => ouvintes.add(f) };
 }
 
-// Os processos cujo comando cita o perfil temporario (Chrome e os filhos dele).
-function processosDoPerfil(perfil) {
-  const alvo = perfil.toLowerCase();
+// Os processos cujo comando cita o perfil temporario (Chrome e os filhos dele)
+// — ou, no --perf, todos os trechos pedidos (o executavel do Chrome e
+// --headless: os Chrome sem janela que ja estavam vivos).
+function processosDoPerfil(...trechos) {
+  const alvos = trechos.map((t) => t.toLowerCase());
+  const cita = (texto) => alvos.every((a) => texto.toLowerCase().includes(a));
   try {
     if (platform() === 'win32') {
       const json = execFileSync(
@@ -141,10 +163,10 @@ function processosDoPerfil(perfil) {
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 }
       );
       const lista = JSON.parse(json || '[]');
-      return (Array.isArray(lista) ? lista : [lista]).filter((p) => p.CommandLine.toLowerCase().includes(alvo)).map((p) => p.ProcessId);
+      return (Array.isArray(lista) ? lista : [lista]).filter((p) => cita(p.CommandLine)).map((p) => p.ProcessId);
     }
     const saida = execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' });
-    return saida.split('\n').filter((l) => l.toLowerCase().includes(alvo)).map((l) => Number(l.trim().split(/\s+/)[0]));
+    return saida.split('\n').filter((l) => cita(l)).map((l) => Number(l.trim().split(/\s+/)[0]));
   } catch {
     return null; // nao deu para listar: avisado no fim
   }
@@ -167,7 +189,7 @@ function matar(pids) {
 // "avancar" que simula segundos de jogo de uma vez, com um bot andando em
 // circulo, HP segurado e a 1a carta escolhida — o mesmo do smoke.
 async function ajudantesDaPagina() {
-  const [run, state, main, cards, player, enemies, boss, content] = await Promise.all([
+  const [run, state, main, cards, player, enemies, boss, content, render] = await Promise.all([
     import('/src/run.js'),
     import('/src/state.js'),
     import('/src/main.js'),
@@ -176,6 +198,7 @@ async function ajudantesDaPagina() {
     import('/src/enemies.js'),
     import('/src/boss.js'),
     import('/data/content.js'),
+    import('/src/render.js'),
   ]);
   const e = window.__estado;
   const C = content.CONTEUDO;
@@ -238,9 +261,227 @@ async function ajudantesDaPagina() {
     run.comecarTcc(e);
     avancar(7);
   };
-  window.__f = { run, state, main, cards, player, enemies, boss, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc };
+  // Fase 16: um quadrado do canvas, em px do canvas, no recorte de tela que o
+  // protocolo fotografa ampliado (o detalhe das figurinhas).
+  const recorteEm = (x, y, raio) => {
+    const canvas = document.querySelector('canvas');
+    const r = canvas.getBoundingClientRect();
+    const k = r.width / canvas.width;
+    return { x: r.left + (x - raio) * k, y: r.top + (y - raio) * k, width: 2 * raio * k, height: 2 * raio * k, scale: 2 };
+  };
+  // Um bando misturado em volta do jogador, parado onde foi posto: um de cada
+  // tipo por volta do anel, e os filhotes de um 📱 morto.
+  // O jogador no meio da arena, parado e sem ninguem em volta (o bot do
+  // `avancar` o deixa em qualquer lugar).
+  const centralizar = () => {
+    enemies.limparInimigos(e);
+    const p = e.player;
+    const arena = e.run.avaliacao.arena;
+    p.x = (arena.esquerda + arena.direita) / 2;
+    p.y = (arena.topo + arena.base) / 2;
+    p.vx = 0;
+    p.vy = 0;
+    p.invulneravel = 0;
+  };
+  const horda = (raio, porTipo) => {
+    centralizar();
+    const p = e.player;
+    const tipos = C.inimigos;
+    const n = tipos.length * porTipo;
+    for (let i = 0; i < n; i += 1) {
+      const a = (i / n) * 2 * Math.PI;
+      const r = raio * (0.75 + 0.25 * ((i * 7) % 5) / 4);
+      enemies.spawnTipo(e, tipos[i % tipos.length], p.x + Math.cos(a) * r, p.y + Math.sin(a) * r * 0.7);
+    }
+    const grupo = tipos.find((t) => t.divisao);
+    const pai = enemies.spawnTipo(e, grupo, p.x + raio * 0.45, p.y - raio * 0.2);
+    enemies.aplicarDano(e, pai, pai.hp);
+    e.eventos.length = 0;
+  };
+  // Dois quadros do jogo de verdade: o desenho ve o que a cena montou (o
+  // flash so acende num HP que ele ja tinha visto).
+  const doisQuadros = () => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+  window.__f = { run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros };
   await document.fonts.ready;
   return true;
+}
+
+// ------------------------------------------------------------ --perf
+
+// Roda na pagina (vai como texto, com as opcoes no fim). So usa o que o
+// render tem desde a fase 12 (criarEfeitos, desenhar): o mesmo script mede o
+// HEAD de antes de uma fase, para comparar na mesma maquina.
+async function medirNaPagina(op) {
+  const [render, state, run, enemies, content] = await Promise.all([
+    import('/src/render.js'),
+    import('/src/state.js'),
+    import('/src/run.js'),
+    import('/src/enemies.js'),
+    import('/data/content.js'),
+  ]);
+  const C = content.CONTEUDO;
+  const passo = C.loop.passo;
+  const total = C.arena.limites.enemies;
+  // 400 inimigos misturados numa grade sobre a arena, cada um com a
+  // velocidade de quem anda para o jogador (inclina e espelha como no jogo).
+  const encher = (e, quantos) => {
+    const a = e.run.avaliacao.arena;
+    const colunas = 25;
+    const linhas = Math.ceil(total / colunas);
+    for (let i = e.enemies.length; i < quantos; i += 1) {
+      const x = a.esquerda + 20 + (i % colunas) * ((a.direita - a.esquerda - 40) / (colunas - 1));
+      const y = a.topo + 20 + (Math.floor(i / colunas) % linhas) * ((a.base - a.topo - 40) / (linhas - 1));
+      const inimigo = enemies.spawnTipo(e, C.inimigos[i % C.inimigos.length], x, y);
+      if (!inimigo) break;
+      const dx = e.player.x - x;
+      const dy = e.player.y - y;
+      const d = Math.hypot(dx, dy) || 1;
+      inimigo.vx = (dx / d) * inimigo.velocidade;
+      inimigo.vy = (dy / d) * inimigo.velocidade;
+    }
+  };
+  const montar = () => {
+    const e = state.novoEstado(20261016);
+    run.iniciarRun(e);
+    run.comecarAvaliacao(e, 0, 0, []);
+    enemies.limparInimigos(e);
+    encher(e, total);
+    e.eventos.length = 0;
+    return e;
+  };
+  const estatistica = (t) => {
+    const s = [...t].sort((a, b) => a - b);
+    const media = s.reduce((x, y) => x + y, 0) / s.length;
+    return { media, mediana: s[Math.floor(s.length / 2)], p95: s[Math.floor(s.length * 0.95)], max: s[s.length - 1], n: s.length };
+  };
+  // Os golpes e as mortes de mentira: so eventos na fila, que o desenho le.
+  const golpes = (e, q, n) => {
+    for (let i = 0; i < n; i += 1) {
+      const alvo = e.enemies[(q * 7 + i * 37) % e.enemies.length];
+      state.emitir(e, 'arma-acerto', { x: alvo.x + ((i * 53) % 90), y: alvo.y, dano: 9 });
+    }
+  };
+  const mortes = (e, q, n) => {
+    for (let i = 0; i < n; i += 1) {
+      const alvo = e.enemies[(q * 11 + i * 29) % e.enemies.length];
+      state.emitir(e, 'inimigo-morto', { x: alvo.x, y: alvo.y, tipo: alvo.tipo });
+    }
+  };
+  const linhas = [
+    ['so a arena', () => {}],
+    ['+ numeros', (e, q) => golpes(e, q, 10)],
+    ['+ 800 faiscas', (e, q) => mortes(e, q, 25)],
+    ['tudo', (e, q) => { golpes(e, q, 10); mortes(e, q, 25); }],
+    // A primeira de novo, no fim: se o numero subiu, a medida derivou.
+    ['so a arena (de novo)', () => {}],
+  ];
+  const canvas = document.createElement('canvas');
+  canvas.width = C.arena.largura;
+  canvas.height = C.arena.altura;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const desenho = [];
+  // Um fx so, como o jogo (um por canvas): as camadas e a folha de
+  // figurinhas nascem uma vez. Uma avaliacao nova a cada rodada zera os
+  // efeitos (limparEfeitos), e o aquecimento cozinha o que faltar.
+  const fx = render.criarEfeitos();
+  for (const [nome, injetar] of linhas) {
+    const rodadas = [];
+    for (let r = 0; r < op.rodadas; r += 1) {
+      const e = montar();
+      const tempos = [];
+      let faiscas = 0;
+      for (let q = 0; q < op.aquecimento + op.quadros; q += 1) {
+        e.tempo += passo;
+        injetar(e, q);
+        const t0 = performance.now();
+        render.desenhar(e, ctx, fx);
+        ctx.getImageData(0, 0, 1, 1);
+        const t1 = performance.now();
+        e.eventos.length = 0;
+        if (q >= op.aquecimento) tempos.push(t1 - t0);
+        // Devolve o controle ao navegador entre um quadro e outro, como o
+        // jogo faz: num laco sincrono de milhares de quadros, o Chrome nao
+        // limpa o que cada drawImage deixa, e todo desenho fica 3x mais lento
+        // depois de ~1200 quadros (fase 16, medido) — artefato da medida.
+        await new Promise((ok) => setTimeout(ok, 0));
+        faiscas = Math.max(faiscas, fx.particulas.ativos.length);
+      }
+      rodadas.push({ ...estatistica(tempos), faiscas, numeros: fx.numeros.ativos.length, inimigos: e.enemies.length });
+    }
+    desenho.push({ nome, rodadas });
+  }
+
+  // O laco real: o jogo da pagina, com a horda injetada a cada quadro.
+  const e = window.__estado;
+  run.iniciarRun(e);
+  run.comecarAvaliacao(e, 0, 0, []);
+  enemies.limparInimigos(e);
+  const intervalos = [];
+  let mortos = 0;
+  await new Promise((pronto) => {
+    let anterior = null;
+    let q = 0;
+    const inicio = performance.now();
+    const quadro = (agora) => {
+      e.player.hp = e.player.hpMax;
+      e.player.invulneravel = 1;
+      encher(e, total);
+      // 2 mortes e 2 golpes por quadro, pelas portas do jogo.
+      for (let i = 0; i < 2; i += 1) {
+        const alvo = e.enemies[(q * 13 + i * 101) % e.enemies.length];
+        if (alvo && !alvo.chefe) {
+          enemies.aplicarDano(e, alvo, alvo.hp + 1);
+          mortos += 1;
+        }
+        const ferido = e.enemies[(q * 17 + i * 89 + 5) % e.enemies.length];
+        if (ferido && !ferido.chefe) enemies.aplicarDano(e, ferido, 1);
+      }
+      q += 1;
+      if (anterior !== null && agora - inicio > 1000) intervalos.push(agora - anterior);
+      anterior = agora;
+      if (agora - inicio < 1000 + op.laco * 1000) requestAnimationFrame(quadro);
+      else pronto();
+    };
+    requestAnimationFrame(quadro);
+  });
+  const laco = estatistica(intervalos);
+  laco.acima20 = intervalos.filter((x) => x > 20).length;
+  laco.mortesPorSegundo = mortos / (op.laco + 1);
+  return { desenho, laco, agente: navigator.userAgent.match(/Chrome\/[\d.]+/)?.[0] || navigator.userAgent };
+}
+
+async function medir(cdp, sessao, url) {
+  const enviar = (metodo, params) => cdp.enviar(metodo, params, sessao);
+  await enviar('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  const carregou = cdp.esperarEvento('Page.loadEventFired', sessao);
+  await enviar('Page.navigate', { url });
+  await carregou;
+  for (let i = 0; i < 200; i += 1) {
+    const r = await enviar('Runtime.evaluate', { expression: '!!window.__estado', returnByValue: true });
+    if (r.result.value === true) break;
+    await dormir(50);
+  }
+  const op = { quadros: PERF_QUADROS, aquecimento: PERF_AQUECIMENTO, rodadas: PERF_RODADAS, laco: PERF_LACO };
+  const r = await cdp.enviar('Runtime.evaluate', { expression: `(${medirNaPagina})(${JSON.stringify(op)})`, awaitPromise: true, returnByValue: true }, sessao, 600000);
+  if (r.exceptionDetails) throw new Error(`na pagina: ${(r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text}`);
+  return r.result.value;
+}
+
+function imprimirDesempenho(m) {
+  const ms = (x) => x.toFixed(2);
+  console.log(`desempenho (${m.agente}, raster por CPU, 400 inimigos misturados; ${PERF_QUADROS} quadros x ${PERF_RODADAS} rodadas por linha)`);
+  console.log('');
+  console.log('| o que e desenhado | media (ms) | mediana | p95 | max | faiscas | numeros |');
+  console.log('|---|---|---|---|---|---|---|');
+  for (const linha of m.desenho) {
+    const r = linha.rodadas;
+    const faixa = (k) => r.map((x) => ms(x[k])).join(' / ');
+    console.log(`| ${linha.nome} | ${faixa('media')} | ${faixa('mediana')} | ${faixa('p95')} | ${faixa('max')} | ${r[0].faiscas} | ${r[0].numeros} |`);
+  }
+  const l = m.laco;
+  console.log('');
+  console.log(`laco real (${PERF_LACO}s, horda completada a 400, 2 mortes e 2 golpes por quadro, ~${l.mortesPorSegundo.toFixed(0)} mortes/s): ` +
+    `media ${ms(l.media)} ms entre quadros · mediana ${ms(l.mediana)} · p95 ${ms(l.p95)} · ${l.acima20} de ${l.n} quadros acima de 20ms`);
 }
 
 // As cenas, na ordem (cada uma parte do que a anterior deixou, quando ajuda).
@@ -412,6 +653,117 @@ const CENAS = [
       if (e.tela !== T.COLACAO) main.atualizar(e, passo);
     },
   },
+  // Fase 16: as figurinhas. Cada uma tem tambem uma foto ampliada (`detalhe`,
+  // o recorte calculado na hora da foto) com o contorno e as sombras.
+  {
+    nome: 'figurinhas-horda',
+    espera: 120,
+    preparar: () => {
+      const { run, e, avancar, horda } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 1, 0, []);
+      avancar(2);
+      horda(230, 4);
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 170),
+  },
+  {
+    nome: 'figurinhas-andando-esquerda',
+    espera: 450,
+    preparar: () => {
+      const { run, e, avancar, centralizar } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(2);
+      // Sem bando no caminho: um golpe faria o jogador piscar na foto.
+      centralizar();
+      // Segurado durante a espera: o teclado nao mexe no eixo sem tecla.
+      e.input.eixoX = -1;
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 60),
+  },
+  {
+    nome: 'figurinhas-andando-direita',
+    espera: 450,
+    preparar: () => {
+      const { run, e, avancar, centralizar } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(2);
+      centralizar();
+      e.input.eixoX = 1;
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 60),
+  },
+  {
+    nome: 'figurinhas-golpe',
+    espera: 120,
+    preparar: async () => {
+      const { run, e, avancar, horda, enemies, doisQuadros } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(2);
+      horda(200, 3);
+      await doisQuadros();
+      // Metade do bando leva um golpe por quadro (sem morrer), durante a
+      // espera e a foto: o flash e o pop ficam acesos, e a foto nao depende
+      // de cair dentro dos 0,12s de um golpe so.
+      let resta = 40;
+      const golpear = () => {
+        e.enemies.forEach((inimigo, i) => {
+          if (i % 2 === 0 && !inimigo.chefe) enemies.aplicarDano(e, inimigo, 0.01);
+        });
+        resta -= 1;
+        if (resta > 0) requestAnimationFrame(golpear);
+      };
+      golpear();
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 150),
+  },
+  {
+    nome: 'figurinhas-banca-fase-2',
+    espera: 250,
+    preparar: () => {
+      const { e, boss, C, main, passo, garantirTcc, avancar } = window.__f;
+      garantirTcc();
+      const corpo = boss.acharBanca(e);
+      corpo.hp = Math.min(corpo.hp, corpo.hpMax * (C.banca.fases[0].ate - 0.02));
+      avancar(C.banca.transicao.duracao + 1.2);
+      // Os dois no meio da pagina (o bot do `avancar` leva para qualquer
+      // canto, e no alto o HUD cobre A Banca); um tick copia o corpo no espelho.
+      const arena = e.run.avaliacao.arena;
+      const meioX = (arena.esquerda + arena.direita) / 2;
+      const meioY = (arena.topo + arena.base) / 2;
+      e.player.x = meioX - 160;
+      e.player.y = meioY + 40;
+      corpo.x = meioX + 120;
+      corpo.y = meioY;
+      main.atualizar(e, passo);
+    },
+    detalhe: () => {
+      const b = window.__f.e.run.avaliacao.banca;
+      return window.__f.recorteEm(b.x, b.y, 110);
+    },
+  },
+  {
+    // O fallback de emoji forcado (como a 14B): um fx novo no canvas do jogo,
+    // com todos os emoji marcados como faltando — a forma colorida e cozida
+    // com o mesmo contorno. A pagina recarrega no tamanho seguinte.
+    nome: 'figurinhas-sem-emoji',
+    espera: 150,
+    preparar: () => {
+      const { run, e, avancar, horda, render } = window.__f;
+      const fx = render.efeitosDe(document.querySelector('canvas').getContext('2d'));
+      Object.assign(fx, render.criarEfeitos());
+      fx.emojiConferido = true;
+      fx.emojiFaltando = new Set(render.emojisDoCanvas());
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(2);
+      horda(200, 3);
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 150),
+  },
 ];
 
 // Uma foto so na tela larga: a mesa em volta da cena e os objetos dela.
@@ -444,9 +796,17 @@ async function fotografar(cdp, sessao, url, tamanho, cenas) {
     await dormir(cena.espera);
     const tela = await enviar('Runtime.evaluate', { expression: 'window.__estado.tela', returnByValue: true });
     const { data } = await enviar('Page.captureScreenshot', { format: 'png' });
-    const arquivo = join(SAIDA, `${String(cena.ordem).padStart(2, '0')}-${cena.nome}-${largura}x${altura}.png`);
+    const base = `${String(cena.ordem).padStart(2, '0')}-${cena.nome}-${largura}x${altura}`;
+    const arquivo = join(SAIDA, `${base}.png`);
     writeFileSync(arquivo, Buffer.from(data, 'base64'));
     feitas.push({ arquivo, tela: tela.result.value });
+    if (cena.detalhe) {
+      const clip = await avaliar(enviar, `(${cena.detalhe})()`);
+      const ampliada = await enviar('Page.captureScreenshot', { format: 'png', clip });
+      const detalhe = join(SAIDA, `${base}-detalhe.png`);
+      writeFileSync(detalhe, Buffer.from(ampliada.data, 'base64'));
+      feitas.push({ arquivo: detalhe, tela: `${tela.result.value}, ampliada ${clip.scale}x` });
+    }
   }
   return feitas;
 }
@@ -472,8 +832,16 @@ async function principal() {
     return 1;
   }
   mkdirSync(SAIDA, { recursive: true });
-  const cenas = SO.length === 0 ? CENAS : CENAS.filter((c) => SO.some((s) => c.nome.includes(s)));
-  const comMesa = SO.length === 0 || SO.some((s) => MESA.nome.includes(s));
+  const cenas = PERF ? [] : SO.length === 0 ? CENAS : CENAS.filter((c) => SO.some((s) => c.nome.includes(s)));
+  const comMesa = !PERF && (SO.length === 0 || SO.some((s) => MESA.nome.includes(s)));
+  if (PERF) {
+    // Chrome sem janela de outra execucao deixa a maquina lenta: o numero nao
+    // valeria. So avisa (pode ser de outro programa); quem mede decide.
+    const antes = processosDoPerfil(caminho, '--headless');
+    if (antes === null) console.warn('fotos --perf: nao deu para listar os processos; confira Chrome orfao a mao');
+    else if (antes.length > 0) console.warn(`fotos --perf: ${antes.length} processo(s) de Chrome sem janela ja vivos (${antes.join(', ')}): feche-os antes de confiar no numero`);
+    else console.log('fotos --perf: nenhum Chrome sem janela vivo antes de medir');
+  }
 
   const servidor = await servir({ porta: 0, expor: true, host: '127.0.0.1' });
   const perfil = mkdtempSync(join(tmpdir(), 'semana-de-provas-chrome-'));
@@ -489,6 +857,9 @@ async function principal() {
       '--hide-scrollbars',
       '--mute-audio',
       '--window-size=1920,1080',
+      // --perf: o canvas em raster por CPU (o caso pessimista, o do handoff
+      // 12) e os quadros sem trava de 60 Hz (o intervalo e o custo).
+      ...(PERF ? ['--disable-gpu', '--disable-accelerated-2d-canvas', '--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
       'about:blank',
     ],
     { stdio: 'ignore' }
@@ -511,7 +882,8 @@ async function principal() {
     await cdp.enviar('Runtime.enable', {}, sessionId);
     // A pagina "com foco": sem isto um blur do headless pausaria a prova.
     await cdp.enviar('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
-    for (const tamanho of TAMANHOS) feitas.push(...(await fotografar(cdp, sessionId, servidor.url, tamanho, cenas)));
+    if (PERF) imprimirDesempenho(await medir(cdp, sessionId, servidor.url));
+    else for (const tamanho of TAMANHOS) feitas.push(...(await fotografar(cdp, sessionId, servidor.url, tamanho, cenas)));
     if (comMesa) {
       const [foto] = await fotografar(cdp, sessionId, servidor.url, MESA.tamanho, [MESA]);
       feitas.push(foto);
@@ -552,7 +924,7 @@ async function principal() {
   }
 
   for (const f of feitas) console.log(`${f.arquivo}  (${f.tela})`);
-  console.log(`fotos: ${feitas.length} em ${SAIDA}`);
+  if (!PERF) console.log(`fotos: ${feitas.length} em ${SAIDA}`);
   if (orfaos === null) console.warn('fotos: nao deu para listar os processos e conferir orfaos');
   else console.log(`fotos: Chrome fechado pelo protocolo, ${orfaos.length} processo(s) orfao(s)`);
   if (erros.length > 0) {

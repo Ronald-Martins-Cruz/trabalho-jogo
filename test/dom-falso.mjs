@@ -451,7 +451,12 @@ function criarContexto2d(canvas, opcoes = {}) {
   };
   const n = (v) => (typeof v === 'number' ? (Math.round(v * 100) / 100).toString() : typeof v === 'string' ? v : typeof v);
   const pilha = [];
-  const reg = { ops: 0, textos: [], formas: [], leituras: 0, ultimoTexto: null, opcoes };
+  const reg = { ops: 0, textos: [], formas: [], leituras: 0, copias: 0, ultimoTexto: null, opcoes };
+  // Fase 16: o que e desenhado num canvas fora da arvore (a folha de
+  // figurinhas e os rascunhos dela, as camadas da pagina, o teste de emoji)
+  // e registrado sempre: e cozimento, que acontece no quadro em que a coisa
+  // aparece pela 1a vez — antes de qualquer teste conseguir ligar o `gravar`.
+  const fora = () => !canvas.conectado;
   const ctx = {
     canvas,
     fillStyle: '#000000',
@@ -475,6 +480,7 @@ function criarContexto2d(canvas, opcoes = {}) {
     zerarResumo() {
       resumo = 2166136261;
       reg.ops = 0;
+      reg.copias = 0;
       reg.textos.length = 0;
       reg.formas.length = 0;
     },
@@ -491,6 +497,37 @@ function criarContexto2d(canvas, opcoes = {}) {
   const preenche = () => `${n(ctx.fillStyle)}|${comum()}`;
   const traca = () => `${n(ctx.strokeStyle)}|${n(ctx.lineWidth)}|${ctx.lineCap}|${ctx.lineJoin}|${comum()}`;
   const escreve = () => `${ctx.font}|${ctx.textAlign}|${ctx.textBaseline}|${preenche()}`;
+  // O que esta cozido no recorte (sx, sy, sw, sh) de um canvas fora da
+  // arvore, com a posicao relativa ao recorte: cada texto (fonte, cor,
+  // espelho e giro) e cada forma (cor, alfa, escala e giro) cuja origem cai
+  // nele e nao foi apagada depois. E o que diz QUAL figurinha a copia leva —
+  // outro emoji do mesmo tamanho, a variante espelhada, outro degrau —, sem
+  // depender de onde a celula esta na folha (a ordem de cozimento).
+  const cozido = (img, sx, sy, sw, sh) => {
+    const r = img && img._ctx && img._ctx.reg;
+    if (!r) return '';
+    const dentro = (p) => !p.apagado && p.x >= sx && p.x < sx + sw && p.y >= sy && p.y < sy + sh;
+    let s = '';
+    for (const p of r.textos) if (dentro(p)) s += `|${p.texto}@${n(p.x - sx)},${n(p.y - sy)}:${p.fonte}:${n(p.cor)}:${n(p.escalaX)}:${n(p.giro)}`;
+    for (const p of r.formas) if (dentro(p)) s += `|forma@${n(p.x - sx)},${n(p.y - sy)}:${n(p.cor)}:${n(p.alpha)}:${n(p.escalaX)}:${n(p.escalaY)}:${n(p.giro)}`;
+    return s;
+  };
+  // clearRect num canvas fora da arvore marca como apagado o que estava no
+  // retangulo (a caixa dos cantos transformados): uma celula reaproveitada
+  // nao leva o conteudo velho para o resumo.
+  const apagar = (x, y, w, h) => {
+    const xs = [x, x + w, x, x + w];
+    const ys = [y, y, y + h, y + h];
+    const cx = xs.map((px, i) => t[0] * px + t[2] * ys[i] + t[4]);
+    const cy = xs.map((px, i) => t[1] * px + t[3] * ys[i] + t[5]);
+    const x0 = Math.min(...cx);
+    const x1 = Math.max(...cx);
+    const y0 = Math.min(...cy);
+    const y1 = Math.max(...cy);
+    for (const lista of [reg.textos, reg.formas]) {
+      for (const p of lista) if (p.x >= x0 && p.x < x1 && p.y >= y0 && p.y < y1) p.apagado = true;
+    }
+  };
   const t = [1, 0, 0, 1, 0, 0];
   Object.assign(ctx, {
     setTransform(a, b, c, d, e, f) {
@@ -537,26 +574,33 @@ function criarContexto2d(canvas, opcoes = {}) {
       op('arc', arguments);
     },
     fill() {
-      if (ctx.gravar) reg.formas.push({ cor: ctx.fillStyle, alpha: ctx.globalAlpha, x: t[4], y: t[5] });
+      if (ctx.gravar || fora()) reg.formas.push({ cor: ctx.fillStyle, alpha: ctx.globalAlpha, x: t[4], y: t[5], escalaX: t[0], escalaY: t[3], giro: t[1] });
       op('fill', arguments, ctx.gravar ? preenche() : '');
     },
     stroke() { op('stroke', arguments, ctx.gravar ? traca() : ''); },
     fillRect() { op('fillRect', arguments, ctx.gravar ? preenche() : ''); },
     strokeRect() { op('strokeRect', arguments, ctx.gravar ? traca() : ''); },
-    clearRect() {
+    clearRect(x, y, w, h) {
       reg.ultimoTexto = null;
+      if (fora()) apagar(x, y, w, h);
       op('clearRect', arguments);
     },
     fillText(texto, x, y) {
       reg.ultimoTexto = texto;
-      if (ctx.gravar) reg.textos.push({ texto, x: t[0] * x + t[2] * y + t[4], y: t[1] * x + t[3] * y + t[5], fonte: ctx.font, cor: ctx.fillStyle });
+      if (ctx.gravar || fora()) reg.textos.push({ texto, x: t[0] * x + t[2] * y + t[4], y: t[1] * x + t[3] * y + t[5], fonte: ctx.font, cor: ctx.fillStyle, escalaX: t[0], giro: t[1] });
       op('fillText', arguments, ctx.gravar ? escreve() : '');
     },
     strokeText() { op('strokeText', arguments, ctx.gravar ? `${escreve()}|${traca()}` : ''); },
     // A imagem entra no resumo pelo tamanho: as camadas de fundo sao objetos
-    // diferentes em cada navegador, com o mesmo conteudo.
-    drawImage(img, x, y) {
-      op('drawImage', [img && img.width, img && img.height, x, y], ctx.gravar ? comum() : '');
+    // diferentes em cada navegador, com o mesmo conteudo. Fase 16: a
+    // figurinha e um recorte da folha (9 argumentos); entra o tamanho do
+    // recorte, onde ele cai e o que esta cozido nele (`cozido`), nao onde ele
+    // esta na folha — a ordem de cozimento (e o lugar de cada celula) depende
+    // de tudo o que ja passou pelo navegador.
+    drawImage(img, ...a) {
+      reg.copias += 1;
+      if (a.length === 8) op('drawImage', [a[2], a[3], a[4], a[5], a[6], a[7]], ctx.gravar ? `${comum()}${cozido(img, a[0], a[1], a[2], a[3])}` : '');
+      else op('drawImage', [img && img.width, img && img.height, a[0], a[1]], ctx.gravar ? comum() : '');
     },
     // Fora do resumo: e o render enchendo o cache dele, nao desenho.
     createRadialGradient() {

@@ -156,7 +156,7 @@ import {
 } from '../src/player.js';
 import { criarPool } from '../src/pool.js';
 import { criarRng } from '../src/rng.js';
-import { climaDe, comAlfa, criarEfeitos, desenhar, flashDoInimigo, pontoDeEntrada } from '../src/render.js';
+import { climaDe, comAlfa, criarEfeitos, desenhar, emojisDoCanvas, flashDoInimigo, pontoDeEntrada } from '../src/render.js';
 import { FONTE_DESCONHECIDA, registrarQuadro, SITUACAO } from '../src/telemetria.js';
 import { analisarAvaliacao, ESCOPOS, gerarRelatorio, nomeFonte } from '../src/relatorio.js';
 
@@ -5200,11 +5200,12 @@ const CAMPOS_DO_CONTEXTO = ['fillStyle', 'strokeStyle', 'lineWidth', 'lineCap', 
 function ctx2dFalso() {
   const reg = {
     fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0, paradas: [], tracos: [],
-    preenchimentos: [], recortes: [], caminho: [], gravarCaminho: false, ordem: 0, pilha: 0, restoreSemSave: 0,
+    preenchimentos: [], recortes: [], caminho: [], gravarCaminho: false, ordem: 0, pilha: 0, restoreSemSave: 0, limpezas: [],
   };
   let fonte = '';
   const t = [1, 0, 0, 1, 0, 0];
   const pilha = [];
+  const centro = (x, y) => ({ ox: t[0] * x + t[2] * y + t[4], oy: t[1] * x + t[3] * y + t[5] });
   const tracar = (tipo) => reg.tracos.push({
     tipo, lineCap: ctx.lineCap, lineJoin: ctx.lineJoin, x: t[4], y: t[5],
     cor: ctx.strokeStyle, largura: ctx.lineWidth, alpha: ctx.globalAlpha, n: ++reg.ordem,
@@ -5260,14 +5261,25 @@ function ctx2dFalso() {
     strokeRect() { tracar('strokeRect'); },
     strokeText() {},
     fillRect(x, y, w, h) {
-      reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha, n: ++reg.ordem });
+      reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha, comp: ctx.globalCompositeOperation, n: ++reg.ordem });
     },
     fillText(texto, x, y) {
-      reg.textos.push({ texto, x: t[0] * x + t[4], y: t[3] * y + t[5], fonte, cor: ctx.fillStyle, comp: ctx.globalCompositeOperation, alpha: ctx.globalAlpha, n: ++reg.ordem });
+      reg.textos.push({ texto, x: t[0] * x + t[4], y: t[3] * y + t[5], fonte, cor: ctx.fillStyle, comp: ctx.globalCompositeOperation, alpha: ctx.globalAlpha, escalaX: t[0], giro: Math.atan2(-t[2], t[3]), n: ++reg.ordem });
     },
-    drawImage(img, x, y) {
-      reg.copias.push({ img, x: t[0] * x + t[4], y: t[3] * y + t[5], alpha: ctx.globalAlpha, n: ++reg.ordem });
+    // Fase 16: a figurinha e um recorte da folha (9 argumentos). `ox`/`oy` e o
+    // centro do que foi copiado, ja no canvas (a figurinha no mundo, com o
+    // tremor e o balanco); `angulo` e `escala`, o giro e o pop do contexto.
+    drawImage(img, ...a) {
+      const recorte = a.length === 8;
+      const x = recorte ? a[4] : a[0];
+      const y = recorte ? a[5] : a[1];
+      reg.copias.push({
+        img, x: t[0] * x + t[4], y: t[3] * y + t[5], alpha: ctx.globalAlpha, comp: ctx.globalCompositeOperation, n: ++reg.ordem,
+        sx: recorte ? a[0] : 0, sy: recorte ? a[1] : 0, sw: recorte ? a[2] : img.width, sh: recorte ? a[3] : img.height,
+        dx: x, dy: y, ...centro(x + (recorte ? a[6] : img.width) / 2, y + (recorte ? a[7] : img.height) / 2), angulo: Math.atan2(t[1], t[0]), escala: Math.hypot(t[0], t[1]),
+      });
     },
+    clearRect(x, y, w, h) { reg.limpezas.push({ x, y, w, h }); },
     createRadialGradient() {
       reg.gradientes += 1;
       const paradas = [];
@@ -5284,6 +5296,7 @@ function ctx2dFalso() {
       reg.preenchimentos.length = 0;
       reg.recortes.length = 0;
       reg.caminho.length = 0;
+      reg.limpezas.length = 0;
     },
   };
   return ctx;
@@ -5310,6 +5323,45 @@ function quadrosVazios(estado, ctx, fx, segundos) {
   }
 }
 
+// Fase 16: o render cozinha as figurinhas numa folha fora da tela, como a
+// pagina (criarCamada). No node, as camadas sao de mentira e cada uma tem o
+// seu ctx2dFalso, que registra o cozimento: o caminho e o do navegador. Sem
+// isto (criarEfeitos() puro), o render desenha o emoji direto, sem contorno.
+function efeitosComFolha(...args) {
+  const fx = criarEfeitos(...args);
+  const camadas = [];
+  fx.criarCamada = (w, h) => {
+    const c = { width: w, height: h, ctx2d: ctx2dFalso() };
+    c.getContext = () => c.ctx2d;
+    camadas.push(c);
+    return c;
+  };
+  return { fx, camadas };
+}
+
+const EMOJIS_DO_CANVAS = new Set(emojisDoCanvas());
+
+// As figurinhas que o quadro copiou da folha, cada uma com a chave dela no
+// cache (`emoji|tamanho|variante`), achada pela celula.
+function figurinhasDoQuadro(ctx, fx) {
+  const porCelula = new Map();
+  for (const [chave, f] of fx.figurinhas) porCelula.set(`${f.sx},${f.sy}`, chave);
+  return ctx.reg.copias
+    .filter((c) => fx.folha.camada !== null && c.img === fx.folha.camada)
+    .map((c) => {
+      const chave = porCelula.get(`${c.sx},${c.sy}`) || '';
+      const [emoji, tamanho, variante, nivel] = chave.split('|');
+      return { ...c, chave, emoji, tamanho: Number(tamanho), variante, nivel: Number(nivel) };
+    });
+}
+
+// A figurinha desenhada no lugar de (x, y): x no pixel inteiro mais perto, y
+// ate a amplitude do balanco acima (o balanco so sobe).
+function figurinhaEm(lista, fx, x, y, filtro = () => true) {
+  const sobe = Math.max(...Object.values(fx.perfis).map((p) => p.balanco.amplitude));
+  return lista.find((c) => filtro(c) && Math.abs(c.ox - (x + fx.tremorX)) <= 0.5 && c.oy <= y + fx.tremorY + 0.5 && c.oy >= y + fx.tremorY - sobe - 0.5);
+}
+
 // O criterio central da fase: o juice nao vaza para a simulacao. A mesma
 // partida, com e sem desenho a cada 2 ticks (um quadro de 30 fps), tem que
 // terminar com o estado INTEIRO igual, byte a byte — rng, posicoes, HP, a fila,
@@ -5319,8 +5371,9 @@ function checarJuiceForaDaSimulacao() {
     const estado = novoEstado(SEMENTE + 1201);
     comecarRun(estado);
     const ctx = ctx2dFalso();
-    const fx = criarEfeitos();
-    const visto = { particulas: 0, numeros: 0, tremor: 0, avisos: 0, flashes: 0, emojis: 0 };
+    // Com a folha de figurinhas de mentira: o desenho e o do navegador.
+    const { fx, camadas } = efeitosComFolha();
+    const visto = { particulas: 0, numeros: 0, tremor: 0, avisos: 0, flashes: 0, emojis: 0, cozidas: 0 };
     for (let t = 1; t <= TICKS; t += 1) {
       botCircular(estado, t);
       atualizar(estado, PASSO);
@@ -5332,15 +5385,25 @@ function checarJuiceForaDaSimulacao() {
         visto.numeros = Math.max(visto.numeros, fx.numeros.ativos.length);
         visto.tremor = Math.max(visto.tremor, fx.tremor);
         visto.avisos += fx.diag.avisos;
-        visto.flashes += ctx.reg.textos.filter((x) => x.comp === 'lighter').length;
-        // O navegador aplica o alfa do fillStyle ao emoji colorido: todo emoji
-        // sai com visual.corEmoji (opaca), e nao com a cor da ultima coisa
-        // pintada (as carteiras do chao, a 0,08, apagavam o bando inteiro).
-        const apagado = ctx.reg.textos.find((x) => x.fonte.includes(CONTEUDO.visual.fonteEmoji) && x.cor !== CONTEUDO.visual.corEmoji);
-        if (apagado) falhar(t, `juice: o emoji ${apagado.texto} foi desenhado com fillStyle "${apagado.cor}", e nao visual.corEmoji`);
-        visto.emojis += ctx.reg.textos.length;
+        const figurinhas = ctx.reg.copias.filter((x) => x.img === fx.folha.camada);
+        visto.flashes += figurinhas.filter((x) => x.comp === 'lighter').length;
+        // Fase 16: nenhum emoji de entidade sai em fillText no quadro — todos
+        // sao figurinhas copiadas da folha (o emoji so e escrito no cozimento).
+        const solto = ctx.reg.textos.find((x) => EMOJIS_DO_CANVAS.has(x.texto));
+        if (solto) falhar(t, `figurinhas: o emoji ${solto.texto} foi desenhado com fillText no quadro, fora do cozimento`);
+        visto.emojis += figurinhas.length;
       } else {
         estado.eventos.length = 0;
+      }
+    }
+    // O navegador aplica o alfa do fillStyle ao emoji colorido: todo emoji e
+    // cozido com visual.corEmoji (opaca), e nao com a cor da ultima coisa
+    // pintada (as carteiras do chao, a 0,08, apagavam o bando inteiro).
+    for (const c of camadas) {
+      for (const x of c.ctx2d.reg.textos) {
+        if (!EMOJIS_DO_CANVAS.has(x.texto)) continue;
+        if (x.cor !== CONTEUDO.visual.corEmoji) falhar(0, `figurinhas: o emoji ${x.texto} foi cozido com fillStyle "${x.cor}", e nao visual.corEmoji`);
+        if (c.ctx2d === (fx.folha.camada && fx.folha.camada.ctx2d)) visto.cozidas += 1;
       }
     }
     return { json: JSON.stringify(estado), estado, fx, visto };
@@ -5358,7 +5421,7 @@ function checarJuiceForaDaSimulacao() {
     );
   }
   const v = com.visto;
-  if (!(v.particulas > 0) || !(v.numeros > 0) || !(v.tremor > 0) || !(v.avisos > 0) || !(v.flashes > 0) || !(v.emojis > 0)) {
+  if (!(v.particulas > 0) || !(v.numeros > 0) || !(v.tremor > 0) || !(v.avisos > 0) || !(v.flashes > 0) || !(v.emojis > 0) || !(v.cozidas > 0)) {
     falhar(0, `juice: a partida de teste nao exercitou os efeitos (${JSON.stringify(v)}), o teste perdeu o sentido`);
   }
   // A pool da fase 02: nada alocado depois da abertura, invariantes de pe.
@@ -5480,20 +5543,28 @@ function checarFlashDeGolpe() {
   const grupo = CONTEUDO.inimigos.find((t) => t.divisao);
   const estado = avaliacaoCom(SEMENTE + 1204, []);
   const ctx = ctx2dFalso();
-  const fx = criarEfeitos();
+  const { fx } = efeitosComFolha();
   const pai = spawnInimigo(estado, grupo.id);
   pai.x = 300;
   pai.y = 300;
+  // Fase 16: o flash e a 2a passada da MESMA figurinha, em 'lighter', com o
+  // alfa do flash e o pop na escala; e o que se le aqui.
+  const segunda = (alvo) => figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, alvo.x, alvo.y, (c) => c.comp === 'lighter' && c.emoji === alvo.emoji);
   quadro(estado, ctx, fx);
-  if (flashDoInimigo(fx, pai, estado.tempo) !== 0) falhar(0, 'flash: o inimigo intacto ja nasceu piscando');
+  if (flashDoInimigo(fx, pai, estado.tempo) !== 0 || segunda(pai)) falhar(0, 'flash: o inimigo intacto ja nasceu piscando');
   aplicarDano(estado, pai, 1);
   estado.tempo += PASSO;
   quadro(estado, ctx, fx);
-  if (!(flashDoInimigo(fx, pai, estado.tempo) > 0)) falhar(0, 'flash: o inimigo que perdeu HP nao piscou');
-  const aditivo = ctx.reg.textos.some((x) => x.texto === pai.emoji && x.comp === 'lighter' && Math.abs(x.x - pai.x - fx.tremorX) < 1e-6 && Math.abs(x.y - pai.y - fx.tremorY) < 1e-6);
-  if (!aditivo) falhar(0, 'flash: o golpe nao redesenhou o emoji em modo aditivo no lugar do inimigo');
+  const forca = flashDoInimigo(fx, pai, estado.tempo);
+  if (!(forca > 0)) falhar(0, 'flash: o inimigo que perdeu HP nao piscou');
+  const aditiva = segunda(pai);
+  if (!aditiva) falhar(0, 'flash: o golpe nao redesenhou a figurinha em modo aditivo no lugar do inimigo');
+  if (Math.abs(aditiva.alpha - F.alpha * forca) > 1e-9) falhar(0, `flash: a 2a passada saiu com alfa ${aditiva.alpha}, o flash pede ${F.alpha * forca}`);
+  if (Math.abs(aditiva.escala - (1 + F.escalaPop * forca)) > 1e-9) falhar(0, `flash: a figurinha golpeada saiu na escala ${aditiva.escala}, o pop pede ${1 + F.escalaPop * forca}`);
+  const primeira = figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, pai.x, pai.y, (c) => c.comp === 'source-over' && c.emoji === pai.emoji);
+  if (!primeira || primeira.chave !== aditiva.chave || !(primeira.n < aditiva.n)) falhar(0, 'flash: a 2a passada nao e a mesma figurinha, por cima da 1a (sem variante extra)');
   quadrosVazios(estado, ctx, fx, F.duracao + 0.05);
-  if (flashDoInimigo(fx, pai, estado.tempo) !== 0) falhar(0, `flash: ainda piscando depois de ${F.duracao}s`);
+  if (flashDoInimigo(fx, pai, estado.tempo) !== 0 || segunda(pai)) falhar(0, `flash: ainda piscando depois de ${F.duracao}s`);
   // O pai morre; o 1o filhote e o MESMO objeto (pool LIFO), com nasc novo e
   // menos HP do que o pai tinha no ultimo quadro.
   const nascDoPai = pai.nasc;
@@ -5503,13 +5574,13 @@ function checarFlashDeGolpe() {
   }
   estado.tempo += PASSO;
   quadro(estado, ctx, fx);
-  if (flashDoInimigo(fx, pai, estado.tempo) !== 0) falhar(0, 'flash: o filhote que reusa o objeto do pai nasceu piscando (pendencia 67: compare objeto + nasc)');
+  if (flashDoInimigo(fx, pai, estado.tempo) !== 0 || segunda(pai)) falhar(0, 'flash: o filhote que reusa o objeto do pai nasceu piscando (pendencia 67: compare objeto + nasc)');
   // O jogador: o golpe acende o flash dele e a vinheta vermelha.
   emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 95, x: 0, y: 0 });
   estado.tempo += PASSO;
   quadro(estado, ctx, fx);
   if (!(fx.flashJogador > 0) || !(fx.vinhetaDano > 0)) falhar(0, 'flash: o dano no jogador nao acendeu o flash e a vinheta');
-  if (!ctx.reg.textos.some((x) => x.texto === CONTEUDO.jogador.emoji && x.comp === 'lighter')) falhar(0, 'flash: o jogador golpeado nao foi redesenhado em modo aditivo');
+  if (!segunda({ x: estado.player.x, y: estado.player.y, emoji: CONTEUDO.jogador.emoji })) falhar(0, 'flash: o jogador golpeado nao foi redesenhado em modo aditivo');
   return `flash: acende no golpe, apaga em ${F.duracao}s, o filhote que reusa o objeto do pai nasce sem flash`;
 }
 
@@ -5519,7 +5590,7 @@ function checarTremor() {
   const T = CONTEUDO.juice.tremor;
   const estado = avaliacaoCom(SEMENTE + 1205, []);
   const ctx = ctx2dFalso();
-  const fx = criarEfeitos();
+  const { fx } = efeitosComFolha();
   quadro(estado, ctx, fx);
   const x0 = estado.player.x;
   const y0 = estado.player.y;
@@ -5535,8 +5606,8 @@ function checarTremor() {
   if (!ctx.reg.transformacoes.some((m) => m[0] === 1 && m[3] === 1 && m[4] === fx.tremorX && m[5] === fx.tremorY)) {
     falhar(0, 'tremor: o mundo nao foi desenhado com a translacao do tremor');
   }
-  const jogadorDesenhado = ctx.reg.textos.find((x) => x.texto === CONTEUDO.jogador.emoji);
-  if (!jogadorDesenhado || Math.abs(jogadorDesenhado.x - (x0 + fx.tremorX)) > 1e-6) falhar(0, 'tremor: o jogador nao foi desenhado deslocado junto com o mundo');
+  const jogadorDesenhado = figurinhasDoQuadro(ctx, fx).find((x) => x.emoji === CONTEUDO.jogador.emoji);
+  if (!jogadorDesenhado || Math.abs(jogadorDesenhado.ox - (x0 + fx.tremorX)) > 0.5) falhar(0, 'tremor: o jogador nao foi desenhado deslocado junto com o mundo');
   if (estado.player.x !== x0 || estado.player.y !== y0) falhar(0, 'tremor: a posicao do jogador mudou (o tremor tem que ser so desenho)');
   // Cai ate zero — e o jogador nao saiu do lugar em nenhum quadro do tremor.
   quadrosVazios(estado, ctx, fx, 2);
@@ -5551,7 +5622,7 @@ function checarTremor() {
   // O teto (tremor.maximo), com um cfg em que ele fica abaixo do evento.
   const cfgTeto = structuredClone(CONTEUDO.juice);
   cfgTeto.tremor.maximo = T.eventos['jogador-dano'] / 2;
-  const fxTeto = criarEfeitos(cfgTeto);
+  const fxTeto = efeitosComFolha(cfgTeto).fx;
   quadro(estado, ctx, fxTeto);
   emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 5, hp: 85, x: 0, y: 0 });
   estado.tempo += PASSO;
@@ -5617,47 +5688,70 @@ function checarAvisoDeSpawn() {
 function checarOrbeNaArena() {
   const estado = avaliacaoCom(SEMENTE + 1207, []);
   const ctx = ctx2dFalso();
-  const fx = criarEfeitos();
+  const { fx } = efeitosComFolha();
   const orbe = soltarOrbeXp(estado, 100, 100, 1);
   orbe.x = -29;
   orbe.y = 100;
   quadro(estado, ctx, fx);
   const arena = estado.run.avaliacao.arena;
-  const desenhado = ctx.reg.textos.find((x) => x.texto === CONTEUDO.xpOrbe.emoji);
+  const desenhado = figurinhasDoQuadro(ctx, fx).find((x) => x.emoji === CONTEUDO.xpOrbe.emoji);
   const minimo = arena.esquerda + CONTEUDO.xpOrbe.raio + fx.tremorX;
-  if (!desenhado || desenhado.x < minimo - 1e-6) falhar(0, `orbe: o orbe em x=-29 foi desenhado em x=${desenhado && desenhado.x}, fora da arena (pendencia 29)`);
+  if (!desenhado || desenhado.ox < minimo - 0.5) falhar(0, `orbe: o orbe em x=-29 foi desenhado em x=${desenhado && desenhado.ox}, fora da arena (pendencia 29)`);
   if (orbe.x !== -29) falhar(0, 'orbe: o desenho mexeu na posicao do orbe');
-  return `orbe (pendencia 29): em x=-29 na simulacao, desenhado em x=${desenhado.x}`;
+  return `orbe (pendencia 29): em x=-29 na simulacao, desenhado em x=${desenhado.ox}`;
 }
 
-// Pendencia 16: a fonte muda por tamanho, nao por emoji. 400 inimigos (o
-// teto da pool), num tipo so e nos 4 misturados.
+// Pendencia 16, refeita na fase 16: a fonte so muda no cozimento. 400
+// inimigos (o teto da pool), num tipo so e nos 4 misturados: o 1o quadro
+// cozinha uma figurinha por tamanho (mais a do jogador); os quadros quentes
+// nao trocam a fonte nenhuma vez, nao cozinham nada nem criam camada; e cada
+// inimigo sai na figurinha do tamanho dele.
 function checarFontesPorQuadro() {
   const medir = (tipos) => {
     const estado = avaliacaoCom(SEMENTE + 1208, []);
     const ctx = ctx2dFalso();
-    const fx = criarEfeitos();
+    const { fx, camadas } = efeitosComFolha();
     for (let i = 0; i < CONTEUDO.arena.limites.enemies; i += 1) {
       spawnTipo(estado, tipos[i % tipos.length], 40 + (i % 20) * 44, 40 + Math.floor(i / 20) * 24);
     }
     quadro(estado, ctx, fx);
-    const desenhados = ctx.reg.textos.filter((x) => tipos.some((t) => t.emoji === x.texto));
-    if (desenhados.length !== CONTEUDO.arena.limites.enemies) falhar(0, `fontes: ${desenhados.length} inimigos desenhados de ${CONTEUDO.arena.limites.enemies}`);
+    const cozidas = fx.diag.figurinhasCozidas;
+    const criadas = camadas.length;
+    let quentes = 0;
+    for (let q = 0; q < 3; q += 1) {
+      estado.tempo += PASSO;
+      quadro(estado, ctx, fx);
+      quentes += ctx.reg.fontes;
+      if (fx.diag.figurinhasCozidas !== 0 || camadas.length !== criadas) {
+        falhar(0, `figurinhas: o ${q + 2}o quadro, sem nada novo na tela, cozinhou ${fx.diag.figurinhasCozidas} e criou ${camadas.length - criadas} camadas`);
+      }
+    }
+    const desenhados = figurinhasDoQuadro(ctx, fx).filter((x) => tipos.some((t) => t.emoji === x.emoji));
+    if (desenhados.length !== CONTEUDO.arena.limites.enemies) falhar(0, `figurinhas: ${desenhados.length} inimigos desenhados de ${CONTEUDO.arena.limites.enemies}`);
     // Agrupar por tamanho nao pode mudar o tamanho de ninguem.
     for (const x of desenhados) {
-      const tipo = tipos.find((t) => t.emoji === x.texto);
-      if (!x.fonte.startsWith(`${tipo.raio * CONTEUDO.visual.emojiInimigoFator}px `)) falhar(0, `fontes: ${tipo.emoji} desenhado com "${x.fonte}"`);
+      const tipo = tipos.find((t) => t.emoji === x.emoji);
+      if (x.tamanho !== tipo.raio * CONTEUDO.visual.emojiInimigoFator) falhar(0, `figurinhas: ${tipo.emoji} desenhado com a figurinha "${x.chave}"`);
     }
-    return ctx.reg.fontes;
+    if (ctx.reg.textos.some((x) => EMOJIS_DO_CANVAS.has(x.texto))) falhar(0, 'figurinhas: emoji escrito com fillText no quadro quente');
+    // Sem tremor e sem pop, toda figurinha cai no pixel inteiro e sem giro: e
+    // o caminho rapido do raster por CPU (fracionaria custa ~2x, girada ~10x).
+    const tortas = desenhados.filter((x) => !Number.isInteger(x.x) || !Number.isInteger(x.y) || x.angulo !== 0 || x.escala !== 1);
+    if (fx.tremorX !== 0 || fx.tremorY !== 0) falhar(0, 'figurinhas: o quadro dos 400 tremeu, o teste do pixel inteiro perdeu o sentido');
+    if (tortas.length > 0) falhar(0, `figurinhas: ${tortas.length} de ${desenhados.length} fora do pixel inteiro ou giradas (a 1a em ${tortas[0].x}, ${tortas[0].y}, giro ${tortas[0].angulo})`);
+    return { cozidas, quentes };
   };
   const umTipo = medir([CONTEUDO.inimigos[0]]);
   const misturados = medir(CONTEUDO.inimigos);
-  // Um tipo: a fonte dele e a do jogador. Misturados: uma por tamanho, mais a do jogador.
+  // Um tipo: a figurinha dele e a do jogador. Misturados: uma por tamanho, mais a do jogador.
   const tamanhos = new Set(CONTEUDO.inimigos.map((t) => t.raio)).size;
-  if (umTipo > 2 || misturados > tamanhos + 1) {
-    falhar(0, `fontes: ${umTipo} trocas de ctx.font num quadro com 400 de um tipo, ${misturados} com os 4 tipos misturados (pendencia 16: troca por tamanho, nao por inimigo)`);
+  if (umTipo.quentes !== 0 || misturados.quentes !== 0) {
+    falhar(0, `figurinhas: ${umTipo.quentes} trocas de ctx.font nos quadros quentes com 400 de um tipo, ${misturados.quentes} com os 4 tipos misturados (esperava 0: a fonte so muda no cozimento)`);
   }
-  return `fontes (pendencia 16): ${umTipo} trocas de ctx.font num quadro com 400 de um tipo, ${misturados} com os 4 tipos misturados`;
+  if (umTipo.cozidas !== 2 || misturados.cozidas !== tamanhos + 1) {
+    falhar(0, `figurinhas: o 1o quadro cozinhou ${umTipo.cozidas} (um tipo) e ${misturados.cozidas} (misturados), esperava 2 e ${tamanhos + 1} (uma por tamanho, mais o jogador)`);
+  }
+  return `figurinhas (pendencia 16): 0 trocas de ctx.font nos quadros quentes; o 1o quadro cozinha ${umTipo.cozidas} (400 de um tipo) e ${misturados.cozidas} (os 4 misturados), os seguintes nenhuma`;
 }
 
 // Um clima por periodo (a pagina do caderno ao longo do semestre) e outro no
@@ -5681,26 +5775,34 @@ function checarClimas() {
   if (new Set(papeis).size !== papeis.length) falhar(0, `climas: periodos com o mesmo papel (${papeis.join(', ')})`);
   // No navegador a pagina e as vinhetas viram camadas pintadas UMA vez por
   // clima e copiadas por quadro (o node acima pinta direto, sem camada).
-  const camadas = [];
+  // Fase 16: a folha de figurinhas e os dois rascunhos dela tambem sao
+  // camadas, criadas uma vez por fx e nunca repintadas por clima; ficam fora
+  // desta conta (a deles e a do teste das figurinhas).
+  const todas = [];
   const fxCam = criarEfeitos();
   fxCam.criarCamada = (w, h) => {
     const c = { width: w, height: h, ctx2d: ctx2dFalso() };
     c.getContext = () => c.ctx2d;
-    camadas.push(c);
+    todas.push(c);
     return c;
   };
+  const daFolha = (c) => c === fxCam.folha.camada || c === fxCam.folha.silhueta || c === fxCam.folha.dilatada;
+  let camadas = todas;
   const est = avaliacaoCom(SEMENTE + 1212, []);
   const ctxCam = ctx2dFalso();
   for (let i = 0; i < 5; i += 1) {
     est.tempo += PASSO;
     quadro(est, ctxCam, fxCam);
   }
+  if (todas.filter(daFolha).length !== 3) falhar(0, `climas: a folha de figurinhas tem ${todas.filter(daFolha).length} camadas, esperava 3 (folha, silhueta, dilatada)`);
+  camadas = todas.filter((c) => !daFolha(c));
   if (camadas.length !== 3) falhar(0, `climas: 5 quadros no mesmo clima pintaram ${camadas.length} camadas, esperava 3 (pagina, vinheta, dano) uma vez so`);
   if (camadas[0].ctx2d.reg.retangulos[0].cor !== tema.climas[0].papel) falhar(0, 'climas: a camada da pagina nao foi pintada com o papel do clima');
   const copiadas = ctxCam.reg.copias.map((c) => c.img);
   if (!copiadas.includes(camadas[0]) || !copiadas.includes(camadas[1])) falhar(0, 'climas: o quadro nao copiou as camadas da pagina e da vinheta');
   est.run.periodoIndex = CONTEUDO.periodos.length - 1;
   quadro(est, ctxCam, fxCam);
+  camadas = todas.filter((c) => !daFolha(c));
   if (camadas.length !== 5 || camadas[3].ctx2d.reg.retangulos[0].cor !== tema.climas[CONTEUDO.periodos.length - 1].papel) {
     falhar(0, `climas: a troca de periodo deixou ${camadas.length} camadas (esperava 5: pagina e vinheta novas)`);
   }
@@ -5844,7 +5946,8 @@ function checarJuice() {
   const c = checarJuiceForaDaSimulacao();
   return (
     `partida de 60s identica com e sem desenho (o estado inteiro; ${c.kills} mortos, pico de ${c.particulas} faiscas e ` +
-    `${c.numeros} numeros, tremor ate ${c.tremor}px, ${c.avisos} avisos de spawn e ${c.flashes} flashes desenhados, somados quadro a quadro)` +
+    `${c.numeros} numeros, tremor ate ${c.tremor}px, ${c.avisos} avisos de spawn e ${c.flashes} flashes desenhados, somados quadro a quadro; ` +
+    `${c.emojis} figurinhas copiadas da folha, ${c.cozidas} emoji cozidos, nenhum fillText de emoji no quadro)` +
     partes.map((p) => `\n    ${p}`).join('')
   );
 }
@@ -7022,10 +7125,10 @@ function checarForaDaArenaHachurada() {
   const tipo = CONTEUDO.inimigos[0];
   spawnTipo(estado, tipo, arena.esquerda / 2, (arena.topo + arena.base) / 2); // na faixa de fora
   const ctx = ctx2dFalso();
-  const fx = criarEfeitos();
+  const { fx } = efeitosComFolha();
   quadro(estado, ctx, fx);
   const clima = climaDe(estado);
-  const inimigo = ctx.reg.textos.find((x) => x.texto === tipo.emoji);
+  const inimigo = figurinhasDoQuadro(ctx, fx).find((x) => x.emoji === tipo.emoji);
   if (!inimigo) falhar(0, 'fora da arena: o inimigo da faixa de fora nem foi desenhado, o teste perdeu o sentido');
   if (ctx.reg.recortes.length !== 1 || ctx.reg.recortes[0].regra !== 'evenodd') falhar(0, `fora da arena: recortes ${JSON.stringify(ctx.reg.recortes)}, esperava 1 'evenodd'`);
   const veu = ctx.reg.retangulos.find((r) => r.cor === clima.papel && r.alpha === v.foraDaArena.veu);
@@ -7134,6 +7237,273 @@ function checarFase14() {
   return partes.map((p) => `\n    ${p}`).join('');
 }
 
+// ---------------------------------------------------------------- fase 16
+
+// Tarefa 2: o cozimento de uma figurinha, passo a passo, no que as camadas de
+// mentira registram (a silhueta, a dilatada e a folha).
+function checarCozimento() {
+  const fig = CONTEUDO.visual.figurinhas;
+  const v = CONTEUDO.visual;
+  const estado = avaliacaoCom(SEMENTE + 1601, []);
+  estado.player.vivo = false; // so o inimigo na tela: um cozimento so nos rascunhos
+  const tipo = CONTEUDO.inimigos[0];
+  spawnTipo(estado, tipo, 300, 300);
+  const { fx } = efeitosComFolha();
+  quadro(estado, ctx2dFalso(), fx);
+  const tamanho = tipo.raio * v.emojiInimigoFator;
+  const f = fx.figurinhas.get(`${tipo.emoji}|${tamanho}|normal|0`);
+  const onde = `cozimento (${tipo.emoji})`;
+  if (!f || fx.figurinhas.size !== 1) falhar(0, `${onde}: o cache ficou com [${[...fx.figurinhas.keys()].join(', ')}]`);
+  const lado = 2 * Math.ceil((tamanho * fig.margem) / 2); // par: o centro no pixel inteiro
+  if (f.camada !== fx.folha.camada || f.largura !== lado || f.altura !== lado || f.cx !== lado / 2 || f.cy !== lado / 2) {
+    falhar(0, `${onde}: a celula saiu ${JSON.stringify({ ...f, camada: undefined })}, esperava ${lado}x${lado} com o emoji no meio`);
+  }
+  const silhueta = fx.folha.silhueta.ctx2d.reg;
+  const dilatada = fx.folha.dilatada.ctx2d.reg;
+  const folha = fx.folha.camada.ctx2d.reg;
+  // 1-2: o emoji com corEmoji e, por cima, 'source-in' na cor do adesivo.
+  const escrito = silhueta.textos.filter((x) => x.texto === tipo.emoji);
+  if (escrito.length !== 1 || escrito[0].cor !== v.corEmoji || escrito[0].x !== lado / 2) falhar(0, `${onde}: a silhueta comecou com ${JSON.stringify(escrito)}`);
+  const recorte = silhueta.retangulos.find((r) => r.comp === 'source-in' && r.cor === fig.contorno.cor && r.n > escrito[0].n);
+  if (!recorte || recorte.w !== lado || recorte.h !== lado) falhar(0, `${onde}: a silhueta nao foi recortada em 'source-in' na cor do adesivo`);
+  // 3: a silhueta em `passos` deslocamentos de espessura x tamanho (e no meio).
+  const raio = fig.contorno.espessura * tamanho;
+  const passos = dilatada.copias.filter((c) => c.img === fx.folha.silhueta);
+  const emVolta = passos.filter((c) => Math.abs(Math.hypot(c.dx, c.dy) - raio) < 1e-9);
+  if (passos.length !== fig.contorno.passos + 1 || emVolta.length !== fig.contorno.passos) {
+    falhar(0, `${onde}: a silhueta foi dilatada com ${passos.length} copias (${emVolta.length} a ${raio.toFixed(2)}px), esperava ${fig.contorno.passos} em volta e 1 no meio`);
+  }
+  const tintas = dilatada.retangulos.filter((r) => r.comp === 'source-in').map((r) => r.cor);
+  if (tintas.join() !== [fx.corRecorte, fig.contorno.cor].join()) falhar(0, `${onde}: a dilatada foi pintada de ${tintas.join(' e ')}, esperava a sombra e depois o adesivo`);
+  // 0, na folha: a sombra no chao, a elipse do perfil, na cor dele (com o
+  // alfa), por baixo de tudo.
+  const perfil = fx.perfis.inimigo;
+  const chao = folha.preenchimentos.filter((x) => x.cor === perfil.corChao);
+  // 4-6, na folha: a sombra deslocada com o alfa dela, o contorno, o emoji.
+  const copias = folha.copias.filter((c) => c.img === fx.folha.dilatada);
+  const [sombra, contorno] = copias;
+  if (chao.length !== 1 || !(chao[0].n < sombra.n)) falhar(0, `${onde}: a sombra no chao saiu ${JSON.stringify(chao)}, esperava uma, antes da sombra do recorte`);
+  if (copias.length !== 2 || sombra.alpha !== fig.recorte.alfa || Math.abs(sombra.dx - (f.sx + fig.recorte.dx * tamanho)) > 1e-9 || Math.abs(sombra.dy - (f.sy + fig.recorte.dy * tamanho)) > 1e-9) {
+    falhar(0, `${onde}: a sombra do recorte saiu ${JSON.stringify(sombra && { alpha: sombra.alpha, dx: sombra.dx, dy: sombra.dy })} (celula em ${f.sx},${f.sy})`);
+  }
+  if (contorno.alpha !== 1 || contorno.dx !== f.sx || contorno.dy !== f.sy || !(contorno.n > sombra.n)) falhar(0, `${onde}: o contorno nao veio por cima da sombra, na celula`);
+  const emoji = folha.textos.filter((x) => x.texto === tipo.emoji);
+  if (emoji.length !== 1 || emoji[0].cor !== v.corEmoji || emoji[0].x !== f.sx + lado / 2 || emoji[0].y !== f.sy + lado / 2 || !(emoji[0].n > contorno.n)) {
+    falhar(0, `${onde}: o emoji na folha saiu ${JSON.stringify(emoji)}`);
+  }
+  // Recortado na celula, para nada vazar para a vizinha.
+  if (folha.recortes.length !== 1 || !folha.limpezas.some((l) => l.x === f.sx && l.y === f.sy && l.w === lado && l.h === lado)) falhar(0, `${onde}: a celula nao foi limpa e recortada`);
+  return `cozimento: ${tipo.emoji} ${tamanho.toFixed(1)}px numa celula de ${lado}px — sombra no chao, silhueta 'source-in' no adesivo, dilatada em ${fig.contorno.passos} passos de ${raio.toFixed(2)}px, sombra do recorte a ${fig.recorte.alfa}, contorno, o emoji com corEmoji`;
+}
+
+// Tarefa 5: o inimigo em x=100 andando para a esquerda (a simulacao escreveu a
+// vx dele) sai na variante espelhada, cozida com escala (-1, 1); parado ou
+// abaixo do limiar, continua virado; acima dele para a direita, desvira.
+function checarEspelho() {
+  const fig = CONTEUDO.visual.figurinhas;
+  const tipo = CONTEUDO.inimigos[0];
+  const estado = avaliacaoCom(SEMENTE + 1602, []);
+  estado.player.x = 20;
+  const e = spawnTipo(estado, tipo, 100, estado.player.y);
+  atualizarInimigos(estado, PASSO);
+  if (!(e.vx < -fig.limiarEspelho)) falhar(0, `espelho: o inimigo em x=100 com o jogador em x=20 andou com vx=${e.vx}, o teste perdeu o sentido`);
+  const { fx } = efeitosComFolha();
+  const ctx = ctx2dFalso();
+  const variante = () => {
+    quadro(estado, ctx, fx);
+    const c = figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, e.x, e.y, (x) => x.emoji === tipo.emoji);
+    return c ? c.variante : 'nenhuma';
+  };
+  if (variante() !== 'espelhada') falhar(0, `espelho: o inimigo em x=100 andando para a esquerda saiu na variante "${variante()}"`);
+  const cozido = fx.folha.camada.ctx2d.reg.textos.filter((x) => x.texto === tipo.emoji);
+  if (cozido.length !== 1 || !(cozido[0].escalaX < 0)) falhar(0, `espelho: a variante espelhada foi cozida com escala x ${cozido.map((x) => x.escalaX).join(',')}, esperava -1 (vezes o cosseno do degrau)`);
+  const lembra = [];
+  for (const vx of [0, fig.limiarEspelho / 2, fig.limiarEspelho * 2]) {
+    e.vx = vx;
+    estado.tempo += PASSO;
+    lembra.push(variante());
+  }
+  if (lembra.join() !== 'espelhada,espelhada,normal') falhar(0, `espelho: com vx 0, meio limiar e 2x o limiar saiu ${lembra.join(', ')}, esperava espelhada, espelhada, normal`);
+  return `espelho: o inimigo em x=100 andando para a esquerda sai na variante espelhada (cozida com escala -1); parado continua virado (limiar ${fig.limiarEspelho}px/s)`;
+}
+
+// Tarefa 4: o jogador inclina para onde anda, espelha andando para a
+// esquerda, lembra o lado quando para; nos i-frames a figurinha pisca (com a
+// sombra no chao, que e da celula).
+function checarJogadorFigurinha() {
+  const fig = CONTEUDO.visual.figurinhas;
+  const estado = avaliacaoCom(SEMENTE + 1603, []);
+  const { fx } = efeitosComFolha();
+  const ctx = ctx2dFalso();
+  const p = estado.player;
+  const andar = (eixo, ticks) => {
+    estado.input.eixoX = eixo;
+    for (let t = 0; t < ticks; t += 1) {
+      p.hp = p.hpMax;
+      atualizarPlayer(estado, PASSO);
+      estado.tempo += PASSO;
+    }
+    p.invulneravel = 0;
+    quadro(estado, ctx, fx);
+    return figurinhasDoQuadro(ctx, fx).find((x) => x.emoji === CONTEUDO.jogador.emoji);
+  };
+  const esquerda = andar(-1, 30);
+  const direita = andar(1, 60);
+  const parado = andar(0, 120);
+  const n = fig.inclinacao.niveis;
+  const casos = [
+    ['andando para a esquerda', esquerda, 'espelhada', (k) => k === -n],
+    ['andando para a direita', direita, 'normal', (k) => k === n],
+    ['parado depois de andar para a direita', parado, 'normal', (k) => k === 0],
+  ];
+  for (const [rotulo, c, esperada, inclina] of casos) {
+    if (!c || c.variante !== esperada || !inclina(c.nivel)) falhar(0, `jogador ${rotulo}: saiu ${c ? `${c.variante}, no degrau ${c.nivel} de ${n}` : 'sem figurinha'}`);
+  }
+  // O degrau e cozido girado: o emoji da celula do maximo saiu no giro maximo.
+  const max = (fig.inclinacao.graus * Math.PI) / 180;
+  const giros = fx.folha.camada.ctx2d.reg.textos.filter((x) => x.texto === CONTEUDO.jogador.emoji).map((x) => x.giro);
+  if (!giros.some((g) => Math.abs(g - max) < 1e-9) || !giros.some((g) => Math.abs(g + max) < 1e-9)) falhar(0, `jogador: os degraus foram cozidos com giros ${giros.map((g) => g.toFixed(3)).join(', ')}, esperava +-${max.toFixed(3)}`);
+  andar(-1, 30);
+  const paradoEsquerda = andar(0, 120);
+  if (!paradoEsquerda || paradoEsquerda.variante !== 'espelhada') falhar(0, 'jogador: parado depois de andar para a esquerda, desvirou');
+  // Pisca-pisca dos i-frames: no apagado a figurinha some; no aceso, volta.
+  p.invulneravel = CONTEUDO.visual.piscaIntervalo * 1.5;
+  quadro(estado, ctx, fx);
+  const sumiu = !figurinhasDoQuadro(ctx, fx).some((x) => x.emoji === CONTEUDO.jogador.emoji);
+  p.invulneravel = CONTEUDO.visual.piscaIntervalo * 0.5;
+  quadro(estado, ctx, fx);
+  const voltou = figurinhasDoQuadro(ctx, fx).some((x) => x.emoji === CONTEUDO.jogador.emoji);
+  if (!sumiu || !voltou) falhar(0, `jogador: no pisca-pisca dos i-frames a figurinha ${sumiu ? 'sumiu' : 'ficou'} no apagado e ${voltou ? 'voltou' : 'nao voltou'} no aceso`);
+  return `jogador: espelha e inclina para a esquerda (degrau ${esquerda.nivel}), inclina para a direita (degrau ${direita.nivel}), cozidos girados ate ${fig.inclinacao.graus} graus; parado continua virado; nos i-frames pisca`;
+}
+
+// Tarefa 3: a vida de cada entidade. O balanco so sobe ate a amplitude e anda
+// com o tempo; o projetil nao balanca; o orbe nao inclina; A Banca e o ❓
+// nunca espelham. E desenhar nao escreve em nada do estado.
+function checarVidaDasFigurinhas() {
+  const fig = CONTEUDO.visual.figurinhas;
+  const v = CONTEUDO.visual;
+  const estado = avaliacaoCom(SEMENTE + 1604, []);
+  const tipo = CONTEUDO.inimigos[0];
+  const e = spawnTipo(estado, tipo, 300, 300);
+  const orbe = soltarOrbeXp(estado, 500, 300, 1);
+  orbe.vx = -300;
+  const proj = poolProjeteis(estado).obter();
+  Object.assign(proj, { emoji: CONTEUDO.armas[0].emoji, x: 700, y: 200, vx: -400, vy: 0, raio: 7 });
+  const { fx } = efeitosComFolha();
+  const ctx = ctx2dFalso();
+  quadro(estado, ctx, fx); // esvazia a fila dos nascimentos
+  const antes = JSON.stringify(estado);
+  const tempo0 = estado.tempo;
+  const alturas = new Set();
+  const amplitude = fx.perfis.inimigo.balanco.amplitude;
+  for (let q = 0; q < 40; q += 1) {
+    quadro(estado, ctx, fx);
+    const lista = figurinhasDoQuadro(ctx, fx);
+    const c = figurinhaEm(lista, fx, e.x, e.y, (x) => x.emoji === tipo.emoji);
+    if (!c || c.oy > e.y + fx.tremorY + 0.5 || c.oy < e.y + fx.tremorY - amplitude - 0.5) falhar(0, `balanco: o ${tipo.emoji} em y=${e.y} saiu em ${c && c.oy} (ate ${amplitude}px acima, no pixel inteiro)`);
+    alturas.add(c.oy);
+    const pp = lista.find((x) => x.emoji === proj.emoji);
+    if (!pp || Math.abs(pp.oy - (proj.y + fx.tremorY)) > 0.5 || pp.variante !== 'espelhada') falhar(0, `projetil: saiu ${pp && `${pp.variante} em y=${pp.oy}`}, esperava sem balanco em y=${proj.y}, espelhado (vx < 0)`);
+    const po = lista.find((x) => x.emoji === CONTEUDO.xpOrbe.emoji);
+    if (!po || po.nivel !== 0) falhar(0, `orbe: inclinou (degrau ${po && po.nivel}) com vx=${orbe.vx} (o orbe nao inclina)`);
+    estado.tempo += PASSO * 2;
+  }
+  // No pixel inteiro: com 1,6px de amplitude, 2 ou 3 alturas.
+  if (alturas.size < 2) falhar(0, `balanco: em 40 quadros o ${tipo.emoji} ficou sempre na mesma altura`);
+  // Desenhar nao escreve no estado (o relogio andou so pelo teste).
+  estado.tempo = tempo0;
+  if (JSON.stringify(estado) !== antes) falhar(0, 'figurinhas: 40 quadros de desenho mudaram o estado');
+  // A Banca e o ❓ andando para a esquerda: nunca espelhados (a Banca inclina).
+  const tcc = estadoNoTcc(SEMENTE + 1605);
+  const corpo = acharBanca(tcc);
+  corpo.vx = -fig.inclinacao.velocidade * 2;
+  const q = poolPerguntas(tcc).obter();
+  Object.assign(q, { x: 200, y: 400, vx: -300, vy: 0, raio: CONTEUDO.banca.pergunta.raio, vida: 1 });
+  const { fx: fxTcc } = efeitosComFolha();
+  const ctxTcc = ctx2dFalso();
+  quadro(tcc, ctxTcc, fxTcc);
+  const lista = figurinhasDoQuadro(ctxTcc, fxTcc);
+  const banca = lista.find((x) => x.emoji === CONTEUDO.banca.emoji);
+  const pergunta = lista.find((x) => x.emoji === CONTEUDO.banca.pergunta.emoji);
+  if (!banca || banca.variante !== 'normal' || !(banca.nivel < 0)) falhar(0, `banca: andando para a esquerda saiu ${banca ? `${banca.variante}, no degrau ${banca.nivel}` : 'sem figurinha'} (inclina, nao espelha)`);
+  if (!pergunta || pergunta.variante !== 'normal' || pergunta.tamanho !== CONTEUDO.banca.pergunta.raio * v.banca.emojiPerguntaFator) falhar(0, `pergunta: saiu ${pergunta && pergunta.chave} (o ❓ nunca espelha)`);
+  // A sombra da Banca e a maior (o perfil dela), cozida na celula dela.
+  const sombraBanca = fxTcc.folha.camada.ctx2d.reg.preenchimentos.some((x) => x.cor === fxTcc.perfis.banca.corChao);
+  if (!sombraBanca || !(fxTcc.perfis.banca.chao.raio > fxTcc.perfis.inimigo.chao.raio)) falhar(0, 'banca: sem a sombra no chao dela, maior que a do bando');
+  return `vida: balanco ate ${amplitude}px (${alturas.size} alturas em 40 quadros), projetil sem balanco, orbe sem inclinacao, Banca e ❓ sem espelho; desenhar nao muda o estado`;
+}
+
+// O emoji que falta na maquina (fase 14) e cozido como a forma colorida, com o
+// mesmo contorno; e, sem folha nenhuma (node sem criarCamada), o emoji sai
+// direto, com corEmoji; com a folha cheia (teto), tambem.
+function checarFigurinhaSemEmoji() {
+  const v = CONTEUDO.visual;
+  const tipo = CONTEUDO.inimigos[0];
+  const montar = () => {
+    const estado = avaliacaoCom(SEMENTE + 1606, []);
+    spawnTipo(estado, tipo, 300, 300);
+    return estado;
+  };
+  const { fx } = efeitosComFolha();
+  fx.emojiConferido = true;
+  fx.emojiFaltando = new Set([tipo.emoji]);
+  quadro(montar(), ctx2dFalso(), fx);
+  const folha = fx.folha.camada.ctx2d.reg;
+  const silhueta = fx.folha.silhueta.ctx2d.reg;
+  const cor = v.emojiFallback.cores[tipo.emoji];
+  if (folha.textos.some((x) => x.texto === tipo.emoji) || silhueta.textos.some((x) => x.texto === tipo.emoji)) falhar(0, `fallback: ${tipo.emoji} foi cozido como texto (tofu na figurinha)`);
+  if (!folha.preenchimentos.some((x) => x.cor === cor) || !silhueta.preenchimentos.some((x) => x.cor === cor)) falhar(0, `fallback: a forma de ${tipo.emoji} nao foi cozida na cor ${cor}`);
+  if (!fx.figurinhas.has(`${tipo.emoji}|${tipo.raio * v.emojiInimigoFator}|normal|0`)) falhar(0, `fallback: ${tipo.emoji} sem figurinha (a forma tem que ganhar o contorno)`);
+  // Sem folha: o emoji direto, opaco.
+  const ctx = ctx2dFalso();
+  const semFolha = criarEfeitos();
+  quadro(montar(), ctx, semFolha);
+  const direto = ctx.reg.textos.filter((x) => EMOJIS_DO_CANVAS.has(x.texto));
+  if (direto.length === 0 || direto.some((x) => x.cor !== v.corEmoji) || semFolha.folha.camada !== null || ctx.reg.copias.length !== 0) {
+    falhar(0, `sem folha: os emoji sairam ${JSON.stringify(direto.map((x) => [x.texto, x.cor]))}`);
+  }
+  // Folha com teto 1: a 2a figurinha sai direta, e a recusa e contada.
+  const fig1 = structuredClone(v.figurinhas);
+  fig1.teto = 1;
+  const { fx: cheia } = efeitosComFolha(CONTEUDO.juice, CONTEUDO.tema, fig1);
+  const ctxCheia = ctx2dFalso();
+  quadro(montar(), ctxCheia, cheia);
+  if (cheia.figurinhas.size !== 1 || !(cheia.diag.figurinhasRecusadas > 0) || !ctxCheia.reg.textos.some((x) => EMOJIS_DO_CANVAS.has(x.texto) && x.cor === v.corEmoji)) {
+    falhar(0, `folha cheia: ${cheia.figurinhas.size} cozidas, ${cheia.diag.figurinhasRecusadas} recusadas, e a recusada nao saiu direta`);
+  }
+  return `fallback: ${tipo.emoji} sem fonte cozido como a forma ${cor} com contorno; sem folha (node) ou com ela cheia, o emoji direto com corEmoji`;
+}
+
+// O validador conhece as figurinhas (e a pendencia 105: #rgba nas cores que
+// o render le com comAlfa).
+function checarValidadorDasFigurinhas() {
+  const casos = [
+    ['entidade que o render nao desenha', (c) => { c.visual.figurinhas.porEntidade.chefao = {}; }, 'porEntidade.chefao'],
+    ['entidade faltando', (c) => { delete c.visual.figurinhas.porEntidade.orbe; }, 'porEntidade.orbe'],
+    ['sobrescrita que nao existe', (c) => { c.visual.figurinhas.porEntidade.banca.margem = 2; }, 'porEntidade.banca.margem'],
+    ['margem que nao cabe o contorno', (c) => { c.visual.figurinhas.margem = 1.05; }, 'figurinhas.margem'],
+    ['folha que nao cabe A Banca', (c) => { c.visual.figurinhas.atlas.lado = 100; }, 'atlas.lado'],
+    ['passos fracionarios', (c) => { c.visual.figurinhas.contorno.passos = 7.5; }, 'contorno.passos'],
+    ['inclinacao absurda', (c) => { c.visual.figurinhas.porEntidade.orbe.inclinacao.graus = 90; }, 'porEntidade.orbe.inclinacao.graus'],
+    ['espelhar que nao e booleano', (c) => { c.visual.figurinhas.espelhar = 'sim'; }, 'figurinhas.espelhar'],
+    ['sombra em #rgba (pendencia 105)', (c) => { c.visual.figurinhas.chao.cor = '#2230'; }, 'figurinhas.chao.cor'],
+    ['luz em #rrggbbaa (pendencia 105)', (c) => { c.tema.climas[1].luz.cor = '#ff9f4380'; }, 'luz.cor'],
+    ['um emoji em duas entidades', (c) => { c.xpOrbe.emoji = c.inimigos[0].emoji; }, 'de duas entidades'],
+  ];
+  for (const [nome, mexer, trecho] of casos) {
+    const clone = structuredClone(CONTEUDO);
+    mexer(clone);
+    if (!validarConteudo(clone).erros.some((e) => e.includes(trecho))) falhar(0, `validador: aceitou ${nome}`);
+  }
+  return `validador: ${casos.length} figurinhas podres recusadas`;
+}
+
+function checarFase16() {
+  const partes = [checarCozimento(), checarEspelho(), checarJogadorFigurinha(), checarVidaDasFigurinhas(), checarFigurinhaSemEmoji(), checarValidadorDasFigurinhas()];
+  return partes.map((p) => `\n    ${p}`).join('');
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -7199,6 +7569,8 @@ const fase14 = checarFase14();
 // Fase 15 (v2): o caderno — contraste, a pagina de cada clima, a hachura da
 // Sala Lotada e o codigo sem cor escrita.
 const fase15 = checarFase15();
+// Fase 16 (v2): as figurinhas — o cozimento, o espelho, a vida, o fallback.
+const fase16 = checarFase16();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -7449,6 +7821,7 @@ console.log(
     `\n  juice (fase 12): ${juice}` +
     `\n  robustez (fase 14):${fase14}` +
     `\n  caderno (fase 15):${fase15}` +
+    `\n  figurinhas (fase 16):${fase16}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +
