@@ -495,7 +495,10 @@ function criarContexto2d(canvas, opcoes = {}) {
   // do quadro anterior nao muda um drawImage.
   const comum = () => `${n(ctx.globalAlpha)}|${ctx.globalCompositeOperation}`;
   const preenche = () => `${n(ctx.fillStyle)}|${comum()}`;
-  const traca = () => `${n(ctx.strokeStyle)}|${n(ctx.lineWidth)}|${ctx.lineCap}|${ctx.lineJoin}|${comum()}`;
+  // Fase 17: o tracejado (setLineDash) e estado do contexto, como no
+  // navegador (o save guarda, o restore devolve), e muda cada traco.
+  let tracejado = [];
+  const traca = () => `${n(ctx.strokeStyle)}|${n(ctx.lineWidth)}|${ctx.lineCap}|${ctx.lineJoin}|${tracejado.map(n).join(',')}|${comum()}`;
   const escreve = () => `${ctx.font}|${ctx.textAlign}|${ctx.textBaseline}|${preenche()}`;
   // O que esta cozido no recorte (sx, sy, sw, sh) de um canvas fora da
   // arvore, com a posicao relativa ao recorte: cada texto (fonte, cor,
@@ -550,7 +553,7 @@ function criarContexto2d(canvas, opcoes = {}) {
       op('rotate', arguments);
     },
     save() {
-      pilha.push([...PROPRIEDADES_2D.map((p) => ctx[p]), [...t]]);
+      pilha.push([...PROPRIEDADES_2D.map((p) => ctx[p]), [...t], tracejado]);
       op('save', arguments);
     },
     restore() {
@@ -560,7 +563,13 @@ function criarContexto2d(canvas, opcoes = {}) {
         ctx[p] = topo[i];
       });
       t.splice(0, 6, ...topo[PROPRIEDADES_2D.length]);
+      tracejado = topo[PROPRIEDADES_2D.length + 1];
       op('restore', arguments);
+    },
+    setLineDash(segmentos) {
+      if (!Array.isArray(segmentos) || segmentos.some((x) => !(x >= 0))) throw new Error(`canvas falso: setLineDash(${segmentos})`);
+      tracejado = [...segmentos];
+      op('setLineDash', segmentos);
     },
     beginPath() { op('beginPath', arguments); },
     closePath() { op('closePath', arguments); },

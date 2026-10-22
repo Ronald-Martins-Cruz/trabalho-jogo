@@ -121,8 +121,9 @@ function ctxFalso() {
     },
     createRadialGradient: () => ({ addColorStop() {} }),
   };
-  // `clip`: fase 15 (o lado de fora da Sala Lotada).
-  for (const nome of ['setTransform', 'translate', 'rotate', 'beginPath', 'moveTo', 'lineTo', 'arc', 'rect', 'clip', 'fill', 'stroke',
+  // `clip`: fase 15 (o lado de fora da Sala Lotada). `setLineDash`: fase 17
+  // (a orbita da caneta e os avisos da Banca).
+  for (const nome of ['setTransform', 'translate', 'rotate', 'beginPath', 'moveTo', 'lineTo', 'arc', 'rect', 'clip', 'setLineDash', 'fill', 'stroke',
     'strokeRect', 'strokeText', 'fillRect', 'fillText', 'drawImage']) {
     ctx[nome] = () => {};
   }

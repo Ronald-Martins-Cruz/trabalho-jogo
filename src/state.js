@@ -42,7 +42,9 @@ export function novoEstado(seed = 1) {
     enemies: [],
     projectiles: [],
     xpOrbs: [],
-    particles: [],
+    // As faiscas de morte nao estao aqui: sao desenho, e moram nos efeitos do
+    // render (fx.particulas, fase 12). A chave `particles`, sempre vazia, saiu
+    // na fase 17 (pendencia 91); arena.limites.particles e o teto daquela pool.
     perguntas: [], // projeteis da Banca (fase 10, src/boss.js)
 
     // Fila de eventos consumida por audio.js e pelo render (juice). A fisica

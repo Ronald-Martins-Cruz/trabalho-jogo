@@ -192,38 +192,50 @@ export const CONTEUDO = {
     // A arena por baixo da pausa e da carta, apagada em tinta: as telas em DOM
     // por cima dela ja trazem o veu de papel.
     corSombraPausa: 'rgba(34, 48, 74, 0.25)',
-    corRastro: '#8fd6ff', // rastro simples do jogador (fase 01)
-    rastroAlphaMax: 0.35,
-    rastroRaioFator: 0.55, // multiplica jogador.raio para o raio do ponto do rastro
+    // O rastro do jogador e o desenho das armas (fase 17) moram em
+    // juice.rastro e juice.armas.
     piscaIntervalo: 0.08, // segundos entre estados do pisca-pisca de i-frames
     emojiInimigoFator: 2.2, // tamanho do emoji = raio do inimigo x este fator
     emojiProjetilFator: 2.6, // tamanho do emoji = raio do projetil x este fator
     emojiOrbeFator: 2.4, // tamanho do emoji = raio do orbe de xp x este fator
     corSombraCarta: 'rgba(34, 48, 74, 0.3)', // apaga a arena atras da carta
     emojiSateliteFator: 2.2, // tamanho do emoji = raioColisao da caneta orbital x este fator
-    corOndaTelegrafo: 'rgba(255, 210, 90, 0.55)', // anel do telegrafo do Resumo (comportamento ondaArea)
-    corFeixe: 'rgba(255, 235, 59, 0.32)', // faixa translucida do Marca-texto (comportamento feixe)
     // A Banca (fase 10). O emoji e maior que o corpo de colisao (banca.raio):
     // o raio fica preso pela regra da grade de separacao (separacao.gradePasso)
-    // e o tamanho na tela e o que diz "chefe".
+    // e o tamanho na tela e o que diz "chefe". Fase 17: a aura e um circulo de
+    // marca-texto, os avisos sao caneta vermelha tracejada, e a virada de fase
+    // e um carimbo numa faixa de papel escurecido.
     banca: {
       tamanhoEmoji: 76,
-      raioAura: 46, // px do circulo colorido por baixo do emoji
-      // Uma cor por fase (banca.fases): e a "mudanca de cor" da transicao.
-      corAura: ['rgba(122, 162, 255, 0.30)', 'rgba(255, 93, 122, 0.42)'],
-      corTelegrafo: 'rgba(255, 93, 122, 0.85)', // linhas, faixa e circulos de aviso
+      raioAura: 46, // px do circulo de marca-texto por baixo da figurinha
+      // Uma cor por fase (banca.fases): e a "mudanca de cor" da transicao. Cores
+      // opacas: a transparencia e `alfaAura`, e a composicao, `composicaoAura`
+      // ('multiply' tinge o papel e a pauta por baixo, como marca-texto).
+      corAura: [COR.marcaAzul, COR.marcaRosa],
+      alfaAura: 0.9,
+      composicaoAura: 'multiply',
+      corTelegrafo: COR.canetaVermelha, // linhas, faixa e circulos de aviso
+      tracejado: [10, 7], // px de traco e de vao (setLineDash) dos avisos
+      larguraAviso: 2.5, // px da faixa da investida e dos circulos da horda
       alphaTelegrafoMin: 0.18, // o aviso nasce fraco...
-      alphaTelegrafoMax: 0.75, // ...e fica forte ate o golpe sair
+      alphaTelegrafoMax: 0.8, // ...e fica forte ate o golpe sair
       // A faixa da investida enche da Banca para a ponta com esta fracao do
       // alfa do aviso (o contorno usa o alfa inteiro).
-      preenchimentoInvestida: 0.45,
+      preenchimentoInvestida: 0.3,
       alcanceRaioLeque: 560, // px das linhas do aviso do leque (a pergunta voa alem)
       larguraRaioLeque: 3,
       emojiPerguntaFator: 2.6, // tamanho do ❓ = banca.pergunta.raio x este fator
-      fonteTexto: 'bold 34px ui-monospace, "Cascadia Mono", Consolas, monospace',
-      fonteSubtexto: '20px ui-monospace, "Cascadia Mono", Consolas, monospace',
-      corTexto: '#ffd0d8',
-      corSombraTexto: 'rgba(5, 6, 14, 0.75)', // faixa atras do texto da transicao
+      // A virada de fase: "A Banca se reune" carimbado (fonte de carimbo, na
+      // tinta do carimbo, torto `giroTexto` graus) e a fase nova escrita a mao,
+      // numa faixa de papel escurecido com uma linha a lapis em cima e embaixo.
+      fonteTexto: `46px ${FONTE.carimbo}`,
+      fonteSubtexto: `bold 22px ${FONTE.manuscrita}`,
+      corTexto: COR.carimbo,
+      corSubtexto: COR.tinta,
+      giroTexto: -4,
+      corFaixa: COR.papelSombra,
+      alfaFaixa: 0.94,
+      bordaFaixa: { cor: COR.lapis, largura: 1.5 },
       faixaTextoY: 0.36, // fracao da altura do canvas onde a faixa do texto comeca
       faixaTextoAltura: 0.22, // fracao da altura do canvas
       pulsoTransicao: 6, // Hz do pulso da aura durante a transicao
@@ -237,6 +249,10 @@ export const CONTEUDO = {
   // estado.tempo, em passos de loop.passo: a partida e identica com e sem eles.
   juice: {
     semente: 12,
+    // Fase 17: o rng das formas (o tremido do rastro; a forma, o angulo e o
+    // giro de cada faisca), separado do de cima para nao mudar a sequencia das
+    // faiscas e do tremor, e reiniciado nesta semente a cada avaliacao.
+    sementeFormas: 17,
     // Screen shake: translacao do contexto no desenho, nunca posicao de
     // entidade. Cada evento da lista leva o tremor a pelo menos aquele numero
     // de px (o maior ganha, nao somam: uma rajada de golpes nao vira terremoto);
@@ -258,35 +274,53 @@ export const CONTEUDO = {
     // Banca) sobrescreve so os campos que traz; o resto vem de `padrao`.
     particulas: {
       // Era 'lighter' (luz somada, para o fundo escuro da v1). No papel claro a
-      // soma da branco e as faiscas sumiam (fase 15); a fase 17 as troca por
-      // confete de papel.
+      // soma da branco e as faiscas sumiam (fase 15). Fase 17: sao confete de
+      // papel e rabiscos, e a composicao e 'source-over' ou 'multiply'.
       composicao: 'source-over',
       maxPorQuadro: 220, // teto de particulas novas por quadro (horda + explosao)
+      // O alfa (vida restante) anda em `niveisDeAlfa` degraus: a cor e o alfa
+      // mudam uma vez por (cor, forma, degrau), e os rabiscos de cada um sao
+      // um traco so (800 faiscas nao sao 800 trocas de estado).
+      niveisDeAlfa: 6,
+      // Confete: retangulo de `tamanho` x `tamanho * razao` que gira de lado
+      // (o lado comprido encolhe com o cosseno do angulo, ate `minimo`).
+      confete: { razao: 0.55, minimo: 0.2 },
+      // Rabisco: um "v" de `comprimento` x tamanho, com o meio deslocado
+      // `dobra` x o comprimento para o lado, num traco de `largura` px (ate 1px
+      // o raster por CPU o desenha pelo caminho rapido de linha fina).
+      rabisco: { comprimento: 2.4, dobra: 0.3, largura: 1 },
       padrao: {
         quantidade: 8,
-        cores: ['#ffffff'],
+        cores: [COR.lapis],
         velocidadeMin: 50, // px/s
         velocidadeMax: 170,
         vidaMin: 0.25, // s
         vidaMax: 0.55,
-        tamanhoMin: 2, // px do lado do quadradinho
-        tamanhoMax: 4,
-        atrito: 3.5, // 1/s
+        tamanhoMin: 3, // px do lado maior do confete
+        tamanhoMax: 6,
+        atrito: 3.5, // 1/s (freia tambem o giro)
+        fracaoRabisco: 0.35, // a fracao das faiscas que sai rabisco (o resto, confete)
+        giroMax: 14, // rad/s: o giro de cada uma e sorteado entre -giroMax e giroMax
       },
       porTipo: {
         prazo: { quantidade: 8, cores: ['#ff4d5e', '#ff8a96', '#ffd0d5'] },
-        notificacao: { quantidade: 6, cores: ['#ffd23f', '#fff1a8', '#ffb627'] },
-        pdf: { quantidade: 14, cores: ['#f4f6ff', '#c9d2ea', '#8fa2d6'], velocidadeMax: 140, tamanhoMax: 5 },
+        notificacao: { quantidade: 6, cores: ['#ffd23f', '#fff1a8', '#ffb627'], fracaoRabisco: 0.6 },
+        pdf: { quantidade: 14, cores: ['#f4f6ff', '#c9d2ea', '#8fa2d6'], velocidadeMax: 140, tamanhoMax: 7, fracaoRabisco: 0.1 },
         trabalhoGrupo: { quantidade: 9, cores: ['#56c8ff', '#9ee6ff', '#2f6dff'] },
+        // A derrota da Banca: so confete, nas cores dela (o azul e o rosa das
+        // duas fases, o dourado e a tinta do carimbo — o branco da v1 sumia no
+        // papel).
         banca: {
           quantidade: 70,
-          cores: ['#ffd36b', '#ff5d7a', '#7aa2ff', '#ffffff'],
+          cores: ['#ffd36b', '#ff5d7a', '#7aa2ff', COR.carimbo],
           velocidadeMin: 80,
           velocidadeMax: 380,
           vidaMin: 0.6,
           vidaMax: 1.2,
-          tamanhoMax: 6,
+          tamanhoMax: 8,
           atrito: 2,
+          fracaoRabisco: 0,
+          giroMax: 10,
         },
       },
       // O jubilado: o jogador se desfaz onde caiu (aparece por baixo da tela
@@ -318,19 +352,26 @@ export const CONTEUDO = {
       inicioFade: 0.55, // fracao da vida em que o numero comeca a sumir
       pop: 0.45, // escala extra no nascimento e a cada soma
       popDuracao: 0.12, // s
-      fonte: 'bold 14px ui-monospace, "Cascadia Mono", Consolas, monospace',
-      fonteJogador: 'bold 17px ui-monospace, "Cascadia Mono", Consolas, monospace',
-      cor: '#fff4cf',
-      corJogador: '#ff6b86', // o dano que o JOGADOR toma, em cima dele
-      corContorno: 'rgba(8, 8, 18, 0.85)',
-      larguraContorno: 3,
+      // Fase 17: escritos a mao. O dano causado em tinta, com contorno de
+      // papel; o que o jogador toma em caneta vermelha e maior, como a
+      // correcao do professor.
+      fonte: `bold 15px ${FONTE.manuscrita}`,
+      fonteJogador: `bold 22px ${FONTE.manuscrita}`,
+      cor: COR.tinta,
+      corJogador: COR.canetaVermelha, // o dano que o JOGADOR toma, em cima dele
+      corContorno: COR.papel,
+      larguraContorno: 3.5,
     },
-    // Flash de golpe: o inimigo que perdeu HP neste quadro e redesenhado em
-    // modo aditivo (clareia o proprio emoji) e "incha" um pouco. No jogador, o
-    // mesmo, mais uma vinheta vermelha nas bordas da tela.
+    // Flash de golpe: o inimigo que perdeu HP neste quadro "incha" um pouco e
+    // ganha por cima a silhueta da propria figurinha numa cor so (`cor`), com o
+    // alfa do flash. No jogador, o mesmo, mais uma vinheta vermelha nas bordas.
+    // Fase 17 (pendencia 107): era uma 2a copia em 'lighter', que clareava o
+    // que ja era claro e quase nao se lia no papel.
     flash: {
       duracao: 0.12, // s
-      alpha: 0.85, // forca da passada aditiva no inicio do flash
+      alpha: 0.85, // alfa da silhueta no inicio do flash
+      cor: COR.adesivo, // a silhueta: a figurinha inteira fica branca, e volta
+      composicao: 'source-over',
       escalaPop: 0.18, // o emoji cresce ate 18% no golpe
       jogadorDuracao: 0.2,
       vinhetaDanoDuracao: 0.35,
@@ -360,19 +401,83 @@ export const CONTEUDO = {
       // fracao de molinhas. `passosPorVolta` e a resolucao do traco.
       rabisco: { voltas: 4, passosPorVolta: 12, raioMin: 3.5, raioMax: 6.5, descida: 1.6, tamanho: 18, molinhas: 0.5, largura: 1.1 },
     },
-    // Aviso de spawn: um brilho na parede, no ponto por onde o inimigo recem-
-    // nascido (fora da arena visivel) vai entrar. Nasce junto com ele — ele
-    // leva ~1,3s para cruzar arena.margemSpawn — e some em `duracao`.
+    // Aviso de spawn: uma seta rabiscada a caneta vermelha na margem da pagina,
+    // no ponto da parede por onde o inimigo recem-nascido (fora da arena
+    // visivel) vai entrar, apontando para dentro (para onde ele anda). Nasce
+    // junto com ele — ele leva ~1,3s para cruzar arena.margemSpawn —, e
+    // rabiscada (cresce da parede ate a ponta em `crescer` x duracao), e some
+    // em `duracao`. Fase 17: era um brilho laranja na parede.
     avisoSpawn: {
       // Era 'lighter' (fixo no render): luz somada sobre o fundo escuro. No
       // papel claro a soma da branco e o aviso sumia (fase 15).
       composicao: 'source-over',
       duracao: 0.9, // s de vida do inimigo em que o aviso aparece
-      raio: 36, // px
-      alphaMax: 0.75,
-      corCentro: 'rgba(255, 150, 90, 0.9)',
-      corBorda: 'rgba(255, 150, 90, 0)',
+      alphaMax: 0.85, // o alfa sobe e desce num seno de meia volta
+      cor: COR.canetaVermelha,
+      largura: 2.6, // px do traco
+      recuo: 5, // px da parede ate o comeco da seta
+      comprimento: 30, // px da haste
+      bojo: 3.5, // px que a haste entorta para o lado (feita a mao)
+      ponta: 11, // px de cada risco da ponta
+      abertura: 34, // graus de cada risco da ponta com a haste
+      crescer: 0.3, // fracao da duracao em que a seta e rabiscada
     },
+    // O rastro do jogador (fase 17): um traco de lapis fino que afina e some
+    // para tras. Cada ponto do rastro leva um tremido de ate `ruido` px,
+    // sorteado por fx.rngFormas (nao fx.rng: nao gasta a sequencia do juice) quando o ponto nasce (o traco nao ferve
+    // de um quadro para o outro); parado, o tremido some (`passoRuido`: px
+    // entre dois pontos em que o tremido chega ao maximo).
+    rastro: { cor: COR.lapis, largura: 2.4, alfa: 0.8, ruido: 1.1, passoRuido: 3 },
+    // O desenho das armas (fase 17): cada uma risca a pagina com o seu
+    // material. Os numeros de jogo (raio, alcance, largura) sao os de `armas`;
+    // aqui so a aparencia.
+    armas: {
+      // ☕ projetil: um borrao atras da figurinha, na direcao oposta a
+      // velocidade, que afina ate a ponta — `tempo` s de voo de comprimento
+      // (teto `maximo` px), `largura` x o tamanho do emoji na base.
+      projetil: { cor: COR.lapis, alfa: 0.4, tempo: 0.05, maximo: 34, largura: 0.5 },
+      // ✏️ caneta orbital: a orbita, um circulo tracejado a lapis; e cada
+      // satelite deixa um risco de tinta em arco atras de si, de `graus` de
+      // comprimento, em `segmentos` pedacos que esvaem e afinam (`afina`: o
+      // quanto a largura cai ate a ponta).
+      orbital: {
+        orbita: { cor: COR.lapis, alfa: 0.4, largura: 1.2, tracejado: [4, 8] },
+        risco: { cor: COR.tinta, alfa: 0.75, largura: 4, graus: 95, segmentos: 6, afina: 0.75 },
+      },
+      // 📝 resumo (onda): o anel e um circulo desenhado a mao a lapis — raio
+      // com um ruido senoidal de baixa frequencia (`ondulacao` x o raio,
+      // `ondas` por volta), passando `sobra` de volta alem do comeco, e um 2o
+      // traco deslocado `deslocamento` px na diagonal, com o ruido `defasagem`
+      // rad adiante. Por dentro, marca-texto em 'multiply', que esvai no ritmo
+      // do anel.
+      onda: {
+        cor: COR.lapis,
+        alfa: 0.85,
+        largura: 1.8,
+        pontos: 44, // pontos do contorno por volta
+        ondulacao: 0.035,
+        ondas: 3,
+        sobra: 0.1,
+        deslocamento: 1.3,
+        defasagem: 1.3,
+        preenchimento: { cor: COR.marcaAmarelo, alfa: 0.55, composicao: 'multiply' },
+      },
+      // 🖍️ marca-texto (feixe): um risco de marca-texto com as pontas
+      // arredondadas (raio = `ponta` x meia largura), em 'multiply' (realca a
+      // pauta por baixo), com a borda um tom mais escura. Alfa constante.
+      feixe: {
+        cor: COR.marcaAmarelo,
+        alfa: 0.6,
+        composicao: 'multiply',
+        ponta: 0.55,
+        borda: { cor: '#e8c93a', alfa: 0.9, largura: 1.5 },
+      },
+    },
+    // O brilho do orbe 💡: um gradiente radial amarelo por baixo da figurinha,
+    // cozido na propria figurinha do orbe (raio = `raio` x o tamanho do emoji,
+    // no maximo meia celula: visual.figurinhas.margem / 2) — nenhum gradiente
+    // nem copia a mais por quadro.
+    brilhoOrbe: { cor: COR.marcaAmarelo, alfa: 0.85, raio: 0.8 },
     // O topo do HUD cobre a faixa de cima da arena: com o jogador ou A Banca
     // nela (px do canvas, pela borda de cima do emoji), ele fica translucido.
     hud: { faixaTopo: 90 },
@@ -2950,10 +3055,23 @@ export function validarConteudo(conteudo = CONTEUDO) {
       erros.push(`${caminho}: rgb()/rgba() com virgulas e tres canais numericos, veio ${JSON.stringify(valor)}`);
     }
   };
+  // Fase 17: as composicoes do papel. 'lighter' (luz somada) some no papel
+  // claro; 'multiply' e o marca-texto (tinge o que esta por baixo).
+  const COMPOSICOES = ['source-over', 'multiply'];
+  const exigeComposicao = (valor, caminho) => {
+    if (!COMPOSICOES.includes(valor)) erros.push(`${caminho}: "${valor}" (use ${COMPOSICOES.join(' ou ')})`);
+  };
+  // O padrao do setLineDash: px de traco e de vao, positivos e em par.
+  const exigeTracejado = (valor, caminho) => {
+    if (!Array.isArray(valor) || valor.length === 0 || valor.length % 2 !== 0 || !valor.every((x) => typeof x === 'number' && x > 0 && x <= 100)) {
+      erros.push(`${caminho}: esperava [traco, vao, ...] em px positivos, veio ${JSON.stringify(valor)}`);
+    }
+  };
 
   if (exigeObjeto(conteudo.juice, 'juice')) {
     const j = conteudo.juice;
     exigeNumero(j.semente, 'juice.semente', { min: 0 });
+    exigeNumero(j.sementeFormas, 'juice.sementeFormas', { min: 0 });
     // O emoji herda o alfa do fillStyle: a cor dele tem que ser opaca.
     const corEmoji = conteudo.visual && conteudo.visual.corEmoji;
     if (typeof corEmoji !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(corEmoji)) {
@@ -3003,13 +3121,26 @@ export function validarConteudo(conteudo = CONTEUDO) {
       exigeNumero(m.tamanhoMin, `${caminho}.tamanhoMin`, { min: 0.5 });
       exigeNumero(m.tamanhoMax, `${caminho}.tamanhoMax`, { min: Number.isFinite(m.tamanhoMin) ? m.tamanhoMin : 0.5, max: 20 });
       exigeNumero(m.atrito, `${caminho}.atrito`, { min: 0 });
+      exigeNumero(m.fracaoRabisco, `${caminho}.fracaoRabisco`, { min: 0, max: 1 });
+      exigeNumero(m.giroMax, `${caminho}.giroMax`, { min: 0, max: 60 });
       if (!Array.isArray(m.cores) || m.cores.length === 0) erros.push(`${caminho}.cores: esperava uma lista nao vazia`);
       else m.cores.forEach((c, i) => exigeCor(c, `${caminho}.cores[${i}]`));
     };
     if (exigeObjeto(j.particulas, 'juice.particulas')) {
       const p = j.particulas;
       exigeNumero(p.maxPorQuadro, 'juice.particulas.maxPorQuadro', { min: 1 });
-      if (!['source-over', 'lighter'].includes(p.composicao)) erros.push(`juice.particulas.composicao: "${p.composicao}" (use source-over ou lighter)`);
+      // Fase 17: 'lighter' saiu (a luz somada some no papel claro).
+      exigeComposicao(p.composicao, 'juice.particulas.composicao');
+      exigeInteiro(p.niveisDeAlfa, 'juice.particulas.niveisDeAlfa', { min: 1, max: 32 });
+      if (exigeObjeto(p.confete, 'juice.particulas.confete')) {
+        exigeNumero(p.confete.razao, 'juice.particulas.confete.razao', { min: 0.1, max: 1 });
+        exigeNumero(p.confete.minimo, 'juice.particulas.confete.minimo', { min: 0.05, max: 1 });
+      }
+      if (exigeObjeto(p.rabisco, 'juice.particulas.rabisco')) {
+        exigeNumero(p.rabisco.comprimento, 'juice.particulas.rabisco.comprimento', { min: 0.5, max: 8 });
+        exigeNumero(p.rabisco.dobra, 'juice.particulas.rabisco.dobra', { min: 0, max: 1 });
+        exigeNumero(p.rabisco.largura, 'juice.particulas.rabisco.largura', { min: 0.3, max: 6 });
+      }
       if (exigeObjeto(p.padrao, 'juice.particulas.padrao')) exigeRajada({}, 'juice.particulas.padrao');
       if (exigeObjeto(p.jogador, 'juice.particulas.jogador')) exigeRajada(p.jogador, 'juice.particulas.jogador');
       if (exigeObjeto(p.porTipo, 'juice.particulas.porTipo')) {
@@ -3050,6 +3181,8 @@ export function validarConteudo(conteudo = CONTEUDO) {
       const f = j.flash;
       exigeNumero(f.duracao, 'juice.flash.duracao', { min: 0.02, max: 1 });
       exigeNumero(f.alpha, 'juice.flash.alpha', { min: 0, max: 1 });
+      exigeCor(f.cor, 'juice.flash.cor');
+      exigeComposicao(f.composicao, 'juice.flash.composicao');
       exigeNumero(f.escalaPop, 'juice.flash.escalaPop', { min: 0, max: 1 });
       exigeNumero(f.jogadorDuracao, 'juice.flash.jogadorDuracao', { min: 0.02, max: 1 });
       exigeNumero(f.vinhetaDanoDuracao, 'juice.flash.vinhetaDanoDuracao', { min: 0, max: 2 });
@@ -3108,12 +3241,86 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
     if (exigeObjeto(j.avisoSpawn, 'juice.avisoSpawn')) {
       const a = j.avisoSpawn;
-      if (!['source-over', 'lighter', 'multiply'].includes(a.composicao)) erros.push(`juice.avisoSpawn.composicao: "${a.composicao}" (use source-over, lighter ou multiply)`);
+      exigeComposicao(a.composicao, 'juice.avisoSpawn.composicao');
       exigeNumero(a.duracao, 'juice.avisoSpawn.duracao', { min: 0.1, max: 3 });
-      exigeNumero(a.raio, 'juice.avisoSpawn.raio', { min: 1 });
       exigeNumero(a.alphaMax, 'juice.avisoSpawn.alphaMax', { min: 0, max: 1 });
-      exigeCor(a.corCentro, 'juice.avisoSpawn.corCentro');
-      exigeCor(a.corBorda, 'juice.avisoSpawn.corBorda');
+      exigeCor(a.cor, 'juice.avisoSpawn.cor');
+      exigeNumero(a.largura, 'juice.avisoSpawn.largura', { min: 0.5, max: 10 });
+      exigeNumero(a.recuo, 'juice.avisoSpawn.recuo', { min: 0, max: 60 });
+      exigeNumero(a.comprimento, 'juice.avisoSpawn.comprimento', { min: 4, max: 120 });
+      exigeNumero(a.bojo, 'juice.avisoSpawn.bojo', { min: 0, max: 20 });
+      exigeNumero(a.ponta, 'juice.avisoSpawn.ponta', { min: 2, max: 40 });
+      exigeNumero(a.abertura, 'juice.avisoSpawn.abertura', { min: 5, max: 80 });
+      exigeNumero(a.crescer, 'juice.avisoSpawn.crescer', { min: 0.01, max: 1 });
+    }
+    // O rastro e as armas (fase 17).
+    if (exigeObjeto(j.rastro, 'juice.rastro')) {
+      const r = j.rastro;
+      exigeCor(r.cor, 'juice.rastro.cor');
+      exigeNumero(r.largura, 'juice.rastro.largura', { min: 0.5, max: 12 });
+      exigeNumero(r.alfa, 'juice.rastro.alfa', { min: 0, max: 1 });
+      exigeNumero(r.ruido, 'juice.rastro.ruido', { min: 0, max: 6 });
+      exigeNumero(r.passoRuido, 'juice.rastro.passoRuido', { min: 0.1, max: 40 });
+    }
+    if (exigeObjeto(j.armas, 'juice.armas')) {
+      const a = j.armas;
+      const traco = (t, caminho, { tracejado = false } = {}) => {
+        if (!exigeObjeto(t, caminho)) return;
+        exigeCor(t.cor, `${caminho}.cor`);
+        exigeNumero(t.alfa, `${caminho}.alfa`, { min: 0, max: 1 });
+        exigeNumero(t.largura, `${caminho}.largura`, { min: 0.3, max: 12 });
+        if (tracejado) exigeTracejado(t.tracejado, `${caminho}.tracejado`);
+      };
+      if (exigeObjeto(a.projetil, 'juice.armas.projetil')) {
+        const p = a.projetil;
+        exigeCor(p.cor, 'juice.armas.projetil.cor');
+        exigeNumero(p.alfa, 'juice.armas.projetil.alfa', { min: 0, max: 1 });
+        exigeNumero(p.tempo, 'juice.armas.projetil.tempo', { min: 0, max: 0.5 });
+        exigeNumero(p.maximo, 'juice.armas.projetil.maximo', { min: 0, max: 200 });
+        exigeNumero(p.largura, 'juice.armas.projetil.largura', { min: 0.05, max: 2 });
+      }
+      if (exigeObjeto(a.orbital, 'juice.armas.orbital')) {
+        traco(a.orbital.orbita, 'juice.armas.orbital.orbita', { tracejado: true });
+        const r = a.orbital.risco;
+        traco(r, 'juice.armas.orbital.risco');
+        if (r && typeof r === 'object') {
+          exigeNumero(r.graus, 'juice.armas.orbital.risco.graus', { min: 1, max: 350 });
+          exigeInteiro(r.segmentos, 'juice.armas.orbital.risco.segmentos', { min: 1, max: 24 });
+          exigeNumero(r.afina, 'juice.armas.orbital.risco.afina', { min: 0, max: 1 });
+        }
+      }
+      if (exigeObjeto(a.onda, 'juice.armas.onda')) {
+        const o = a.onda;
+        traco(o, 'juice.armas.onda');
+        exigeInteiro(o.pontos, 'juice.armas.onda.pontos', { min: 8, max: 180 });
+        exigeNumero(o.ondulacao, 'juice.armas.onda.ondulacao', { min: 0, max: 0.3 });
+        exigeNumero(o.ondas, 'juice.armas.onda.ondas', { min: 0, max: 12 });
+        exigeNumero(o.sobra, 'juice.armas.onda.sobra', { min: 0, max: 0.5 });
+        exigeNumero(o.deslocamento, 'juice.armas.onda.deslocamento', { min: 0, max: 8 });
+        exigeNumero(o.defasagem, 'juice.armas.onda.defasagem', { min: 0, max: 2 * Math.PI });
+        if (exigeObjeto(o.preenchimento, 'juice.armas.onda.preenchimento')) {
+          exigeCor(o.preenchimento.cor, 'juice.armas.onda.preenchimento.cor');
+          exigeNumero(o.preenchimento.alfa, 'juice.armas.onda.preenchimento.alfa', { min: 0, max: 1 });
+          exigeComposicao(o.preenchimento.composicao, 'juice.armas.onda.preenchimento.composicao');
+        }
+      }
+      if (exigeObjeto(a.feixe, 'juice.armas.feixe')) {
+        const f = a.feixe;
+        exigeCor(f.cor, 'juice.armas.feixe.cor');
+        exigeNumero(f.alfa, 'juice.armas.feixe.alfa', { min: 0, max: 1 });
+        exigeComposicao(f.composicao, 'juice.armas.feixe.composicao');
+        exigeNumero(f.ponta, 'juice.armas.feixe.ponta', { min: 0, max: 1 });
+        traco(f.borda, 'juice.armas.feixe.borda');
+      }
+    }
+    if (exigeObjeto(j.brilhoOrbe, 'juice.brilhoOrbe')) {
+      const b = j.brilhoOrbe;
+      // O fim transparente do gradiente sai da propria cor (comAlfa).
+      exigeCorDeGradiente(b.cor, 'juice.brilhoOrbe.cor');
+      exigeNumero(b.alfa, 'juice.brilhoOrbe.alfa', { min: 0, max: 1 });
+      // Cozido na celula da figurinha: cabe em meia celula.
+      const margem = conteudo.visual && conteudo.visual.figurinhas && Number.isFinite(conteudo.visual.figurinhas.margem) ? conteudo.visual.figurinhas.margem : 2;
+      exigeNumero(b.raio, 'juice.brilhoOrbe.raio', { min: 0.1, max: margem / 2 });
     }
     if (exigeObjeto(j.hud, 'juice.hud')) {
       const altura = conteudo.arena && conteudo.arena.altura;
@@ -3147,6 +3354,31 @@ export function validarConteudo(conteudo = CONTEUDO) {
       exigeNumero(f.alfa, 'visual.foraDaArena.alfa', { min: 0, max: 1 });
       exigeNumero(f.passo, 'visual.foraDaArena.passo', { min: 3 });
       exigeNumero(f.largura, 'visual.foraDaArena.largura', { min: 0.5, max: 6 });
+    }
+    // A Banca no papel (fase 17): a aura de marca-texto, os avisos de caneta
+    // vermelha tracejada e o carimbo da virada de fase.
+    if (exigeObjeto(v.banca, 'visual.banca')) {
+      const b = v.banca;
+      if (Array.isArray(b.corAura)) b.corAura.forEach((c, i) => exigeCor(c, `visual.banca.corAura[${i}]`));
+      exigeNumero(b.alfaAura, 'visual.banca.alfaAura', { min: 0, max: 1 });
+      exigeComposicao(b.composicaoAura, 'visual.banca.composicaoAura');
+      exigeCor(b.corTelegrafo, 'visual.banca.corTelegrafo');
+      exigeTracejado(b.tracejado, 'visual.banca.tracejado');
+      exigeNumero(b.larguraAviso, 'visual.banca.larguraAviso', { min: 0.5, max: 10 });
+      exigeNumero(b.alphaTelegrafoMin, 'visual.banca.alphaTelegrafoMin', { min: 0, max: 1 });
+      exigeNumero(b.alphaTelegrafoMax, 'visual.banca.alphaTelegrafoMax', { min: Number.isFinite(b.alphaTelegrafoMin) ? b.alphaTelegrafoMin : 0, max: 1 });
+      exigeNumero(b.preenchimentoInvestida, 'visual.banca.preenchimentoInvestida', { min: 0, max: 1 });
+      exigeTexto(b.fonteTexto, 'visual.banca.fonteTexto');
+      exigeTexto(b.fonteSubtexto, 'visual.banca.fonteSubtexto');
+      exigeCor(b.corTexto, 'visual.banca.corTexto');
+      exigeCor(b.corSubtexto, 'visual.banca.corSubtexto');
+      exigeNumero(b.giroTexto, 'visual.banca.giroTexto', { min: -30, max: 30 });
+      exigeCor(b.corFaixa, 'visual.banca.corFaixa');
+      exigeNumero(b.alfaFaixa, 'visual.banca.alfaFaixa', { min: 0, max: 1 });
+      if (exigeObjeto(b.bordaFaixa, 'visual.banca.bordaFaixa')) {
+        exigeCor(b.bordaFaixa.cor, 'visual.banca.bordaFaixa.cor');
+        exigeNumero(b.bordaFaixa.largura, 'visual.banca.bordaFaixa.largura', { min: 0, max: 8 });
+      }
     }
     validarFigurinhas(v.figurinhas, conteudo);
   }

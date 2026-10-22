@@ -301,7 +301,71 @@ async function ajudantesDaPagina() {
   // Dois quadros do jogo de verdade: o desenho ve o que a cena montou (o
   // flash so acende num HP que ele ja tinha visto).
   const doisQuadros = () => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
-  window.__f = { run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros };
+  // Fase 17: `fn` a cada `cada` quadros do jogo de verdade, por `quadros`
+  // quadros — durante a espera e a foto, que chega bem depois dela (o efeito
+  // fica aceso na hora certa).
+  // Para quando a cena seguinte comeca (window.__f.cena anda a cada preparar):
+  // um laco nao vaza para a foto de outra cena.
+  const repetir = (fn, cada, quadros = 180) => {
+    let q = 0;
+    const minha = window.__f.cena;
+    const passo1 = () => {
+      if (window.__f.cena !== minha) return;
+      if (q % cada === 0) fn(q);
+      q += 1;
+      if (q < quadros) requestAnimationFrame(passo1);
+    };
+    passo1();
+  };
+  // Fase 17: so a arma `id`, no nivel maximo (a instancia de equiparArma); o
+  // XP e o HP seguros durante a foto (sem carta de nivel nem jubilado).
+  const soArma = (id) => {
+    const dados = C.armas.find((a) => a.id === id);
+    e.player.armas.length = 0;
+    e.player.armas.push({ id, nivel: dados.niveis.length, cooldown: 0 });
+    repetir(() => {
+      e.player.xp = 0;
+      e.player.hp = e.player.hpMax;
+    }, 1);
+    return e.player.armas[0];
+  };
+  // Fase 17: A Banca no aviso do `padrao` na fase `fase`, pela porta do jogo
+  // (a sequencia aponta para ele e a perseguicao acaba no tick seguinte), com
+  // os dois no meio da pagina e o aviso andado `fracao` do telegrafo.
+  const avisoDaBanca = (fase, padrao, fracao) => {
+    garantirTcc();
+    const E = boss.ESTADOS_BANCA;
+    const b = e.run.avaliacao.banca;
+    const corpo = boss.acharBanca(e);
+    const arena = e.run.avaliacao.arena;
+    const meioX = (arena.esquerda + arena.direita) / 2;
+    const meioY = (arena.topo + arena.base) / 2;
+    corpo.x = meioX + 150;
+    corpo.y = meioY - 20;
+    e.player.x = meioX - 170;
+    e.player.y = meioY + 60;
+    b.fase = fase;
+    b.estado = E.PERSEGUINDO;
+    b.relogio = passo / 2;
+    b.passo = C.banca.fases[fase].sequencia.indexOf(padrao);
+    const tick = () => {
+      e.player.hp = e.player.hpMax;
+      main.atualizar(e, passo);
+      if (e.tela === T.CARTA) cards.escolherCarta(e, 0);
+      e.eventos.length = 0;
+    };
+    for (let i = 0; i < 240 && b.estado !== E.TELEGRAFO; i += 1) tick();
+    const total = b.duracaoEstado;
+    for (let t = 0; t < total * fracao; t += passo) tick();
+    // O aviso parado em `fracao` ate a foto (ela chega depois da espera).
+    const resta = b.relogio;
+    repetir(() => {
+      if (b.estado === E.TELEGRAFO) b.relogio = resta;
+      e.player.hp = e.player.hpMax;
+      e.player.xp = 0;
+    }, 1);
+  };
+  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca };
   await document.fonts.ready;
   return true;
 }
@@ -700,6 +764,7 @@ const CENAS = [
     espera: 120,
     preparar: async () => {
       const { run, e, avancar, horda, enemies, doisQuadros } = window.__f;
+      const minha = window.__f.cena;
       run.iniciarRun(e);
       run.comecarAvaliacao(e, 0, 0, []);
       avancar(2);
@@ -708,8 +773,9 @@ const CENAS = [
       // Metade do bando leva um golpe por quadro (sem morrer), durante a
       // espera e a foto: o flash e o pop ficam acesos, e a foto nao depende
       // de cair dentro dos 0,12s de um golpe so.
-      let resta = 40;
+      let resta = 180; // 3s: a foto chega bem depois da espera
       const golpear = () => {
+        if (window.__f.cena !== minha) return;
         e.enemies.forEach((inimigo, i) => {
           if (i % 2 === 0 && !inimigo.chefe) enemies.aplicarDano(e, inimigo, 0.01);
         });
@@ -745,6 +811,153 @@ const CENAS = [
       return window.__f.recorteEm(b.x, b.y, 110);
     },
   },
+  // Fase 17: as armas no nivel maximo, cada uma sozinha (o risco que ela
+  // deixa), as mortes, o golpe no jogador, o aviso de spawn e A Banca com
+  // cada aviso. As cenas de efeito curto o repetem durante a espera.
+  {
+    nome: 'arma-cafe',
+    espera: 350,
+    preparar: () => {
+      const { run, e, avancar, horda, soArma } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      horda(260, 3);
+      soArma('cafe');
+      e.input.eixoX = 1; // andando: o rastro a lapis atras
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 260),
+  },
+  {
+    nome: 'arma-caneta',
+    espera: 250,
+    preparar: () => {
+      const { run, e, avancar, horda, soArma } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      horda(240, 2);
+      soArma('caneta');
+      e.input.eixoX = 1;
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 140),
+  },
+  {
+    nome: 'arma-resumo',
+    espera: 60,
+    preparar: () => {
+      const { run, e, avancar, horda, soArma, repetir } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      horda(230, 2);
+      const arma = soArma('resumo');
+      // Parado no meio de um pulso ate a foto, sem o seguinte.
+      repetir(() => {
+        arma.animacao = 0.16;
+        arma.cooldown = 5;
+      }, 1);
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 200),
+  },
+  {
+    nome: 'arma-marcatexto',
+    espera: 200,
+    preparar: () => {
+      const { run, e, avancar, centralizar, soArma, enemies, C } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      centralizar();
+      soArma('marcatexto');
+      // Uns na frente do risco (a direita), para o marca-texto passar por cima.
+      const p = e.player;
+      for (let i = 0; i < 5; i += 1) enemies.spawnTipo(e, C.inimigos[i % C.inimigos.length], p.x + 90 + i * 40, p.y + (i % 2 ? 30 : -30));
+      e.input.eixoX = 1;
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x + 120, window.__f.e.player.y, 170),
+  },
+  {
+    nome: 'mortes-de-cada-tipo',
+    espera: 220,
+    preparar: () => {
+      const { run, e, avancar, centralizar, enemies, state, C, repetir } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      centralizar();
+      e.player.armas.length = 0;
+      const p = e.player;
+      // Uma de cada tipo em fila, e a derrota da Banca embaixo (confete so).
+      repetir(() => {
+        C.inimigos.forEach((tipo, i) => {
+          // So o evento (sem orbe nem filhote por cima das faiscas).
+          state.emitir(e, 'inimigo-morto', { tipo: tipo.id, x: p.x - 270 + i * 180, y: p.y - 110, xp: 0, vida: 1 });
+        });
+        state.emitir(e, 'inimigo-morto', { tipo: C.banca.id, x: p.x, y: p.y + 120, xp: 0, vida: 1 });
+        e.player.hp = e.player.hpMax;
+        e.player.xp = 0;
+      }, 9);
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 260),
+  },
+  {
+    nome: 'golpe-no-jogador',
+    espera: 140,
+    preparar: () => {
+      const { run, e, avancar, centralizar, golpe, repetir } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      centralizar();
+      e.player.armas.length = 0;
+      repetir(() => {
+        e.player.hp = e.player.hpMax;
+        golpe(9);
+      }, 4);
+    },
+    detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 80),
+  },
+  {
+    nome: 'aviso-de-spawn',
+    espera: 250,
+    preparar: () => {
+      const { run, e, avancar, centralizar, enemies, C, repetir } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0, []);
+      avancar(1);
+      centralizar();
+      e.player.armas.length = 0;
+      repetir(() => {
+        for (let i = 0; i < 3; i += 1) enemies.spawnInimigo(e, C.inimigos[i].id);
+      }, 12);
+    },
+    // A seta mais nova (o inimigo mais novo ainda fora da arena).
+    detalhe: () => {
+      const { e, render, C } = window.__f;
+      const av = e.run.avaliacao;
+      const ponto = { x: 0, y: 0 };
+      const novos = e.enemies.filter((x) => !x.chefe && av.decorrido - x.nascidoEm < C.juice.avisoSpawn.duracao);
+      const alvo = novos.find((x) => render.pontoDeEntrada(x.x, x.y, e.player.x, e.player.y, av.arena, ponto));
+      return alvo ? window.__f.recorteEm(ponto.x, ponto.y, 70) : window.__f.recorteEm(e.player.x, e.player.y, 200);
+    },
+  },
+  ...[
+    [0, 'leque'],
+    [0, 'horda'],
+    [1, 'leque'],
+    [1, 'investida'],
+    [1, 'horda'],
+  ].map(([fase, padrao]) => ({
+    nome: `banca-fase-${fase + 1}-${padrao}`,
+    espera: 60,
+    preparar: new Function(`window.__f.avisoDaBanca(${fase}, '${padrao}', 0.55);`),
+    detalhe: () => {
+      const b = window.__f.e.run.avaliacao.banca;
+      return window.__f.recorteEm(b.x, b.y, 230);
+    },
+  })),
+  // Por ultimo: o fx forcado vale ate a pagina recarregar (o tamanho seguinte).
   {
     // O fallback de emoji forcado (como a 14B): um fx novo no canvas do jogo,
     // com todos os emoji marcados como faltando — a forma colorida e cozida
@@ -792,6 +1005,7 @@ async function fotografar(cdp, sessao, url, tamanho, cenas) {
   await avaliar(enviar, `(${ajudantesDaPagina})()`);
   const feitas = [];
   for (const cena of cenas) {
+    await avaliar(enviar, 'window.__f.cena += 1');
     await avaliar(enviar, `(${cena.preparar})()`);
     await dormir(cena.espera);
     const tela = await enviar('Runtime.evaluate', { expression: 'window.__estado.tela', returnByValue: true });

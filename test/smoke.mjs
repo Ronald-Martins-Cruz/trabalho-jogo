@@ -217,7 +217,9 @@ const CARGA = process.argv.includes('--carga');
 const ALVO_CARGA = CONTEUDO.arena.limites.enemies;
 if (CARGA) CONTEUDO.spawn.maxSimultaneos = ALVO_CARGA;
 
-const POOLS = Object.keys(CONTEUDO.arena.limites).filter((p) => p !== 'eventos');
+// `particles` e o teto da pool de faiscas do render (fx.particulas), nao uma
+// colecao do estado (pendencia 91, fase 17); `eventos`, o da fila.
+const POOLS = Object.keys(CONTEUDO.arena.limites).filter((p) => p !== 'eventos' && p !== 'particles');
 
 const picos = {};
 for (const pool of POOLS) picos[pool] = 0;
@@ -5201,14 +5203,21 @@ function ctx2dFalso() {
   const reg = {
     fontes: 0, textos: [], retangulos: [], transformacoes: [], copias: [], gradientes: 0, paradas: [], tracos: [],
     preenchimentos: [], recortes: [], caminho: [], gravarCaminho: false, ordem: 0, pilha: 0, restoreSemSave: 0, limpezas: [],
+    tracejados: 0, contornos: [],
   };
   let fonte = '';
+  // Fase 17: o tracejado (setLineDash) e parte do estado do contexto, como no
+  // navegador: o save guarda, o restore devolve, e cada traco o registra.
+  let tracejado = [];
   const t = [1, 0, 0, 1, 0, 0];
   const pilha = [];
   const centro = (x, y) => ({ ox: t[0] * x + t[2] * y + t[4], oy: t[1] * x + t[3] * y + t[5] });
+  // Fase 17: o traco guarda tambem a composicao, o tracejado e o eixo x do
+  // transform (a seta do aviso de spawn aponta por ele).
   const tracar = (tipo) => reg.tracos.push({
     tipo, lineCap: ctx.lineCap, lineJoin: ctx.lineJoin, x: t[4], y: t[5],
-    cor: ctx.strokeStyle, largura: ctx.lineWidth, alpha: ctx.globalAlpha, n: ++reg.ordem,
+    cor: ctx.strokeStyle, largura: ctx.lineWidth, alpha: ctx.globalAlpha, comp: ctx.globalCompositeOperation,
+    tracejado: tracejado.join(','), eixo: [t[0], t[1]], n: ++reg.ordem,
   });
   const caminho = (nome, args) => {
     if (reg.gravarCaminho) reg.caminho.push(`${nome}(${Array.from(args, (v) => (typeof v === 'number' ? v.toFixed(3) : String(v))).join(',')})`);
@@ -5233,7 +5242,7 @@ function ctx2dFalso() {
     translate(x, y) { t[4] += t[0] * x; t[5] += t[3] * y; },
     rotate() {},
     save() {
-      const s = { fonte, t: t.slice() };
+      const s = { fonte, tracejado, t: t.slice() };
       for (const k of CAMPOS_DO_CONTEXTO) s[k] = ctx[k];
       pilha.push(s);
       reg.pilha = pilha.length;
@@ -5246,6 +5255,7 @@ function ctx2dFalso() {
       }
       for (const k of CAMPOS_DO_CONTEXTO) ctx[k] = s[k];
       fonte = s.fonte;
+      tracejado = s.tracejado;
       for (let i = 0; i < 6; i += 1) t[i] = s.t[i];
       reg.pilha = pilha.length;
     },
@@ -5256,10 +5266,14 @@ function ctx2dFalso() {
     rect() { caminho('rect', arguments); },
     // Fase 15: o lado de fora da arena encolhida e recortado ('evenodd').
     clip(regra) { reg.recortes.push({ regra, n: ++reg.ordem }); },
-    fill() { reg.preenchimentos.push({ cor: ctx.fillStyle, alpha: ctx.globalAlpha, n: ++reg.ordem }); },
+    // Fase 17: a orbita da caneta e os avisos da Banca sao tracejados. Copia,
+    // como o navegador (mudar o array depois nao muda o traco).
+    setLineDash(segmentos) { tracejado = Array.from(segmentos); reg.tracejados += 1; },
+    fill() { reg.preenchimentos.push({ cor: ctx.fillStyle, alpha: ctx.globalAlpha, comp: ctx.globalCompositeOperation, x: t[4], y: t[5], n: ++reg.ordem }); },
     stroke() { tracar('stroke'); },
     strokeRect() { tracar('strokeRect'); },
-    strokeText() {},
+    // Fase 17: o contorno de papel dos numeros de dano.
+    strokeText(texto) { reg.contornos.push({ texto, fonte, cor: ctx.strokeStyle, largura: ctx.lineWidth, n: ++reg.ordem }); },
     fillRect(x, y, w, h) {
       reg.retangulos.push({ x: t[0] * x + t[4], y: t[3] * y + t[5], w, h, cor: ctx.fillStyle, alpha: ctx.globalAlpha, comp: ctx.globalCompositeOperation, n: ++reg.ordem });
     },
@@ -5297,6 +5311,7 @@ function ctx2dFalso() {
       reg.recortes.length = 0;
       reg.caminho.length = 0;
       reg.limpezas.length = 0;
+      reg.contornos.length = 0;
     },
   };
   return ctx;
@@ -5342,16 +5357,22 @@ function efeitosComFolha(...args) {
 const EMOJIS_DO_CANVAS = new Set(emojisDoCanvas());
 
 // As figurinhas que o quadro copiou da folha, cada uma com a chave dela no
-// cache (`emoji|tamanho|variante`), achada pela celula.
+// cache (`emoji|tamanho|variante`), achada pela celula. Fase 17: a silhueta do
+// golpe de uma figurinha (f.flash, outra celula) sai com a chave dela e
+// `flash: true`.
 function figurinhasDoQuadro(ctx, fx) {
   const porCelula = new Map();
-  for (const [chave, f] of fx.figurinhas) porCelula.set(`${f.sx},${f.sy}`, chave);
+  for (const [chave, f] of fx.figurinhas) {
+    porCelula.set(`${f.sx},${f.sy}`, { chave, flash: false });
+    if (f.flash) porCelula.set(`${f.flash.sx},${f.flash.sy}`, { chave, flash: true });
+  }
   return ctx.reg.copias
     .filter((c) => fx.folha.camada !== null && c.img === fx.folha.camada)
     .map((c) => {
-      const chave = porCelula.get(`${c.sx},${c.sy}`) || '';
+      const celula = porCelula.get(`${c.sx},${c.sy}`);
+      const chave = celula ? celula.chave : '';
       const [emoji, tamanho, variante, nivel] = chave.split('|');
-      return { ...c, chave, emoji, tamanho: Number(tamanho), variante, nivel: Number(nivel) };
+      return { ...c, chave, emoji, tamanho: Number(tamanho), variante, nivel: Number(nivel), flash: !!(celula && celula.flash) };
     });
 }
 
@@ -5385,13 +5406,17 @@ function checarJuiceForaDaSimulacao() {
         visto.numeros = Math.max(visto.numeros, fx.numeros.ativos.length);
         visto.tremor = Math.max(visto.tremor, fx.tremor);
         visto.avisos += fx.diag.avisos;
-        const figurinhas = ctx.reg.copias.filter((x) => x.img === fx.folha.camada);
-        visto.flashes += figurinhas.filter((x) => x.comp === 'lighter').length;
+        const figurinhas = figurinhasDoQuadro(ctx, fx);
+        // Fase 17 (pendencia 107): o flash e a copia da silhueta do golpe, e
+        // nao mais uma 2a copia em 'lighter' (que nao pode aparecer em nada).
+        visto.flashes += figurinhas.filter((x) => x.flash).length;
+        const aditivo = [...ctx.reg.copias, ...ctx.reg.retangulos, ...ctx.reg.textos, ...ctx.reg.tracos, ...ctx.reg.preenchimentos].find((x) => x.comp === 'lighter');
+        if (aditivo) falhar(t, `papel: alguma coisa foi desenhada em 'lighter' (${JSON.stringify({ ...aditivo, img: undefined })}), que some no papel claro`);
         // Fase 16: nenhum emoji de entidade sai em fillText no quadro — todos
         // sao figurinhas copiadas da folha (o emoji so e escrito no cozimento).
         const solto = ctx.reg.textos.find((x) => EMOJIS_DO_CANVAS.has(x.texto));
         if (solto) falhar(t, `figurinhas: o emoji ${solto.texto} foi desenhado com fillText no quadro, fora do cozimento`);
-        visto.emojis += figurinhas.length;
+        visto.emojis += figurinhas.filter((x) => !x.flash).length;
       } else {
         estado.eventos.length = 0;
       }
@@ -5467,8 +5492,13 @@ function checarParticulas() {
     const r = combinada(tipo.id);
     if (!ativas.some((p) => r.cores.includes(p.cor))) falhar(0, `particulas: nenhuma faisca com as cores de "${tipo.id}"`);
   }
-  // Desenhadas (o quadradinho, com a cor dela) e todas mortas ao fim da vida.
-  if (!ctx.reg.retangulos.some((q) => cores.has(q.cor))) falhar(0, 'particulas: nenhuma faisca foi desenhada');
+  // Desenhadas e todas mortas ao fim da vida. Fase 17: eram quadradinhos
+  // (fillRect na cor de cada uma); agora o confete e um fillRect e o rabisco
+  // um traco (um por cor e degrau de alfa), e toda cor das faiscas vivas
+  // aparece num deles.
+  const desenhadas = new Set([...ctx.reg.retangulos.map((q) => q.cor), ...ctx.reg.tracos.map((q) => q.cor)]);
+  const semDesenho = [...new Set(ativas.map((p) => p.cor))].filter((c) => !desenhadas.has(c));
+  if (semDesenho.length > 0) falhar(0, `particulas: faiscas vivas de cor ${semDesenho.join(', ')} nao foram desenhadas`);
   const vidaMax = Math.max(P.padrao.vidaMax, ...Object.values(P.porTipo).map((r) => r.vidaMax || 0));
   quadrosVazios(estado, ctx, fx, vidaMax + 0.1);
   if (fx.particulas.ativos.length !== 0) falhar(0, `particulas: ${fx.particulas.ativos.length} faiscas passaram da vida maxima (${vidaMax}s) e nao morreram`);
@@ -5547,9 +5577,11 @@ function checarFlashDeGolpe() {
   const pai = spawnInimigo(estado, grupo.id);
   pai.x = 300;
   pai.y = 300;
-  // Fase 16: o flash e a 2a passada da MESMA figurinha, em 'lighter', com o
-  // alfa do flash e o pop na escala; e o que se le aqui.
-  const segunda = (alvo) => figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, alvo.x, alvo.y, (c) => c.comp === 'lighter' && c.emoji === alvo.emoji);
+  // Fase 16: o flash e o pop na escala e uma 2a passada por cima com o alfa
+  // do flash. Fase 17 (pendencia 107): a 2a passada e a SILHUETA da mesma
+  // figurinha (a celula f.flash, o emoji pintado na cor do flash), e nao mais
+  // a figurinha de novo em 'lighter', que no papel claro nao se le.
+  const segunda = (alvo) => figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, alvo.x, alvo.y, (c) => c.flash && c.emoji === alvo.emoji);
   quadro(estado, ctx, fx);
   if (flashDoInimigo(fx, pai, estado.tempo) !== 0 || segunda(pai)) falhar(0, 'flash: o inimigo intacto ja nasceu piscando');
   aplicarDano(estado, pai, 1);
@@ -5558,11 +5590,23 @@ function checarFlashDeGolpe() {
   const forca = flashDoInimigo(fx, pai, estado.tempo);
   if (!(forca > 0)) falhar(0, 'flash: o inimigo que perdeu HP nao piscou');
   const aditiva = segunda(pai);
-  if (!aditiva) falhar(0, 'flash: o golpe nao redesenhou a figurinha em modo aditivo no lugar do inimigo');
-  if (Math.abs(aditiva.alpha - F.alpha * forca) > 1e-9) falhar(0, `flash: a 2a passada saiu com alfa ${aditiva.alpha}, o flash pede ${F.alpha * forca}`);
+  if (!aditiva) falhar(0, 'flash: o golpe nao pintou a silhueta da figurinha no lugar do inimigo');
+  if (Math.abs(aditiva.alpha - F.alpha * forca) > 1e-9 || aditiva.comp !== F.composicao) falhar(0, `flash: a silhueta saiu com alfa ${aditiva.alpha} em "${aditiva.comp}", o flash pede ${F.alpha * forca} em "${F.composicao}"`);
   if (Math.abs(aditiva.escala - (1 + F.escalaPop * forca)) > 1e-9) falhar(0, `flash: a figurinha golpeada saiu na escala ${aditiva.escala}, o pop pede ${1 + F.escalaPop * forca}`);
-  const primeira = figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, pai.x, pai.y, (c) => c.comp === 'source-over' && c.emoji === pai.emoji);
-  if (!primeira || primeira.chave !== aditiva.chave || !(primeira.n < aditiva.n)) falhar(0, 'flash: a 2a passada nao e a mesma figurinha, por cima da 1a (sem variante extra)');
+  const primeira = figurinhaEm(figurinhasDoQuadro(ctx, fx), fx, pai.x, pai.y, (c) => !c.flash && c.emoji === pai.emoji);
+  if (!primeira || primeira.chave !== aditiva.chave || !(primeira.n < aditiva.n) || primeira.ox !== aditiva.ox || primeira.oy !== aditiva.oy) {
+    falhar(0, 'flash: a silhueta nao e a da mesma figurinha, no mesmo lugar, por cima dela');
+  }
+  // A silhueta cozida: o emoji (corEmoji, o mesmo lado e degrau da figurinha)
+  // e, por cima, 'source-in' na cor do flash — na celula dela, recortada.
+  const f = fx.figurinhas.get(aditiva.chave);
+  const folha = fx.folha.camada.ctx2d.reg;
+  const dentro = (x) => x.x >= f.flash.sx && x.x < f.flash.sx + f.largura && x.y >= f.flash.sy && x.y < f.flash.sy + f.altura;
+  const escrito = folha.textos.filter((x) => x.texto === pai.emoji && dentro(x));
+  const pintada = folha.retangulos.find((r) => r.comp === 'source-in' && r.cor === F.cor && r.x === f.flash.sx && r.y === f.flash.sy && escrito.length === 1 && r.n > escrito[0].n);
+  if (escrito.length !== 1 || escrito[0].cor !== CONTEUDO.visual.corEmoji || !pintada || fx.diag.flashesCozidos !== 1) {
+    falhar(0, `flash: a silhueta do golpe foi cozida com ${JSON.stringify(escrito)} e ${pintada ? 'a cor por cima' : 'sem a cor por cima'} (${fx.diag.flashesCozidos} cozidas)`);
+  }
   quadrosVazios(estado, ctx, fx, F.duracao + 0.05);
   if (flashDoInimigo(fx, pai, estado.tempo) !== 0 || segunda(pai)) falhar(0, `flash: ainda piscando depois de ${F.duracao}s`);
   // O pai morre; o 1o filhote e o MESMO objeto (pool LIFO), com nasc novo e
@@ -5580,7 +5624,7 @@ function checarFlashDeGolpe() {
   estado.tempo += PASSO;
   quadro(estado, ctx, fx);
   if (!(fx.flashJogador > 0) || !(fx.vinhetaDano > 0)) falhar(0, 'flash: o dano no jogador nao acendeu o flash e a vinheta');
-  if (!segunda({ x: estado.player.x, y: estado.player.y, emoji: CONTEUDO.jogador.emoji })) falhar(0, 'flash: o jogador golpeado nao foi redesenhado em modo aditivo');
+  if (!segunda({ x: estado.player.x, y: estado.player.y, emoji: CONTEUDO.jogador.emoji })) falhar(0, 'flash: o jogador golpeado nao ganhou a silhueta do golpe');
   return `flash: acende no golpe, apaga em ${F.duracao}s, o filhote que reusa o objeto do pai nasce sem flash`;
 }
 
@@ -5635,8 +5679,10 @@ function checarTremor() {
   return `tremor: dano ${esperado}px, o maior evento ganha (${maior}px, teto ${T.maximo}), zero em 2s, so translacao`;
 }
 
-// Aviso de spawn: brilho na parede por onde o recem-nascido vai entrar,
-// enquanto ele ainda esta fora da arena — e nada para quem nasce dentro.
+// Aviso de spawn: na parede por onde o recem-nascido vai entrar, enquanto ele
+// ainda esta fora da arena — e nada para quem nasce dentro. Fase 17: era um
+// brilho (um retangulo com gradiente centrado no ponto); agora e uma seta a
+// caneta vermelha com a origem no ponto, apontando para dentro.
 function checarAvisoDeSpawn() {
   const A = CONTEUDO.juice.avisoSpawn;
   const sala = CONTEUDO.modificadores.find((m) => m.fatores && m.fatores.arena < 1);
@@ -5662,13 +5708,19 @@ function checarAvisoDeSpawn() {
     // Na parede E no caminho dele ate o jogador (colinear com o segmento).
     const cruz = (entrada.x - e.x) * (p.y - e.y) - (entrada.y - e.y) * (p.x - e.x);
     if (!naParede || Math.abs(cruz) > 1e-6 * Math.hypot(p.x - e.x, p.y - e.y) ** 2) {
-      falhar(0, `aviso de spawn (${rotulo}): o brilho em (${entrada.x.toFixed(1)}, ${entrada.y.toFixed(1)}) nao esta na parede, no caminho do inimigo`);
+      falhar(0, `aviso de spawn (${rotulo}): a seta em (${entrada.x.toFixed(1)}, ${entrada.y.toFixed(1)}) nao esta na parede, no caminho do inimigo`);
     }
-    const desenhado = ctx.reg.retangulos.some(
-      (q) => Math.abs(q.x + A.raio - (entrada.x + fx.tremorX)) < 1e-6 && Math.abs(q.y + A.raio - (entrada.y + fx.tremorY)) < 1e-6
+    // A seta: um traco a caneta vermelha com a origem no ponto de entrada e o
+    // eixo apontando para dentro (do inimigo para o jogador).
+    const d = Math.hypot(p.x - e.x, p.y - e.y);
+    const seta = ctx.reg.tracos.find(
+      (q) => q.cor === A.cor && Math.abs(q.x - (entrada.x + fx.tremorX)) < 1e-6 && Math.abs(q.y - (entrada.y + fx.tremorY)) < 1e-6
     );
-    if (!desenhado) falhar(0, `aviso de spawn (${rotulo}): o brilho nao foi desenhado no ponto de entrada`);
-    medidas.push(`${rotulo}: inimigo em (${e.x.toFixed(0)}, ${e.y.toFixed(0)}), brilho em (${entrada.x.toFixed(0)}, ${entrada.y.toFixed(0)})`);
+    if (!seta) falhar(0, `aviso de spawn (${rotulo}): a seta nao foi desenhada no ponto de entrada`);
+    else if (Math.abs(seta.eixo[0] - (p.x - e.x) / d) > 1e-9 || Math.abs(seta.eixo[1] - (p.y - e.y) / d) > 1e-9 || seta.comp !== A.composicao || seta.largura !== A.largura) {
+      falhar(0, `aviso de spawn (${rotulo}): a seta saiu ${JSON.stringify(seta)}, apontando para fora do caminho do inimigo`);
+    }
+    medidas.push(`${rotulo}: inimigo em (${e.x.toFixed(0)}, ${e.y.toFixed(0)}), seta em (${entrada.x.toFixed(0)}, ${entrada.y.toFixed(0)})`);
     // Passada a duracao, apaga.
     e.nascidoEm = estado.run.avaliacao.decorrido - A.duracao - 0.01;
     quadro(estado, ctx, fx);
@@ -7504,6 +7556,416 @@ function checarFase16() {
   return partes.map((p) => `\n    ${p}`).join('');
 }
 
+// ---------------------------------------------------------------- fase 17
+
+// O caminho gravado (reg.caminho, com reg.gravarCaminho) em numeros: os pontos
+// de moveTo/lineTo e os arcos [x, y, raio, de, ate]. Com a folha de mentira, a
+// pagina vai para a camada dela: no contexto do quadro so ficam as entidades e
+// os efeitos.
+function pontosDoCaminho(caminho) {
+  return caminho.filter((x) => x.startsWith('moveTo(') || x.startsWith('lineTo(')).map((x) => x.slice(x.indexOf('(') + 1, -1).split(',').map(Number));
+}
+function arcosDoCaminho(caminho) {
+  return caminho.filter((x) => x.startsWith('arc(')).map((x) => x.slice(4, -1).split(',').map(Number));
+}
+
+// Uma cena com a folha de mentira e o caminho gravado.
+function cenaGravada(estado) {
+  const { fx, camadas } = efeitosComFolha();
+  const ctx = ctx2dFalso();
+  ctx.reg.gravarCaminho = true;
+  return { fx, camadas, ctx, desenhar: () => quadro(estado, ctx, fx) };
+}
+
+// A arma `comportamento` no nivel maximo, sozinha na mao do jogador, com os
+// campos que o desenho le (angulo, animacao).
+function soComArma(estado, comportamento, campos = {}) {
+  const dados = CONTEUDO.armas.find((a) => a.comportamento === comportamento);
+  estado.player.armas = [{ id: dados.id, nivel: dados.niveis.length, ...campos }];
+  return { dados, nivel: dados.niveis[dados.niveis.length - 1] };
+}
+
+// Tarefa 1: o rastro e um traco de lapis fino que afina para tras, com um
+// tremido que nasce com o ponto (o rng das formas, nunca o da simulacao nem o
+// dos efeitos), nao ferve de um quadro para o outro e some com o jogador parado.
+function checarRastroDeLapis() {
+  const R = CONTEUDO.juice.rastro;
+  const estado = avaliacaoCom(SEMENTE + 1701, []);
+  limparInimigos(estado);
+  const p = estado.player;
+  const { fx, ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  const rngAntes = fx.rng.s;
+  const andar = (eixo, ticks) => {
+    estado.input.eixoX = eixo;
+    estado.input.eixoY = 0;
+    for (let t = 0; t < ticks; t += 1) {
+      p.hp = p.hpMax;
+      atualizarPlayer(estado, PASSO);
+      estado.tempo += PASSO;
+      quadroDaCena();
+    }
+  };
+  andar(1, 40);
+  const tracos = ctx.reg.tracos.filter((x) => x.cor === R.cor);
+  const n = CONTEUDO.jogador.rastroTamanho;
+  if (tracos.length < n - 2) falhar(0, `rastro: ${tracos.length} tracos a lapis com o jogador andando, esperava ~${n - 1}`);
+  const tortos = tracos.filter((x) => !(x.largura > 0 && x.largura <= R.largura + 1e-9 && x.alpha > 0 && x.alpha <= R.alfa + 1e-9));
+  const afina = tracos.every((x, i) => i === 0 || (x.largura > tracos[i - 1].largura && x.alpha > tracos[i - 1].alpha));
+  if (tortos.length > 0 || !afina) falhar(0, `rastro: os tracos sairam ${JSON.stringify(tracos.map((x) => [x.largura, x.alpha]))} (ate ${R.largura}px e ${R.alfa}, afinando para tras)`);
+  // Andando na horizontal, o y de cada ponto e o do jogador mais o tremido.
+  const ys = pontosDoCaminho(ctx.reg.caminho).map(([, y]) => y - p.y);
+  const maior = Math.max(...ys.map(Math.abs));
+  if (!(maior > 0) || maior > R.ruido + 1e-3) falhar(0, `rastro: o tremido chegou a ${maior}px, esperava entre 0 e ${R.ruido}`);
+  if (fx.rng.s !== rngAntes) falhar(0, 'rastro: o tremido gastou o rng dos efeitos (as faiscas e o tremor mudariam de sequencia)');
+  const antes = ctx.reg.caminho.join(';');
+  quadroDaCena(); // o mesmo estado, sem tick: o mesmo traco
+  if (ctx.reg.caminho.join(';') !== antes) falhar(0, 'rastro: o mesmo rastro saiu com outro tremido no quadro seguinte (o traco ferve)');
+  andar(0, 120);
+  const parado = ctx.reg.tracos.filter((x) => x.cor === R.cor).length;
+  if (parado !== 0) falhar(0, `rastro: o jogador parado ha 2s ainda deixa ${parado} tracos (o tremido de um ponto parado)`);
+  // Devagar (passo menor que passoRuido), o tremido encolhe na proporcao: o
+  // rastro escrito a mao, em linha, com 0,3px entre os pontos.
+  const r = p.rastro;
+  const devagar = 0.3;
+  r.indice = (r.indice + 1) % r.pontos.length; // um ponto novo: um sorteio
+  r.pontos.forEach((ponto, i) => Object.assign(ponto, { x: 200 + ((i - r.indice + r.pontos.length) % r.pontos.length) * devagar, y: 300, ativo: true }));
+  quadroDaCena();
+  const lento = Math.max(...pontosDoCaminho(ctx.reg.caminho).map(([, y]) => Math.abs(y - 300)));
+  if (lento > (R.ruido * devagar) / R.passoRuido + 1e-3) falhar(0, `rastro: andando ${devagar}px por ponto o tremido chegou a ${lento.toFixed(3)}px, esperava ate ${((R.ruido * devagar) / R.passoRuido).toFixed(3)}px`);
+  return `rastro: ${tracos.length} tracos a lapis ate ${R.largura}px, afinando para tras, tremido ate ${maior.toFixed(2)}px que nasce com o ponto (nao ferve, nao gasta o rng dos efeitos), nada parado`;
+}
+
+// Tarefa 2: o ☕ tem um borrao atras, na direcao oposta a velocidade, que
+// afina ate a ponta, por baixo da figurinha.
+function checarBorraoDoProjetil() {
+  const B = CONTEUDO.juice.armas.projetil;
+  const estado = avaliacaoCom(SEMENTE + 1702, []);
+  limparInimigos(estado);
+  const proj = poolProjeteis(estado).obter();
+  Object.assign(proj, { emoji: CONTEUDO.armas[0].emoji, x: 700, y: 200, vx: -400, vy: 0, raio: 7 });
+  const { fx, ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  const borrao = ctx.reg.preenchimentos.find((x) => x.cor === B.cor && Math.abs(x.alpha - B.alfa) < 1e-9);
+  const figura = figurinhasDoQuadro(ctx, fx).find((x) => x.emoji === proj.emoji);
+  if (!borrao || !figura || !(borrao.n < figura.n)) falhar(0, `projetil: o borrao ${borrao ? 'veio por cima da figurinha' : 'nao foi desenhado'}`);
+  const comprimento = Math.min(B.maximo, 400 * B.tempo);
+  const meia = (proj.raio * CONTEUDO.visual.emojiProjetilFator * B.largura) / 2;
+  const pontos = pontosDoCaminho(ctx.reg.caminho);
+  const tem = (x, y) => pontos.some(([px, py]) => Math.abs(px - x) < 1e-3 && Math.abs(py - y) < 1e-3);
+  if (!tem(proj.x + comprimento, proj.y) || !tem(proj.x, proj.y - meia) || !tem(proj.x, proj.y + meia)) {
+    falhar(0, `projetil: o borrao saiu ${JSON.stringify(pontos)}, esperava a base de ${2 * meia}px no projetil e a ponta ${comprimento}px atras (oposta a vx)`);
+  }
+  return `projetil: borrao de ${comprimento}px atras do ${proj.emoji}, oposto a velocidade, afinando da base de ${(2 * meia).toFixed(1)}px ate a ponta, por baixo da figurinha`;
+}
+
+// Tarefa 3: a caneta — a orbita tracejada a lapis, e atras de cada satelite um
+// risco de tinta em arco que esvai e afina, terminando no satelite.
+function checarCanetaOrbital() {
+  const O = CONTEUDO.juice.armas.orbital;
+  const estado = avaliacaoCom(SEMENTE + 1703, []);
+  limparInimigos(estado);
+  const arma = { angulo: 1 };
+  const { dados, nivel } = soComArma(estado, 'orbital', arma);
+  const { fx, ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  const orbita = ctx.reg.tracos.filter((x) => x.cor === O.orbita.cor && x.tracejado === O.orbita.tracejado.join(','));
+  if (orbita.length !== 1) falhar(0, `caneta: ${orbita.length} orbitas tracejadas a lapis, esperava 1`);
+  const riscos = ctx.reg.tracos.filter((x) => x.cor === O.risco.cor && x.tipo === 'stroke'); // a parede tambem e tinta (strokeRect)
+  const s = O.risco.segmentos;
+  if (riscos.length !== nivel.quantidade * s) falhar(0, `caneta: ${riscos.length} pedacos de risco de tinta, esperava ${s} por satelite (${nivel.quantidade})`);
+  if (riscos.some((x) => x.tracejado !== '')) falhar(0, 'caneta: o risco de tinta saiu tracejado (o tracejado da orbita vazou)');
+  for (let k = 0; k < riscos.length; k += 1) {
+    const resta = 1 - (k % s) / s;
+    if (Math.abs(riscos[k].alpha - O.risco.alfa * resta) > 1e-9) falhar(0, `caneta: o pedaco ${k % s} do risco saiu com alfa ${riscos[k].alpha}, esperava ${O.risco.alfa * resta} (esvai para tras)`);
+  }
+  // Os arcos do risco (os da orbita, de raio raioOrbita, menos o circulo):
+  // o 1o pedaco de cada satelite termina nele e vai para tras do giro.
+  const arcos = arcosDoCaminho(ctx.reg.caminho).filter(([, , r, de, ate]) => Math.abs(r - nivel.raioOrbita) < 1e-3 && Math.abs(ate - de - VOLTA_COMPLETA) > 1e-3);
+  const passo = (O.risco.graus * Math.PI) / 180 / s;
+  const longe = [];
+  for (let i = 0; i < nivel.quantidade; i += 1) {
+    const pos = posicaoSatelite(estado.player, estado.player.armas[0], nivel, i);
+    const a = Math.atan2(pos.y - estado.player.y, pos.x - estado.player.x);
+    const [, , , de, ate] = arcos[i * s];
+    const mesmo = (x, y) => Math.abs(Math.atan2(Math.sin(x - y), Math.cos(x - y))) < 1e-3;
+    if (!mesmo(ate, a) || !mesmo(de, a - passo) || !(nivel.velocidadeAngular > 0)) falhar(0, `caneta: o risco do satelite ${i} vai de ${de} a ${ate}, o satelite esta em ${a.toFixed(3)} (o risco termina nele, para tras do giro)`);
+    longe.push(arcos[i * s + s - 1][3]);
+  }
+  const satelites = figurinhasDoQuadro(ctx, fx).filter((x) => x.emoji === dados.emoji);
+  if (satelites.length !== nivel.quantidade || !(satelites[0].n > riscos[riscos.length - 1].n)) falhar(0, 'caneta: os satelites nao vieram por cima dos riscos');
+  return `caneta (nivel ${dados.niveis.length}): orbita tracejada a lapis [${O.orbita.tracejado}], ${nivel.quantidade} riscos de tinta de ${O.risco.graus} graus em ${s} pedacos que esvaem, cada um terminando no satelite`;
+}
+const VOLTA_COMPLETA = Math.PI * 2;
+
+// Tarefa 4: o resumo — dois tracos a lapis de um circulo desenhado a mao (o
+// raio ondula) e, por dentro, marca-texto em 'multiply'; tudo esvai junto.
+function checarResumoAMao() {
+  const W = CONTEUDO.juice.armas.onda;
+  const estado = avaliacaoCom(SEMENTE + 1704, []);
+  limparInimigos(estado);
+  const progresso = 0.4;
+  const { nivel } = soComArma(estado, 'ondaArea', { animacao: CONTEUDO.ondaArea.duracaoAnimacao * progresso });
+  const { ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  const resta = 1 - progresso;
+  const fundo = ctx.reg.preenchimentos.find((x) => x.cor === W.preenchimento.cor);
+  if (!fundo || fundo.comp !== W.preenchimento.composicao || Math.abs(fundo.alpha - W.preenchimento.alfa * resta) > 1e-9) {
+    falhar(0, `resumo: o marca-texto saiu ${JSON.stringify(fundo)}, esperava ${W.preenchimento.composicao} a ${W.preenchimento.alfa * resta}`);
+  }
+  const tracos = ctx.reg.tracos.filter((x) => x.cor === W.cor && x.largura === W.largura);
+  if (tracos.length !== 2 || tracos.some((x) => Math.abs(x.alpha - W.alfa * resta) > 1e-9) || !(fundo.n < tracos[0].n)) {
+    falhar(0, `resumo: ${tracos.length} tracos a lapis (alfas ${tracos.map((x) => x.alpha)}), esperava 2 a ${W.alfa * resta}, por cima do marca-texto`);
+  }
+  const raio = nivel.raio * progresso;
+  const p = estado.player;
+  const distancias = pontosDoCaminho(ctx.reg.caminho).map(([x, y]) => Math.hypot(x - p.x, y - p.y));
+  const porVolta = Math.ceil(W.pontos * (1 + W.sobra)) + 1;
+  const min = Math.min(...distancias);
+  const max = Math.max(...distancias);
+  const folga = raio * W.ondulacao + W.deslocamento * Math.SQRT2 + 1e-3;
+  // O 1o traco, centrado no jogador: o raio ondula de verdade (o 2o so esta
+  // deslocado, e um circulo deslocado tambem varia a distancia).
+  const primeiro = distancias.slice(0, porVolta);
+  const ondula = Math.max(...primeiro) - Math.min(...primeiro);
+  if (distancias.length !== 2 * porVolta || !(ondula > raio * W.ondulacao) || max > raio + folga || min < raio - folga) {
+    falhar(0, `resumo: o circulo saiu com ${distancias.length} pontos de ${min.toFixed(1)} a ${max.toFixed(1)}px do jogador (o 1o traco ondula ${ondula.toFixed(2)}px), esperava 2 x ${porVolta} em volta de ${raio}px, ondulando`);
+  }
+  estado.player.armas[0].animacao = CONTEUDO.ondaArea.duracaoAnimacao;
+  quadroDaCena();
+  if (ctx.reg.preenchimentos.some((x) => x.cor === W.preenchimento.cor)) falhar(0, 'resumo: o marca-texto continuou depois do pulso');
+  return `resumo: circulo a mao (raio ${min.toFixed(1)}-${max.toFixed(1)}px em volta de ${raio}px, 2 tracos de ${porVolta} pontos) com marca-texto em ${W.preenchimento.composicao} que esvai junto`;
+}
+
+// Tarefa 5: o marca-texto — um risco de pontas arredondadas DENTRO do
+// retangulo do dano, em 'multiply', com a borda um tom mais escura.
+function checarMarcaTexto() {
+  const F = CONTEUDO.juice.armas.feixe;
+  const estado = avaliacaoCom(SEMENTE + 1705, []);
+  limparInimigos(estado);
+  const { nivel } = soComArma(estado, 'feixe', { angulo: 0.5 });
+  const { ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  const fundo = ctx.reg.preenchimentos.find((x) => x.cor === F.cor);
+  const borda = ctx.reg.tracos.find((x) => x.cor === F.borda.cor);
+  if (!fundo || fundo.comp !== F.composicao || Math.abs(fundo.alpha - F.alfa) > 1e-9) falhar(0, `marca-texto: o risco saiu ${JSON.stringify(fundo)}, esperava ${F.composicao} a ${F.alfa}`);
+  if (!borda || borda.comp !== F.composicao || borda.largura !== F.borda.largura || !(borda.n > fundo.n)) falhar(0, 'marca-texto: sem a borda mais escura por cima do risco');
+  const arcos = arcosDoCaminho(ctx.reg.caminho);
+  const meia = nivel.largura / 2;
+  const fora = arcos.filter(([x, y, r]) => !(r > 0) || x - r < -1e-3 || x + r > nivel.alcance + 1e-3 || Math.abs(y) + r > meia + 1e-3);
+  if (arcos.length !== 4 || fora.length > 0) falhar(0, `marca-texto: as pontas sairam ${JSON.stringify(arcos)}, esperava 4 arcos dentro de ${nivel.alcance}x${nivel.largura}`);
+  return `marca-texto: risco de ${nivel.alcance}x${nivel.largura}px com pontas de raio ${arcos[0][2].toFixed(1)}px dentro do dano, ${F.composicao} a ${F.alfa}, borda ${F.borda.cor}`;
+}
+
+// Tarefa 6: os numeros a mao — o dano causado em tinta com contorno de papel,
+// o que o jogador toma em caneta vermelha, maior.
+function checarNumerosManuscritos() {
+  const N = CONTEUDO.juice.numeros;
+  const T = CONTEUDO.tema;
+  const estado = avaliacaoCom(SEMENTE + 1706, []);
+  limparInimigos(estado);
+  const { ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  emitir(estado, 'arma-acerto', { arma: 'teste', x: 300, y: 200, dano: 7, efetivo: 7, matou: false });
+  emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 9, hp: 91, x: 0, y: 0 });
+  estado.tempo += PASSO;
+  quadroDaCena();
+  const causado = ctx.reg.textos.find((x) => x.texto === '7');
+  const tomado = ctx.reg.textos.find((x) => x.texto === '9');
+  const tamanho = (fonte) => Number(/(\d+(\.\d+)?)px/.exec(fonte)[1]);
+  if (!N.fonte.includes(T.fontes.manuscrita) || !N.fonteJogador.includes(T.fontes.manuscrita)) falhar(0, 'numeros: a fonte nao e a manuscrita do tema');
+  if (!causado || causado.fonte !== N.fonte || causado.cor !== N.cor) falhar(0, `numeros: o dano causado saiu ${JSON.stringify(causado)}`);
+  if (!tomado || tomado.fonte !== N.fonteJogador || tomado.cor !== N.corJogador || tomado.cor === causado.cor || !(tamanho(tomado.fonte) > tamanho(causado.fonte))) {
+    falhar(0, `numeros: o dano no jogador saiu ${JSON.stringify(tomado)} (caneta vermelha, maior que o causado)`);
+  }
+  const contorno = ctx.reg.contornos.find((x) => x.texto === '7');
+  if (!contorno || contorno.cor !== N.corContorno || contorno.largura !== N.larguraContorno || !(contorno.n < causado.n)) falhar(0, 'numeros: o dano causado sem o contorno de papel por baixo');
+  return `numeros: a mao (${tamanho(N.fonte)}px), dano causado em ${N.cor} com contorno ${N.corContorno}; o do jogador em ${N.corJogador}, ${tamanho(N.fonteJogador)}px`;
+}
+
+// Tarefa 7: as faiscas viram confete (um fillRect cada, que gira de lado) e
+// rabisco (tracado), que giram; o alfa anda em degraus; os rabiscos de cada
+// (cor, degrau) sao UM traco; e a Banca cai em confete so.
+function checarConfeteERabisco() {
+  const P = CONTEUDO.juice.particulas;
+  const niveis = P.niveisDeAlfa;
+  const estado = avaliacaoCom(SEMENTE + 1707, []);
+  limparInimigos(estado);
+  const { fx, ctx, desenhar: quadroDaCena } = cenaGravada(estado);
+  quadroDaCena();
+  for (const tipo of CONTEUDO.inimigos) {
+    for (let i = 0; i < 6; i += 1) emitir(estado, 'inimigo-morto', { tipo: tipo.id, x: 150 + i * 120, y: 300, xp: 0, vida: 1 });
+  }
+  // As faiscas gastam do rng dos efeitos o mesmo que antes da fase 17 (5
+  // sorteios cada: direcao, velocidade, vida, tamanho, cor); forma, angulo e
+  // giro saem do rng das formas — a sequencia das faiscas e do tremor nao muda.
+  const rngAntes = fx.rng.s;
+  estado.tempo += PASSO;
+  quadroDaCena();
+  const conta = criarRng(1, rngAntes);
+  for (let i = 0; i < 5 * fx.particulas.ativos.length; i += 1) conta.float();
+  if (conta.s !== fx.rng.s) falhar(0, `faiscas: ${fx.particulas.ativos.length} faiscas gastaram do rng dos efeitos outra coisa que 5 sorteios cada (a forma tem que sair do rng das formas)`);
+  // Um quadro de vida, para o alfa sair do 1 (as recem-nascidas estao cheias).
+  estado.tempo += PASSO;
+  quadroDaCena();
+  const ativas = fx.particulas.ativos;
+  const cores = new Set(ativas.map((p) => p.cor));
+  const confetes = ativas.filter((p) => p.forma === 0).length;
+  const rabiscos = ativas.length - confetes;
+  if (!(confetes > 0) || !(rabiscos > 0)) falhar(0, `faiscas: ${confetes} confetes e ${rabiscos} rabiscos, esperava as duas formas`);
+  const papeis = ctx.reg.retangulos.filter((x) => cores.has(x.cor));
+  const tracos = ctx.reg.tracos.filter((x) => cores.has(x.cor));
+  const baldes = new Set(ativas.filter((p) => p.forma !== 0).map((p) => `${p.cor}|${Math.max(0, Math.min(niveis, Math.ceil((p.vida / p.vidaMax) * niveis)) - 1)}`));
+  if (papeis.length !== confetes || tracos.length !== baldes.size) falhar(0, `faiscas: ${papeis.length} confetes desenhados de ${confetes}, ${tracos.length} tracos de rabisco para ${baldes.size} baldes (um por cor e degrau)`);
+  const desenhos = [...papeis, ...tracos];
+  if (desenhos.some((x) => x.comp !== P.composicao || Math.abs(x.alpha * niveis - Math.round(x.alpha * niveis)) > 1e-9)) falhar(0, `faiscas: desenhadas em ${[...new Set(desenhos.map((x) => `${x.comp}@${x.alpha}`))].join(', ')}, esperava ${P.composicao} em degraus de 1/${niveis}`);
+  if (tracos.some((x) => x.largura !== P.rabisco.largura)) falhar(0, 'faiscas: rabisco fora da largura de content.js');
+  // O confete gira de lado: a largura ou a altura encolhe com o cosseno.
+  const encolhidos = papeis.filter((x) => Math.abs(x.w - x.h) > 1e-9 && Math.min(x.w, x.h) > 0).length;
+  if (encolhidos !== papeis.length) falhar(0, 'faiscas: confete sem lado (largura e altura iguais ou zero)');
+  // Giram: o angulo anda com o giro (que freia com o atrito).
+  const antes = new Map(ativas.map((p) => [p, p.angulo]));
+  estado.tempo += PASSO;
+  quadroDaCena();
+  const giraram = fx.particulas.ativos.filter((p) => antes.has(p) && p.angulo !== antes.get(p)).length;
+  const maxGiro = Math.max(P.padrao.giroMax, ...Object.values(P.porTipo).map((r) => r.giroMax || 0));
+  if (!(giraram > 0) || fx.particulas.ativos.some((p) => Math.abs(p.giro) > maxGiro)) falhar(0, `faiscas: ${giraram} giraram em um quadro (giro ate ${maxGiro} rad/s)`);
+  // A Banca: so confete, nas cores dela.
+  const vidaMax = Math.max(P.padrao.vidaMax, ...Object.values(P.porTipo).map((r) => r.vidaMax || 0));
+  quadrosVazios(estado, ctx, fx, vidaMax + 0.1);
+  emitir(estado, 'inimigo-morto', { tipo: CONTEUDO.banca.id, x: 480, y: 270, xp: 0, vida: 1 });
+  estado.tempo += PASSO;
+  quadroDaCena();
+  const daBanca = new Set(P.porTipo.banca.cores);
+  if (fx.particulas.ativos.some((p) => p.forma !== 0 || !daBanca.has(p.cor)) || ctx.reg.tracos.some((x) => daBanca.has(x.cor))) falhar(0, 'faiscas: a derrota da Banca saiu com rabisco ou fora das cores dela');
+  return `faiscas: ${confetes} confetes e ${rabiscos} rabiscos de 6 mortes de cada tipo (os rabiscos em ${tracos.length} tracos, um por cor e degrau de 1/${niveis}), girando; a Banca so em confete`;
+}
+
+// Tarefa 8 e a asserção nova da 12: o brilho do orbe e cozido na figurinha
+// dele (um gradiente por celula, no centro, por baixo do emoji; nenhuma copia
+// a mais), e so a do orbe; e nenhum gradiente e criado depois do aquecimento,
+// num quadro com tudo (orbes, bando, avisos, numeros, faiscas, o golpe no
+// jogador, as quatro armas, o clima com luz).
+function checarBrilhoSemGradientePorQuadro() {
+  const B = CONTEUDO.juice.brilhoOrbe;
+  const estado = avaliacaoCom(SEMENTE + 1708, [], [], 1, 0);
+  soltarOrbeXp(estado, 400, 300, 1);
+  const { fx, camadas } = efeitosComFolha();
+  const ctx = ctx2dFalso();
+  quadro(estado, ctx, fx);
+  const tamanho = CONTEUDO.xpOrbe.raio * CONTEUDO.visual.emojiOrbeFator;
+  const f = [...fx.figurinhas].find(([chave]) => chave.startsWith(`${CONTEUDO.xpOrbe.emoji}|`));
+  const folha = fx.folha.camada.ctx2d.reg;
+  const paradas = JSON.stringify(folha.paradas);
+  const esperadas = JSON.stringify([[[0, comAlfa(B.cor, B.alfa)], [1, comAlfa(B.cor, 0)]]]);
+  const brilho = folha.preenchimentos.filter((x) => typeof x.cor === 'object');
+  const emoji = folha.textos.find((x) => x.texto === CONTEUDO.xpOrbe.emoji);
+  if (!f || paradas !== esperadas || brilho.length !== 1 || !emoji || !(brilho[0].n < emoji.n) || brilho[0].x !== f[1].sx + f[1].cx || brilho[0].y !== f[1].sy + f[1].cy) {
+    falhar(0, `orbe: o brilho foi cozido ${JSON.stringify(brilho)} com ${paradas} (esperava um, no meio da celula do orbe, por baixo do emoji, com ${esperadas})`);
+  }
+  if (figurinhasDoQuadro(ctx, fx).filter((x) => x.emoji === CONTEUDO.xpOrbe.emoji).length !== 1) falhar(0, 'orbe: o orbe saiu em mais de uma copia (o brilho tem que estar na figurinha)');
+  // Tudo de uma vez: as quatro armas no maximo, o bando entrando (avisos),
+  // orbes, golpes, mortes e o jogador tomando dano a cada quadro.
+  estado.player.armas = CONTEUDO.armas.map((a) => ({ id: a.id, nivel: a.niveis.length, angulo: 0, animacao: 0.1 }));
+  for (let i = 0; i < 30; i += 1) soltarOrbeXp(estado, 100 + i * 25, 120 + (i % 5) * 60, 1);
+  const gradientes = () => ctx.reg.gradientes + camadas.reduce((s, c) => s + c.ctx2d.reg.gradientes, 0);
+  let depoisDoAquecimento = 0;
+  let avisos = 0;
+  for (let q = 0; q < 40; q += 1) {
+    estado.player.hp = estado.player.hpMax;
+    atualizar(estado, PASSO);
+    if (estado.tela === TELAS.CARTA) escolherCarta(estado, 0);
+    if (q % 5 === 0) for (const tipo of CONTEUDO.inimigos) spawnInimigo(estado, tipo.id); // na borda: avisos
+    emitir(estado, 'arma-acerto', { arma: 'teste', x: 200 + q * 10, y: 200, dano: 5, efetivo: 5, matou: false });
+    emitir(estado, 'inimigo-morto', { tipo: CONTEUDO.inimigos[q % CONTEUDO.inimigos.length].id, x: 300, y: 300, xp: 0, vida: 1 });
+    if (q % 4 === 0) emitir(estado, 'jogador-dano', { fonte: 'teste', dano: 1, hp: 99, x: 0, y: 0 });
+    quadro(estado, ctx, fx);
+    avisos += fx.diag.avisos;
+    if (q === 9) depoisDoAquecimento = gradientes();
+  }
+  const novos = gradientes() - depoisDoAquecimento;
+  if (novos !== 0) falhar(0, `gradientes: ${novos} gradientes criados em 30 quadros depois do aquecimento (o brilho do orbe e as luzes sao cozidos)`);
+  if (avisos === 0 || fx.particulas.ativos.length === 0 || fx.numeros.ativos.length === 0) falhar(0, 'gradientes: a cena nao teve avisos, faiscas e numeros, o teste perdeu o sentido');
+  // So o orbe brilha: nenhuma outra figurinha cozida tem gradiente.
+  const comBrilho = folha.preenchimentos.filter((x) => typeof x.cor === 'object').length;
+  const cozidosDoOrbe = [...fx.figurinhas.keys()].filter((k) => k.startsWith(`${CONTEUDO.xpOrbe.emoji}|`)).length;
+  if (comBrilho !== cozidosDoOrbe) falhar(0, `orbe: ${comBrilho} figurinhas cozidas com brilho, e so ${cozidosDoOrbe} sao do orbe`);
+  return `orbe: brilho de raio ${(B.raio * tamanho).toFixed(1)}px cozido na figurinha (${cozidosDoOrbe} celulas), por baixo do emoji; 0 gradientes por quadro em 30 quadros com tudo (${depoisDoAquecimento} no aquecimento)`;
+}
+
+// Tarefa 10: A Banca no papel — a aura de marca-texto, os avisos de caneta
+// vermelha tracejada (e o tracejado nao vaza), a virada de fase carimbada.
+function checarBancaNoPapel() {
+  const vb = CONTEUDO.visual.banca;
+  const tcc = estadoNoTcc(SEMENTE + 1709);
+  const b = tcc.run.avaliacao.banca;
+  const { fx, ctx, desenhar: quadroDaCena } = cenaGravada(tcc);
+  quadroDaCena();
+  const aura = ctx.reg.preenchimentos.find((x) => x.cor === vb.corAura[b.fase]);
+  const figura = figurinhasDoQuadro(ctx, fx).find((x) => x.emoji === CONTEUDO.banca.emoji);
+  if (!aura || aura.comp !== vb.composicaoAura || aura.alpha !== vb.alfaAura || !figura || !(aura.n < figura.n)) falhar(0, `banca: a aura saiu ${JSON.stringify(aura)}, esperava marca-texto (${vb.composicaoAura}) por baixo da figurinha`);
+  const vistos = [];
+  for (const padrao of NOMES_PADROES) {
+    const fase = CONTEUDO.banca.fases.findIndex((f) => f.padroes[padrao]);
+    Object.assign(b, { fase, estado: ESTADOS_BANCA.TELEGRAFO, padrao, duracaoEstado: 1, relogio: 0.5, mira: 0.3, alcance: 200, deslize: 0, quantosPontos: 3 });
+    for (let i = 0; i < 3; i += 1) Object.assign(b.pontos[i], { x: 300 + i * 90, y: 300 });
+    quadroDaCena();
+    const avisos = ctx.reg.tracos.filter((x) => x.cor === vb.corTelegrafo);
+    if (avisos.length === 0 || avisos.some((x) => x.tracejado !== vb.tracejado.join(','))) falhar(0, `banca: o aviso do ${padrao} saiu ${JSON.stringify(avisos.map((x) => x.tracejado))}, esperava caneta vermelha tracejada [${vb.tracejado}]`);
+    const depois = ctx.reg.tracos.filter((x) => x.n > avisos[avisos.length - 1].n);
+    if (depois.some((x) => x.tracejado !== '')) falhar(0, `banca: o tracejado do aviso do ${padrao} vazou para o que veio depois`);
+    vistos.push(`${padrao} ${avisos.length}`);
+  }
+  Object.assign(b, { fase: 0, estado: ESTADOS_BANCA.TRANSICAO, padrao: '', duracaoEstado: CONTEUDO.banca.transicao.duracao, relogio: CONTEUDO.banca.transicao.duracao / 2 });
+  quadroDaCena();
+  const titulo = ctx.reg.textos.find((x) => x.texto === CONTEUDO.textos.banca.transicao);
+  const giro = (vb.giroTexto * Math.PI) / 180;
+  if (!titulo || titulo.fonte !== vb.fonteTexto || titulo.cor !== vb.corTexto || !vb.fonteTexto.includes(CONTEUDO.tema.fontes.carimbo) || Math.abs(titulo.giro - giro) > 1e-9) {
+    falhar(0, `banca: o titulo da transicao saiu ${JSON.stringify(titulo)}, esperava o carimbo torto ${vb.giroTexto} graus`);
+  }
+  const faixa = ctx.reg.retangulos.find((x) => x.cor === vb.corFaixa && x.alpha === vb.alfaFaixa);
+  if (!faixa || !(faixa.n < titulo.n)) falhar(0, 'banca: o carimbo da transicao sem a faixa de papel escurecido por baixo');
+  return `banca: aura de marca-texto (${vb.composicaoAura}), avisos tracejados a caneta vermelha (${vistos.join(', ')} tracos), transicao carimbada ${vb.giroTexto} graus numa faixa de papel`;
+}
+
+function checarValidadorDosEfeitos() {
+  const casos = [
+    ['faiscas em lighter', (c) => { c.juice.particulas.composicao = 'lighter'; }, 'juice.particulas.composicao'],
+    ['flash em lighter', (c) => { c.juice.flash.composicao = 'lighter'; }, 'juice.flash.composicao'],
+    ['degraus de alfa fracionarios', (c) => { c.juice.particulas.niveisDeAlfa = 2.5; }, 'niveisDeAlfa'],
+    ['rajada sem giro', (c) => { c.juice.particulas.padrao.giroMax = -1; }, 'giroMax'],
+    ['tracejado impar', (c) => { c.juice.armas.orbital.orbita.tracejado = [5]; }, 'orbita.tracejado'],
+    ['aviso da Banca sem tracejado', (c) => { c.visual.banca.tracejado = []; }, 'visual.banca.tracejado'],
+    ['marca-texto em lighter', (c) => { c.juice.armas.feixe.composicao = 'lighter'; }, 'feixe.composicao'],
+    ['seta sem ponta', (c) => { c.juice.avisoSpawn.ponta = 0; }, 'avisoSpawn.ponta'],
+    ['rastro sem cor', (c) => { c.juice.rastro.cor = 'lapis'; }, 'juice.rastro.cor'],
+    ['brilho em #rrggbbaa', (c) => { c.juice.brilhoOrbe.cor = '#fff07a80'; }, 'brilhoOrbe.cor'],
+    ['carimbo sem fonte', (c) => { c.visual.banca.fonteTexto = ''; }, 'visual.banca.fonteTexto'],
+  ];
+  for (const [nome, mexer, trecho] of casos) {
+    const clone = structuredClone(CONTEUDO);
+    mexer(clone);
+    if (!validarConteudo(clone).erros.some((e) => e.includes(trecho))) falhar(0, `validador: aceitou ${nome}`);
+  }
+  return `validador: ${casos.length} efeitos podres recusados`;
+}
+
+function checarFase17() {
+  const partes = [
+    checarRastroDeLapis(),
+    checarBorraoDoProjetil(),
+    checarCanetaOrbital(),
+    checarResumoAMao(),
+    checarMarcaTexto(),
+    checarNumerosManuscritos(),
+    checarConfeteERabisco(),
+    checarBrilhoSemGradientePorQuadro(),
+    checarBancaNoPapel(),
+    checarValidadorDosEfeitos(),
+  ];
+  return partes.map((p) => `\n    ${p}`).join('');
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -7571,6 +8033,9 @@ const fase14 = checarFase14();
 const fase15 = checarFase15();
 // Fase 16 (v2): as figurinhas — o cozimento, o espelho, a vida, o fallback.
 const fase16 = checarFase16();
+// Fase 17 (v2): as armas e os efeitos no papel — lapis, tinta, marca-texto,
+// numeros a mao, confete, a seta do aviso, a Banca.
+const fase17 = checarFase17();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -7822,6 +8287,7 @@ console.log(
     `\n  robustez (fase 14):${fase14}` +
     `\n  caderno (fase 15):${fase15}` +
     `\n  figurinhas (fase 16):${fase16}` +
+    `\n  armas e efeitos (fase 17):${fase17}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +
