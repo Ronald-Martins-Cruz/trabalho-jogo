@@ -19,16 +19,27 @@
   <div class="cena">
     <canvas id="palco" width="960" height="540"></canvas>
 
-    <!-- HUD: sempre montado, escondido fora da avaliação. Compacto no topo
-         (a arena e A Banca não passam por baixo dele) e os coringas e
-         modificadores no rodapé, cada linha com rótulo. -->
+    <!-- HUD: sempre montado, escondido fora da avaliação. Feito dos objetos
+         da mesa (v2, fase 18): a régua de XP na beira de cima com o nível
+         num adesivo, a etiqueta do caderno e o HP a marca-texto, o
+         cronômetro num post-it, a ata da Banca e, no rodapé, as cartelas
+         de figurinhas. Cada peça tem o seu papel: o texto não depende da
+         página nem da vinheta do clima. -->
     <div id="hud" class="camada hud oculto">
-      <!-- XP: a barra fina na beira de cima, como em todo survivor. -->
-      <div class="barra barra-xp">
-        <div id="xp-barra" class="preenchimento"></div>
+      <!-- XP: a régua na beira de cima, riscada de marca-texto; o nível é o
+           adesivo redondo na ponta direita. -->
+      <div class="hud-regua">
+        <div class="barra barra-xp">
+          <div id="xp-barra" class="preenchimento"></div>
+        </div>
+        <div class="hud-nivel">
+          <span class="rotulo">Nível</span>
+          <span id="nivel" class="valor">1</span>
+        </div>
       </div>
       <div class="hud-topo">
         <div class="hud-esquerda">
+          <!-- A etiqueta do caderno: duas linhas, uma borda. -->
           <div class="hud-identificacao">
             <span id="periodo-nome" class="periodo">1º Período</span>
             <span id="avaliacao-nome" class="avaliacao">Avaliação 1</span>
@@ -43,8 +54,9 @@
         </div>
         <div class="hud-centro">
           <div id="timer" class="timer">1:00</div>
-          <!-- A Banca: só no TCC. As marcas de fase são montadas por ui.js a
-               partir de content.js (banca.fases). -->
+          <!-- A Banca: só no TCC, uma faixa de ata. As marcas de fase
+               (rubricas) são montadas por ui.js a partir de content.js
+               (banca.fases). -->
           <div id="banca-hud" class="banca-hud oculto">
             <div class="banca-cabecalho">
               <span id="banca-nome" class="banca-nome">📋 A Banca</span>
@@ -56,14 +68,11 @@
             </div>
           </div>
         </div>
-        <div class="hud-nivel">
-          <span class="rotulo">Nível</span>
-          <span id="nivel" class="valor">1</span>
-        </div>
       </div>
-      <!-- Rodapé: os coringas da run e os modificadores desta avaliação, um
-           chip por item, com nome e descrição ao passar o mouse. Os chips são
-           montados uma vez por ui.js; cada grupo some quando está vazio. -->
+      <!-- Rodapé: as cartelas de figurinhas — os coringas da run e os
+           modificadores desta avaliação, um adesivo por item, com nome e
+           descrição num post-it ao passar o mouse. Os chips são montados uma
+           vez por ui.js; cada cartela some quando está vazia. -->
       <div class="hud-rodape">
         <div id="hud-grupo-coringas" class="hud-grupo">
           <span class="hud-rotulo">Coringas</span>

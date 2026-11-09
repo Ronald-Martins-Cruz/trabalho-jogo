@@ -365,7 +365,32 @@ async function ajudantesDaPagina() {
       e.player.xp = 0;
     }, 1);
   };
-  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca };
+  // Fase 18: a Prova Final do 1o periodo com 3 coringas (o Atestado ja
+  // gasto) e 2 modificadores, todos de content.js — o HUD cheio.
+  const jokers = await import('/src/jokers.js');
+  const hudCheio = (periodo = 0, avaliacao = 2) => {
+    run.iniciarRun(e);
+    for (const id of ['caderno', 'wifi', 'atestado']) e.run.coringas.push(jokers.novaInstancia(id));
+    e.run.coringas[2].gasto = true;
+    run.comecarAvaliacao(e, periodo, avaliacao, ['professorRigido', 'frequencia']);
+    avancar(6);
+    // A regua com XP no meio (o avancar zera o XP para nao subir carta).
+    e.player.xp = Math.floor(e.player.xpProximo * 0.6);
+  };
+  // Fase 18: a borda de baixo da faixa de cima do HUD (regua, etiqueta, HP,
+  // post-it, ata), pelas caixas visiveis na pagina, em px da tela e do canvas.
+  const fundoDoHud = () => {
+    const cena = document.querySelector('.cena').getBoundingClientRect();
+    let fundo = cena.top;
+    for (const no of document.querySelectorAll('.hud-regua *, .hud-topo *')) {
+      const r = no.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) fundo = Math.max(fundo, r.bottom);
+    }
+    const px = fundo - cena.top;
+    const canvas = document.querySelector('canvas');
+    return { px, pct: (100 * px) / cena.height, canvas: (px * canvas.height) / cena.height, altura: cena.height };
+  };
+  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud };
   await document.fonts.ready;
   return true;
 }
@@ -977,6 +1002,135 @@ const CENAS = [
     },
     detalhe: () => window.__f.recorteEm(window.__f.e.player.x, window.__f.e.player.y, 150),
   },
+  // Fase 18: o HUD de caderno. `apontar` devolve o ponto da tela onde o
+  // mouse para antes da foto (o tooltip e :hover de CSS); `medir` devolve
+  // uma linha que sai ao lado do caminho da foto.
+  {
+    nome: 'hud-cartela',
+    espera: 300,
+    preparar: () => {
+      window.__f.hudCheio();
+      window.__f.centralizar();
+    },
+  },
+  {
+    // O golpe: a barra ja caiu (140 ms) e o fantasma claro ainda nao saiu
+    // do lugar (espera 300 ms para escorrer).
+    nome: 'hud-golpe-fantasma',
+    espera: 220,
+    preparar: () => {
+      const { e, T, hudCheio, centralizar, golpe } = window.__f;
+      if (e.tela !== T.AVALIACAO || e.run.coringas.length !== 3) hudCheio();
+      centralizar();
+      e.player.hp = e.player.hpMax;
+      golpe(30);
+    },
+    detalhe: () => {
+      const r = document.querySelector('.hud-esquerda').getBoundingClientRect();
+      return { x: r.left - 8, y: r.top - 8, width: r.width + 16, height: r.height + 16, scale: 2 };
+    },
+  },
+  {
+    nome: 'hud-pausa-tooltip',
+    espera: 500,
+    preparar: () => {
+      const { e, T, main, hudCheio, centralizar } = window.__f;
+      if (e.tela !== T.AVALIACAO || e.run.coringas.length !== 3) hudCheio();
+      centralizar();
+      main.alternarPausa(e);
+    },
+    apontar: () => {
+      const r = document.querySelectorAll('#hud-coringas .hud-chip')[1].getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    },
+  },
+  {
+    nome: 'hud-cronometro-urgente',
+    espera: 450,
+    preparar: () => {
+      const { e, C, main, passo, hudCheio, centralizar } = window.__f;
+      hudCheio();
+      centralizar();
+      const av = e.run.avaliacao;
+      av.decorrido = av.duracao - C.hud.timerUrgente + 2.5;
+      main.atualizar(e, passo);
+    },
+  },
+  {
+    nome: 'hud-banca-fase-2',
+    espera: 300,
+    preparar: () => {
+      const { e, boss, C, main, passo, garantirTcc, avancar } = window.__f;
+      garantirTcc();
+      const corpo = boss.acharBanca(e);
+      corpo.hp = Math.min(corpo.hp, corpo.hpMax * (C.banca.fases[0].ate - 0.08));
+      avancar(C.banca.transicao.duracao + 1.2);
+      const arena = e.run.avaliacao.arena;
+      e.player.x = (arena.esquerda + arena.direita) / 2 - 160;
+      e.player.y = (arena.topo + arena.base) / 2 + 60;
+      corpo.x = (arena.esquerda + arena.direita) / 2 + 120;
+      corpo.y = (arena.topo + arena.base) / 2;
+      e.player.xp = Math.floor(e.player.xpProximo * 0.35);
+      main.atualizar(e, passo);
+    },
+    detalhe: () => {
+      const r = document.querySelector('.hud-centro').getBoundingClientRect();
+      return { x: r.left - 8, y: r.top - 8, width: r.width + 16, height: r.height + 16, scale: 2 };
+    },
+    medir: () => {
+      const m = window.__f.fundoDoHud();
+      return `HUD no TCC: ${m.px.toFixed(1)}px de ${m.altura.toFixed(0)}px = ${m.pct.toFixed(1)}% da cena (y=${m.canvas.toFixed(1)} no canvas)`;
+    },
+  },
+  {
+    nome: 'hud-translucido-banca',
+    espera: 400,
+    preparar: () => {
+      const { e, boss, main, passo, garantirTcc } = window.__f;
+      garantirTcc();
+      const corpo = boss.acharBanca(e);
+      const arena = e.run.avaliacao.arena;
+      corpo.x = (arena.esquerda + arena.direita) / 2 + 40;
+      corpo.y = arena.topo + 45;
+      e.player.x = (arena.esquerda + arena.direita) / 2 - 200;
+      e.player.y = (arena.topo + arena.base) / 2 + 80;
+      main.atualizar(e, passo);
+    },
+    medir: () => `topo translucido: ${document.getElementById('hud').classList.contains('translucido')}`,
+  },
+  {
+    // O nome com acento em maiuscula (Á) na etiqueta: a manuscrita tem
+    // ascendente alta, e a linha unica corta o que passa dela.
+    nome: 'hud-etiqueta-acento',
+    espera: 300,
+    preparar: () => {
+      window.__f.hudCheio(1, 1);
+      window.__f.centralizar();
+    },
+    detalhe: () => {
+      const r = document.querySelector('.hud-esquerda').getBoundingClientRect();
+      return { x: r.left - 8, y: r.top - 8, width: r.width + 16, height: r.height + 16, scale: 2 };
+    },
+  },
+  {
+    nome: 'hud-sala-lotada',
+    espera: 300,
+    preparar: () => {
+      const { run, e, avancar, C, centralizar } = window.__f;
+      const sala = C.modificadores.find((m) => m.fatores && m.fatores.arena < 1);
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 1, [sala.id]);
+      avancar(4);
+      centralizar();
+    },
+    medir: () => {
+      const cena = document.querySelector('.cena').getBoundingClientRect();
+      const hp = document.querySelector('.barra-hp').getBoundingClientRect();
+      const k = document.querySelector('canvas').height / cena.height;
+      const topo = window.__f.e.run.avaliacao.arena.topo;
+      return `HP termina em y=${((hp.bottom - cena.top) * k).toFixed(1)} do canvas; a parede da Sala Lotada em y=${topo.toFixed(1)}`;
+    },
+  },
 ];
 
 // Uma foto so na tela larga: a mesa em volta da cena e os objetos dela.
@@ -1007,13 +1161,21 @@ async function fotografar(cdp, sessao, url, tamanho, cenas) {
   for (const cena of cenas) {
     await avaliar(enviar, 'window.__f.cena += 1');
     await avaliar(enviar, `(${cena.preparar})()`);
+    // Fase 18: o mouse parado num ponto (o :hover do CSS), e de volta ao
+    // canto depois da foto, para nao acender nada na cena seguinte.
+    if (cena.apontar) {
+      const { x, y } = await avaliar(enviar, `(${cena.apontar})()`);
+      await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+    }
     await dormir(cena.espera);
     const tela = await enviar('Runtime.evaluate', { expression: 'window.__estado.tela', returnByValue: true });
     const { data } = await enviar('Page.captureScreenshot', { format: 'png' });
+    if (cena.apontar) await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 });
     const base = `${String(cena.ordem).padStart(2, '0')}-${cena.nome}-${largura}x${altura}`;
     const arquivo = join(SAIDA, `${base}.png`);
     writeFileSync(arquivo, Buffer.from(data, 'base64'));
-    feitas.push({ arquivo, tela: tela.result.value });
+    const medida = cena.medir ? `; ${await avaliar(enviar, `(${cena.medir})()`)}` : '';
+    feitas.push({ arquivo, tela: `${tela.result.value}${medida}` });
     if (cena.detalhe) {
       const clip = await avaliar(enviar, `(${cena.detalhe})()`);
       const ampliada = await enviar('Page.captureScreenshot', { format: 'png', clip });

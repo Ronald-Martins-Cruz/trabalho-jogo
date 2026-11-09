@@ -501,6 +501,7 @@ export const CONTEUDO = {
       '--tooltip': '120ms', // o tooltip dos coringas do HUD
       '--hud-fade': '150ms',
       '--hud-translucido': '0.3', // opacidade do topo do HUD com alguem embaixo
+      '--pulso-banca': '350ms', // a ata da Banca pisca na virada de fase (era 0.35s escrito no CSS)
     },
   },
 
@@ -627,10 +628,13 @@ export const CONTEUDO = {
       ['tinta', 'marcaAzul', 4.5],
       ['tinta', 'marcaLaranja', 4.5],
       ['tinta', 'moeda', 4.5], // creditos marcados de dourado
-      ['canetaVermelha', 'papel', 3], // barra de HP
-      ['canetaVerde', 'papel', 3], // barra de XP
+      // As barras do HUD (fase 18) tem papel proprio: o par de cada uma e lido
+      // do style.css pelo smoke (PARES_DO_HUD). Estas duas ficam para o que
+      // for riscado direto na pagina.
+      ['canetaVermelha', 'papel', 3], // caneta vermelha como risco
+      ['canetaVerde', 'papel', 3], // caneta verde como risco
       ['canetaVermelha', 'papel', 4.5], // correcao escrita (aviso da loja, "faltava")
-      ['canetaVerde', 'papel', 4.5], // "aprovado", nivel, conceito A
+      ['canetaVerde', 'papel', 4.5], // "aprovado", conceito A
       ['carimbo', 'papel', 4.5], // o conceito carimbado
       ['tinta', 'mesa', 3], // o que for escrito na mesa
     ],

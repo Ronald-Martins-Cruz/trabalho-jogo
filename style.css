@@ -233,157 +233,26 @@ body {
 
 /* ----------------------------------------------------------------- hud */
 
-/* Compacto: so a faixa de cima (XP, identificacao + HP, cronometro, nivel) e
-   o rodape dos coringas. Antes ele cobria o terco de cima do canvas, e a
-   parede da Sala Lotada e A Banca sumiam por baixo dele (pendencias 63/79).
-   Fica por cima da pausa e da carta: o jogador le o HP e passa o mouse nos
-   coringas com o jogo parado. O texto escrito sobre a pagina ganha um halo
-   do papel: sobre a vinheta da madrugada ele continua legivel. */
+/* v2 (fase 18): o HUD e feito dos objetos da mesa (escopo §4). Cada peca e
+   um papel opaco com a sua tinta — a regua, o adesivo do nivel, a etiqueta,
+   o retangulo do HP, o post-it, a ata, as cartelas — e por isso nenhum texto
+   do HUD depende do papel do clima nem da vinheta (que na madrugada escurece
+   justo os cantos). O smoke le daqui cada par de cor e fundo e mede o
+   contraste (pendencias 103 e 104).
+   Compacto: a regua e a faixa de cima (etiqueta + HP, cronometro, a ata da
+   Banca) e o rodape das cartelas. Fica por cima da pausa e da carta: o
+   jogador le o HP e passa o mouse nos coringas com o jogo parado. */
 .hud {
   justify-content: flex-start;
   padding: 0 1em;
-  gap: 0.3em;
+  gap: 0.24em;
   pointer-events: none;
   z-index: 2;
-}
-
-.hud > .barra-xp {
-  width: calc(100% + 2em);
-  height: 0.38em;
-  margin: 0 -1em;
-  border-width: 0 0 1px;
-  border-radius: 0;
-}
-
-.hud-topo {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: start;
-  width: 100%;
-}
-
-.hud-esquerda {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25em;
-  min-width: 0;
-}
-
-.hud-esquerda .barra-hp {
-  width: 15em;
-}
-
-/* "Probabilidade e Estatística · Avaliação 2" numa linha so: quebrar em duas
-   empurrava a barra de HP para cima da parede da Sala Lotada. */
-.hud-identificacao .avaliacao {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Jogador ou A Banca na faixa de cima da arena: o topo do HUD fica
-   translucido para nao esconder quem esta embaixo (ui.js, pela posicao no
-   estado; a faixa e juice.hud.faixaTopo). */
-.hud-topo,
-.hud > .barra-xp {
-  transition: opacity var(--hud-fade) ease-out;
-}
-
-.hud.translucido .hud-topo,
-.hud.translucido > .barra-xp {
-  opacity: var(--hud-translucido);
-}
-
-.hud-centro {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.15em;
-}
-
-.hud-identificacao {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.15;
-  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
-}
-
-.periodo {
-  font-size: 0.75em;
-  color: var(--tinta-fraca);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.avaliacao {
-  font-size: 1em;
-  font-weight: 600;
-  color: var(--tinta);
-}
-
-.timer {
-  font-size: 1.75em;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: 0.04em;
-  color: var(--tinta);
-  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
-}
-
-/* Ultimos segundos (hud.timerUrgente). A classe vem do ESTADO, pintada por
-   ui.js a partir de avaliacao.restante. O pulso em si e animacao de CSS, que
-   correria sozinha com o jogo pausado — por isso ui.js poe .parado no timer
-   fora da tela de avaliacao, e a animacao congela junto com o mundo. */
-.timer.urgente {
-  color: var(--caneta-vermelha);
-  animation: pulsar-timer var(--pulso-timer) ease-in-out infinite;
-}
-
-.timer.urgente.parado {
-  animation-play-state: paused;
-}
-
-@keyframes pulsar-timer {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(var(--pulso-timer-escala)); }
-}
-
-.hud-nivel {
-  display: flex;
-  align-items: baseline;
-  justify-self: end;
-  gap: 0.4em;
-  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
-}
-
-.hud-nivel .rotulo {
-  font-size: 0.75em;
-  color: var(--tinta-fraca);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-}
-
-.hud-nivel .valor {
-  font-size: 1.6em;
-  font-weight: 700;
-  color: var(--caneta-verde);
 }
 
 .barra {
   position: relative;
   width: 100%;
-  background: color-mix(in srgb, var(--papel) 85%, transparent);
-  border: 1px solid var(--tinta);
-  border-radius: 0.2em;
-  overflow: hidden;
-}
-
-.barra-xp {
-  height: 0.45em;
-}
-
-.barra-hp {
-  height: 1em;
 }
 
 .preenchimento {
@@ -393,23 +262,191 @@ body {
   transition: width var(--tween-hp) linear;
 }
 
+/* ------------------------------------------------ a regua e o nivel */
+
+.hud-regua {
+  position: relative;
+  width: calc(100% + 2em);
+  margin: 0 -1em;
+}
+
+/* Uma regua de plastico deitada na beira de cima da pagina: os tracinhos
+   de centimetro (e os de meio) saem da borda de baixo. Termina antes do
+   adesivo do nivel, colado na ponta. */
+.barra-xp {
+  height: 0.62em;
+  width: auto;
+  margin-right: 3.6em;
+  background-color: var(--adesivo);
+  background-image:
+    repeating-linear-gradient(90deg, var(--tinta) 0 0.06em, transparent 0.06em 2em),
+    repeating-linear-gradient(90deg, var(--lapis) 0 0.05em, transparent 0.05em 0.5em);
+  background-size: 100% 50%, 100% 25%;
+  background-position: 0.5em 100%, 0.5em 100%;
+  background-repeat: repeat-x;
+  border-bottom: 0.07em solid var(--tinta);
+  border-right: 0.07em solid var(--tinta);
+  border-radius: 0 0 0.25em 0;
+  box-shadow: 0 0.08em 0.14em var(--sombra);
+}
+
+/* O XP e um risco de marca-texto verde ao longo da regua (os tracinhos
+   aparecem por baixo: multiply). O que mostra ate onde ele foi e a caneta
+   verde, na linha de baixo e na ponta: o marca-verde sozinho da 1,2:1 no
+   adesivo, a caneta da 5:1 (pendencia 104; o smoke mede ESTE par). */
 .barra-xp .preenchimento {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--caneta-verde) 55%, var(--marca-verde)), var(--caneta-verde));
   width: 0;
+  background-color: var(--marca-verde);
+  border-right: 0.12em solid var(--caneta-verde);
+  box-shadow: inset 0 -0.14em 0 var(--caneta-verde);
+  mix-blend-mode: multiply;
   transition-duration: var(--tween-xp);
 }
 
-.barra-hp .preenchimento {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--caneta-vermelha) 65%, var(--marca-rosa)), var(--caneta-vermelha));
+/* O nivel: um adesivo redondo colado na ponta da regua, com o contorno
+   branco recortado e a sombra das figurinhas. */
+.hud-nivel {
+  position: absolute;
+  top: 0.12em;
+  right: 0.7em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 2.5em;
+  height: 2.5em;
+  line-height: 1;
+  color: var(--tinta);
+  background-color: var(--marca-verde);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.14em var(--adesivo), 0.05em 0.12em 0.16em 0.12em var(--sombra);
+  rotate: -8deg;
 }
 
-/* O tween do HP: a barra cai rapido e o fantasma claro fica para tras, depois
-   escorre ate ela. Na cura a barra passa por cima dele e ele nao aparece. */
+.hud-nivel .rotulo {
+  font-size: 0.44em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tinta);
+}
+
+.hud-nivel .valor {
+  font-size: 1.15em;
+  font-weight: 700;
+  color: var(--tinta);
+}
+
+/* ------------------------------------------------------- a faixa de cima */
+
+.hud-topo {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  width: 100%;
+}
+
+/* Jogador ou A Banca na faixa de cima da arena: o topo do HUD fica
+   translucido para nao esconder quem esta embaixo (ui.js, pela posicao no
+   estado; a faixa e juice.hud.faixaTopo). */
+.hud-topo,
+.hud-regua {
+  transition: opacity var(--hud-fade) ease-out;
+}
+
+.hud.translucido .hud-topo,
+.hud.translucido .hud-regua {
+  opacity: var(--hud-translucido);
+}
+
+.hud-esquerda {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  width: 15em;
+  min-width: 0;
+}
+
+/* A etiqueta do caderno: papel de adesivo, uma borda (com o friso azul por
+   dentro) e duas linhas da pauta; o periodo pequeno em caixa alta e a
+   avaliacao escrita a mao, numa linha so com reticencias — duas linhas
+   empurravam o HP para cima da parede da Sala Lotada. */
+.hud-identificacao {
+  display: flex;
+  flex-direction: column;
+  padding: 0.08em 0.6em 0.18em;
+  background-color: var(--adesivo);
+  border: 0.08em solid var(--tinta);
+  border-radius: 0.35em;
+  box-shadow: inset 0 0 0 0.13em var(--adesivo), inset 0 0 0 0.19em var(--marca-azul), 0.05em 0.1em 0.12em var(--sombra);
+}
+
+.hud-identificacao .periodo {
+  font-size: 0.6em;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tinta-fraca);
+  border-bottom: 0.1em solid var(--pauta);
+}
+
+.hud-identificacao .avaliacao {
+  font-family: var(--fonte-manuscrita);
+  font-size: 0.86em;
+  font-weight: 700;
+  line-height: 1.32;
+  color: var(--tinta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 0.07em solid var(--pauta);
+}
+
+/* O HP: um risco de marca-texto rosa, de ponta arredondada, dentro de um
+   retangulo a lapis passado duas vezes. O que mostra quanto resta e a ponta
+   em caneta vermelha (5:1 no adesivo; o rosa sozinho da 1,7:1). O fantasma
+   claro fica para tras e escorre depois: o dano aparece como um pedaco que
+   se desfaz, nao como um salto. Na cura a barra passa por cima dele. */
+.barra-hp {
+  height: 1.05em;
+  background-color: var(--adesivo);
+  border: 0.07em solid var(--lapis);
+  border-radius: 0.12em;
+}
+
+.barra-hp::after {
+  content: '';
+  position: absolute;
+  inset: -0.14em -0.1em -0.09em -0.15em;
+  border: 0.05em solid color-mix(in srgb, var(--lapis) 55%, transparent);
+  border-radius: 0.25em 0.1em 0.3em 0.12em;
+  rotate: -0.6deg;
+  pointer-events: none;
+}
+
+/* A tinta do marca-texto junta nas beiradas do risco: um fio mais escuro em
+   cima e embaixo. */
+.barra-hp .preenchimento {
+  top: 14%;
+  height: 72%;
+  background-color: var(--marca-rosa);
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--marca-rosa) 75%, var(--caneta-vermelha)) 0 9%,
+    transparent 9% 91%,
+    color-mix(in srgb, var(--marca-rosa) 75%, var(--caneta-vermelha)) 91%
+  );
+  border-right: 0.16em solid var(--caneta-vermelha);
+  border-radius: 0.1em 0.5em 0.5em 0.1em;
+}
+
 .fantasma {
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: 14% auto 14% 0;
   width: 100%;
-  background: var(--marca-rosa);
+  background-color: color-mix(in srgb, var(--marca-rosa) 45%, var(--adesivo));
+  border-radius: 0.1em 0.5em 0.5em 0.1em;
   transition: width var(--tween-hp-fantasma) ease-in var(--atraso-hp-fantasma);
 }
 
@@ -418,11 +455,63 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 0.7em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 0.72em;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  line-height: 1;
   color: var(--tinta);
-  text-shadow: 0 0 0.2em var(--papel), 0 0 0.4em var(--papel);
+}
+
+/* O post-it fica colado por cima da beira da ata, no vao entre o nome e a
+   fase: as duas pecas juntas cabem na faixa de cima (no maximo 18% da cena
+   no TCC, contrato 18). */
+.hud-centro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* O cronometro num post-it amarelo, colado meio torto no meio. */
+.timer {
+  position: relative;
+  z-index: 1;
+  min-width: 3.3em;
+  padding: 0.14em 0.45em 0.12em;
+  font-family: var(--fonte-texto);
+  font-size: 1.4em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  letter-spacing: 0.03em;
+  text-align: center;
+  color: var(--tinta);
+  background-color: var(--marca-amarelo);
+  border-radius: 0.04em 0.04em 0.2em 0.04em / 0.04em 0.04em 0.12em 0.04em;
+  box-shadow: 0.04em 0.08em 0.1em var(--sombra);
+  rotate: -2deg;
+}
+
+/* Ultimos segundos (hud.timerUrgente): o post-it fica rosa, cercado de
+   caneta vermelha, e pulsa. Os numeros saem em tinta de carimbo: a caneta
+   vermelha sobre o rosa da 2,99:1, abaixo do 3 do texto grande (o smoke
+   mede este par). A classe vem do ESTADO, pintada por ui.js a partir de
+   avaliacao.restante. O pulso em si e animacao de CSS, que correria sozinha
+   com o jogo pausado — por isso ui.js poe .parado no timer fora da tela de
+   avaliacao, e a animacao congela junto com o mundo. */
+.timer.urgente {
+  color: var(--carimbo);
+  background-color: var(--marca-rosa);
+  box-shadow: 0 0 0 0.07em var(--caneta-vermelha), 0.04em 0.08em 0.1em var(--sombra);
+  animation: pulsar-timer var(--pulso-timer) ease-in-out infinite;
+}
+
+.timer.urgente.parado {
+  animation-play-state: paused;
+}
+
+@keyframes pulsar-timer {
+  0%, 100% { scale: 1; }
+  50% { scale: var(--pulso-timer-escala); }
 }
 
 /* --------------------------------------------------------------- pausa */
@@ -862,56 +951,81 @@ body {
   color: var(--caneta-vermelha);
 }
 
-/* O rodape do HUD: coringas da run e modificadores da avaliacao, cada grupo
-   com rotulo (pendencia 64) e um chip por item. O nome e a descricao aparecem
-   ao passar o mouse — inclusive com o jogo pausado, porque o HUD fica por cima
-   da pausa. */
+/* O rodape do HUD: as cartelas de figurinhas — os coringas da run numa
+   cartela azul, os modificadores da avaliacao numa laranja (a cor dos
+   avisos do anuncio), cada uma com o rotulo impresso (pendencia 64) e um
+   adesivo por item. O nome e a descricao aparecem num post-it ao passar o
+   mouse — inclusive com o jogo pausado, porque o HUD fica por cima da
+   pausa. */
 .hud-rodape {
   position: absolute;
   left: 1em;
-  bottom: 0.7em;
+  bottom: 0.6em;
   display: flex;
   align-items: flex-end;
-  gap: 1.4em;
+  gap: 0.9em;
 }
 
 .hud-grupo {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.2em;
+  gap: 0.22em;
+  padding: 0.2em 0.42em 0.4em;
+  background-color: var(--marca-azul);
+  border-radius: 0.35em;
+  box-shadow: 0.05em 0.1em 0.14em var(--sombra);
+  rotate: -1deg;
+}
+
+.hud-grupo-mods {
+  background-color: var(--marca-laranja);
+  rotate: 1.2deg;
+}
+
+/* A cartela com o mouse fica por cima: o post-it de um coringa nao some
+   atras da cartela vizinha. */
+.hud-grupo:hover {
+  z-index: 1;
 }
 
 .hud-rotulo {
-  font-size: 0.55em;
+  font-size: 0.5em;
+  font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--tinta-fraca);
-  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
+  color: var(--tinta);
 }
 
 .hud-chips {
   display: flex;
-  gap: 0.3em;
+  gap: 0.32em;
 }
 
+/* Cada item e uma figurinha: o adesivo branco recortado, com sombra,
+   colado meio torto na cartela. */
 .hud-chip {
   position: relative;
   display: grid;
   place-items: center;
-  width: 1.9em;
-  height: 1.9em;
-  border: 1px solid var(--tinta);
-  border-radius: 0.45em;
-  background: var(--adesivo);
-  box-shadow: 0 0.1em 0.3em var(--sombra);
+  width: 1.85em;
+  height: 1.85em;
+  background-color: var(--adesivo);
+  border: 0.06em solid var(--papel-sombra);
+  border-radius: 0.55em;
+  box-shadow: 0.03em 0.09em 0.1em var(--sombra);
+  rotate: -3deg;
   pointer-events: auto;
   cursor: help;
 }
 
+.hud-chip:nth-child(even) {
+  rotate: 2.5deg;
+}
+
 /* Modificador nao e coisa do jogador: borda tracejada, em caneta vermelha. */
 .hud-grupo-mods .hud-chip {
-  border-style: dashed;
-  border-color: var(--caneta-vermelha);
+  border: 0.08em dashed var(--caneta-vermelha);
 }
 
 .hud-chip-emoji {
@@ -919,7 +1033,7 @@ body {
   line-height: 1;
 }
 
-/* O Atestado ja usado continua na mao, apagado. */
+/* O Atestado ja usado continua na cartela, apagado. */
 .hud-chip.gasto .hud-chip-emoji {
   filter: grayscale(1);
   opacity: 0.45;
@@ -931,28 +1045,42 @@ body {
   opacity: 0.35;
 }
 
+/* O nome e a descricao num post-it amarelo inclinado, preso por um pedaco
+   de fita. So leitura: :hover de CSS, nao passa pelo estado (pendencia 26). */
 .hud-tooltip {
   position: absolute;
   left: 0;
-  bottom: calc(100% + 0.5em);
+  bottom: calc(100% + 0.8em);
   z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 0.2em;
   width: 15em;
-  padding: 0.45em 0.6em;
+  padding: 0.65em 0.75em 0.6em;
   font-size: 0.72em;
   text-align: left;
   color: var(--tinta);
-  background: var(--marca-amarelo);
-  border: 1px solid color-mix(in srgb, var(--tinta) 25%, transparent);
-  border-radius: 0.2em;
-  box-shadow: 0 0.4em 1em var(--sombra);
+  background-color: var(--marca-amarelo);
+  border-radius: 0.1em 0.1em 0.45em 0.1em / 0.1em 0.1em 0.22em 0.1em;
+  box-shadow: 0.1em 0.3em 0.5em var(--sombra);
+  rotate: 1.5deg;
   opacity: 0;
   visibility: hidden;
   translate: 0 0.4em;
   pointer-events: none;
   transition: opacity var(--tooltip) ease-out, translate var(--tooltip) ease-out, visibility 0s linear var(--tooltip);
+}
+
+.hud-tooltip::before {
+  content: '';
+  position: absolute;
+  top: -0.5em;
+  left: 50%;
+  width: 3.4em;
+  height: 0.95em;
+  translate: -50% 0;
+  rotate: -4deg;
+  background-color: color-mix(in srgb, var(--adesivo) 60%, transparent);
 }
 
 .hud-chip:hover .hud-tooltip {
@@ -963,7 +1091,10 @@ body {
 }
 
 .hud-tooltip-nome {
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.12em;
   font-weight: 700;
+  line-height: 1.25;
   color: var(--tinta);
 }
 
@@ -1120,57 +1251,72 @@ body {
 
 /* ------------------------------------------------------- A Banca no HUD */
 
-/* A barra de HP no topo (design §10). A cor e a da fase, como a aura que
-   render.js desenha em volta dela: .fase-1, .fase-2 vem do estado. As marcas
-   (.banca-marca) mostram desde o comeco onde ela vai virar. */
+/* A barra de HP dela (design §10), so no TCC: uma faixa de ata da defesa —
+   papel de adesivo com a margem vermelha, nome e fase em letra de forma, a
+   barra em caneta vermelha e as marcas de fase como rubricas, que mostram
+   desde o comeco onde ela vai virar. .fase-1, .fase-2 vem do estado. */
 .banca-hud {
   display: flex;
   flex-direction: column;
-  gap: 0.15em;
-  width: 24em;
+  gap: 0.14em;
+  width: 22em;
+  margin-top: -0.42em;
+  padding: 0.12em 0.65em 0.34em 1.05em;
+  background-color: var(--adesivo);
+  background-image: linear-gradient(90deg, transparent 0.6em, var(--margem) 0.6em 0.68em, transparent 0.68em);
+  box-shadow: 0.05em 0.1em 0.14em var(--sombra);
+  rotate: 0.4deg;
 }
 
 .banca-cabecalho {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  font-size: 0.85em;
-  letter-spacing: 0.1em;
-  text-shadow: 0 0 0.12em var(--papel), 0 0 0.3em var(--papel), 0 0 0.6em var(--papel), 0 0 1em var(--papel);
+  gap: 0.6em;
+  font-family: var(--fonte-texto);
+  font-size: 0.76em;
+  line-height: 1.3;
 }
 
 .banca-nome {
   font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--tinta);
 }
 
 .banca-fase {
+  padding: 0 0.3em;
+  border-radius: 0.2em;
   color: var(--tinta-fraca);
 }
 
+/* Na 2a rodada a fase vem marcada de rosa e a tinta da barra, riscada. */
+.banca-hud.fase-2 .banca-fase {
+  color: var(--tinta);
+  background-color: var(--marca-rosa);
+}
+
 .barra-banca {
-  height: 0.9em;
-  border-color: var(--caneta-vermelha);
+  height: 0.72em;
+  background-color: var(--adesivo);
+  border: 0.06em solid var(--tinta);
+  border-radius: 0.1em;
 }
 
 .banca-hud .barra-banca .preenchimento {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--tinta) 55%, var(--papel)), var(--tinta));
+  background-color: var(--caneta-vermelha);
 }
 
 .banca-hud.fase-2 .barra-banca .preenchimento {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--caneta-vermelha) 65%, var(--marca-rosa)), var(--caneta-vermelha));
-}
-
-.banca-hud.fase-2 .banca-fase {
-  color: var(--caneta-vermelha);
+  background-image: repeating-linear-gradient(-45deg, transparent 0 0.24em, var(--carimbo) 0.24em 0.4em);
 }
 
 /* A pausa entre fases: a barra pisca, junto com a aura no canvas. A animacao
    de CSS correria na pausa do jogo — mas a classe .transicao so existe com a
    Banca em transicao, e a transicao so anda dentro da avaliacao. */
 .banca-hud.transicao .barra-banca {
-  animation: pulsar-banca 0.35s ease-in-out infinite alternate;
+  animation: pulsar-banca var(--pulso-banca) ease-in-out infinite alternate;
 }
 
 @keyframes pulsar-banca {
@@ -1184,12 +1330,29 @@ body {
   pointer-events: none;
 }
 
+/* Uma rubrica: o risco de caneta inclinado, passando da barra, e o rabicho
+   embaixo. */
 .banca-marca {
   position: absolute;
-  top: -0.15em;
-  bottom: -0.15em;
-  width: 2px;
-  background: var(--tinta);
+  top: -0.34em;
+  bottom: -0.3em;
+  width: 0.4em;
+  margin-left: -0.1em;
+  border-left: 0.09em solid var(--tinta);
+  border-radius: 40% 0 0 60%;
+  rotate: 14deg;
+}
+
+.banca-marca::after {
+  content: '';
+  position: absolute;
+  left: -0.2em;
+  bottom: -0.04em;
+  width: 0.5em;
+  height: 0.28em;
+  border-right: 0.08em solid var(--tinta);
+  border-bottom: 0.08em solid var(--tinta);
+  border-radius: 0 0 60% 30%;
 }
 
 /* -------------------------------------------------------------- colacao */
@@ -1452,7 +1615,8 @@ body {
   .camada:not(.oculto),
   .carta-opcoes.entrando .carta-opcao,
   .camada:not(.oculto) .carimbo,
-  .timer.urgente {
+  .timer.urgente,
+  .banca-hud.transicao .barra-banca {
     animation: none;
   }
 }

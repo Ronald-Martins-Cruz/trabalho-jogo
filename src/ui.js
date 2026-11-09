@@ -104,12 +104,15 @@ export function criarUi(doc) {
     cache[no.id] = valor;
     no.textContent = valor;
   };
+  // A largura de uma barra do HUD (fracao 0..1). Compara o numero, guardado
+  // no proprio no: a string do estilo so nasce quando a barra anda, e nao a
+  // cada quadro (pendencia 90).
   const largura = (no, fracao) => {
     if (!no) return;
-    const pct = `${Math.max(0, Math.min(1, fracao)) * 100}%`;
-    if (cache[`${no.id}:w`] === pct) return;
-    cache[`${no.id}:w`] = pct;
-    no.style.width = pct;
+    const f = Math.max(0, Math.min(1, fracao));
+    if (no.__fracao === f) return;
+    no.__fracao = f;
+    no.style.width = `${f * 100}%`;
   };
   const visivel = (no, mostrar) => {
     if (!no) return;
@@ -169,15 +172,17 @@ export function criarUi(doc) {
   const chipsCoringas = montarChips(el.hudCoringas, CONTEUDO.loja.teto);
   const chipsModificadores = montarChips(el.hudModificadores, maxModificadores);
 
-  // `dados(i, saida)` preenche `saida` ({ emoji, nome, descricao, gasto }) e a
-  // devolve, ou devolve null. Devolve quantos chips ficaram visiveis.
+  // Cada chip le o item `i` de `lista` (os coringas da run ou os ids dos
+  // modificadores) para dentro de CHIP ({ emoji, nome, descricao, gasto }),
+  // ou fica vazio. Sem funcao por chamada: a v1 criava duas closures por
+  // quadro aqui (pendencia 90). Devolve quantos chips ficaram visiveis.
   const CHIP = { emoji: '', nome: '', descricao: '', gasto: false };
 
-  function sincronizarChips(chips, dados) {
+  function sincronizarChips(chips, lista, deCoringa) {
     let visiveis = 0;
     for (let i = 0; i < chips.length; i += 1) {
       const c = chips[i];
-      const d = dados(i, CHIP);
+      const d = deCoringa ? chipDoCoringa(lista[i], CHIP) : chipDoModificador(lista[i], CHIP);
       visivel(c.chip, d !== null);
       if (d === null) continue;
       visiveis += 1;
@@ -512,12 +517,19 @@ export function criarUi(doc) {
   }
 
   // ---------------------------------------------------------------- A Banca
-  // A barra de HP no topo do HUD (design §10). As marcas de fase saem de
-  // content.js (banca.fases[].ate), montadas uma vez: o jogador ve, antes de
-  // chegar la, onde a Banca vai virar.
+  // O nome dela e as classes de fase (fase-1, fase-2...) nascem uma vez; o
+  // texto da fase so e montado quando a fase muda (pendencia 90).
+  const classesDeFase = [];
+  let faseMostrada = null;
+
+  // A barra de HP no topo do HUD (design §10), a ata da defesa. As marcas de
+  // fase (rubricas) saem de content.js (banca.fases[].ate), montadas uma vez:
+  // o jogador ve, antes de chegar la, onde a Banca vai virar.
   function montarBanca() {
-    if (!el.bancaMarcas || el.bancaMarcas.childElementCount > 0) return;
     const fases = CONTEUDO.banca.fases;
+    for (let i = 0; i < fases.length; i += 1) classesDeFase.push(`fase-${i + 1}`);
+    texto(el.bancaNome, `${CONTEUDO.banca.emoji} ${CONTEUDO.banca.nome}`);
+    if (!el.bancaMarcas || el.bancaMarcas.childElementCount > 0) return;
     for (let i = 0; i < fases.length - 1; i += 1) {
       const marca = doc.createElement('span');
       marca.className = 'banca-marca';
@@ -532,12 +544,14 @@ export function criarUi(doc) {
     const b = estado.run.avaliacao.banca;
     visivel(el.bancaHud, emJogo && b !== null);
     if (!b) return;
-    const fases = CONTEUDO.banca.fases;
-    const fase = fases[Math.min(b.fase, fases.length - 1)];
-    texto(el.bancaNome, `${CONTEUDO.banca.emoji} ${CONTEUDO.banca.nome}`);
-    texto(el.bancaFase, preencher(CONTEUDO.textos.banca.fase, { n: b.fase + 1, nome: fase.nome }));
+    if (b.fase !== faseMostrada) {
+      faseMostrada = b.fase;
+      const fases = CONTEUDO.banca.fases;
+      const fase = fases[Math.min(b.fase, fases.length - 1)];
+      texto(el.bancaFase, preencher(CONTEUDO.textos.banca.fase, { n: b.fase + 1, nome: fase.nome }));
+      for (let i = 0; i < classesDeFase.length; i += 1) classe(el.bancaHud, classesDeFase[i], i === b.fase);
+    }
     largura(el.bancaBarra, b.hpMax > 0 ? b.hp / b.hpMax : 0);
-    for (let i = 0; i < fases.length; i += 1) classe(el.bancaHud, `fase-${i + 1}`, i === b.fase);
     classe(el.bancaHud, 'transicao', b.estado === ESTADOS_BANCA.TRANSICAO);
   }
 
@@ -736,6 +750,17 @@ export function criarUi(doc) {
     visivel(el.menuRecorde, textoRecorde !== '');
     sincronizarRelatorio(estado);
 
+    sincronizarHud(estado, emJogo);
+  }
+
+  // O HUD roda a cada quadro: so troca texto e classe de nos montados uma
+  // vez, e cada texto com numero so e montado quando o numero que ele mostra
+  // muda (pendencia 90: nada alocado por quadro com o HUD parado).
+  // `nunca` e o valor que nenhum estado tem: o 1o quadro sempre escreve.
+  const nunca = {};
+  const mostrado = { hp: nunca, hpMax: nunca, nivel: nunca, segundos: nunca, nome: nunca, materia: nunca };
+
+  function sincronizarHud(estado, emJogo) {
     const p = estado.player;
     const hp = p.hpMax > 0 ? p.hp / p.hpMax : 0;
     // As duas com a mesma largura: o CSS da a barra uma transicao curta e ao
@@ -743,23 +768,38 @@ export function criarUi(doc) {
     // entre as duas.
     largura(el.hpBarra, hp);
     largura(el.hpFantasma, hp);
-    texto(el.hpTexto, `${Math.ceil(p.hp)}/${p.hpMax}`);
+    const hpInteiro = Math.ceil(p.hp);
+    if (hpInteiro !== mostrado.hp || p.hpMax !== mostrado.hpMax) {
+      mostrado.hp = hpInteiro;
+      mostrado.hpMax = p.hpMax;
+      texto(el.hpTexto, `${hpInteiro}/${p.hpMax}`);
+    }
     largura(el.xpBarra, p.xpProximo > 0 ? p.xp / p.xpProximo : 0);
-    texto(el.nivel, String(p.nivel));
+    if (p.nivel !== mostrado.nivel) {
+      mostrado.nivel = p.nivel;
+      texto(el.nivel, String(p.nivel));
+    }
 
     const av = estado.run.avaliacao;
-    const run = estado.run;
     classe(el.hud, 'translucido', emJogo && hudCobreAlguem(estado));
-    const comCoringa = sincronizarChips(chipsCoringas, (i, saida) => chipDoCoringa(run.coringas[i], saida));
+    const comCoringa = sincronizarChips(chipsCoringas, estado.run.coringas, true);
     visivel(el.hudGrupoCoringas, comCoringa > 0);
     // A regra `coringas` 0 (Prova sem Consulta) esmaece os coringas no HUD:
     // o jogador ve que continuam dele, e que nao valem nesta prova.
     classe(el.hudCoringas, 'desligados', coringasDesligados(estado));
-    const comModificador = sincronizarChips(chipsModificadores, (i, saida) => chipDoModificador(av.modificadores[i], saida));
+    const comModificador = sincronizarChips(chipsModificadores, av.modificadores, false);
     visivel(el.hudGrupoModificadores, comModificador > 0);
     // O TCC nao tem cronometro: o relogio conta a defesa para cima.
-    texto(el.timer, formatarTempo(av.banca ? av.decorrido : av.restante));
-    texto(el.avaliacaoNome, nomeDaAvaliacao(av));
+    const segundos = Math.max(0, Math.ceil(av.banca ? av.decorrido : av.restante));
+    if (segundos !== mostrado.segundos) {
+      mostrado.segundos = segundos;
+      texto(el.timer, formatarTempo(segundos));
+    }
+    if (av.nome !== mostrado.nome || av.materia !== mostrado.materia) {
+      mostrado.nome = av.nome;
+      mostrado.materia = av.materia;
+      texto(el.avaliacaoNome, nomeDaAvaliacao(av));
+    }
     texto(el.periodoNome, av.periodo);
     // O unico aviso de "esta acabando" que existe sem ficar lendo o numero.
     // Sai do ESTADO (av.restante), como o realce da carta sai de

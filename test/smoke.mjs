@@ -7966,6 +7966,201 @@ function checarFase17() {
   return partes.map((p) => `\n    ${p}`).join('');
 }
 
+// ---------------------------------------------------------------- fase 18
+
+// As regras do style.css, sem comentario: seletor exato -> declaracoes, na
+// ordem do arquivo (a ultima ganha, como no CSS).
+function regrasDoCss() {
+  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const regras = new Map();
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const decl = {};
+    for (const d of m[2].matchAll(/([a-z-]+)\s*:\s*([^;]+);/gi)) decl[d[1].toLowerCase()] = d[2].trim();
+    for (const sel of m[1].split(',')) {
+      const s = sel.trim().replace(/\s+/g, ' ');
+      regras.set(s, Object.assign(regras.get(s) || {}, decl));
+    }
+  }
+  return regras;
+}
+
+// A cor de uma declaracao do HUD: exatamente uma var(--cor) de tema.css.
+function corDaDeclaracao(regras, seletor, prop) {
+  const valor = (regras.get(seletor) || {})[prop];
+  if (valor === undefined) {
+    falhar(0, `contraste do HUD: style.css nao tem "${prop}" em "${seletor}"`);
+    return null;
+  }
+  const nomes = [...new Set([...valor.matchAll(/var\(\s*(--[a-z0-9-]+)\s*\)/g)].map((m) => m[1]))];
+  if (nomes.length !== 1 || !(nomes[0] in CONTEUDO.tema.css)) {
+    falhar(0, `contraste do HUD: "${seletor} { ${prop}: ${valor} }" precisa de uma cor so, de tema.css`);
+    return null;
+  }
+  const cor = CONTEUDO.tema.css[nomes[0]];
+  if (!/^#[0-9a-fA-F]{6}$/.test(cor)) {
+    falhar(0, `contraste do HUD: ${nomes[0]} (${cor}) nao e opaca e nao da para medir`);
+    return null;
+  }
+  return { nome: nomes[0], cor };
+}
+
+// Pendencias 103 e 104: o par medido e o que aparece. Cada linha diz onde o
+// texto (ou o que indica o progresso) esta escrito no HUD, e a cor de cada
+// lado e LIDA do style.css. Fundo null: a peca encosta na propria pagina, e
+// e medida contra o papel de cada clima e do TCC (antes da vinheta).
+// [o que, seletor da cor, propriedade, seletor do fundo | null, minimo]
+const PARES_DO_HUD = [
+  ['periodo na etiqueta', '.hud-identificacao .periodo', 'color', '.hud-identificacao', 4.5],
+  ['avaliacao na etiqueta', '.hud-identificacao .avaliacao', 'color', '.hud-identificacao', 4.5],
+  ['HP escrito sobre o marca-texto', '.barra-texto', 'color', '.barra-hp .preenchimento', 4.5],
+  ['HP escrito no retangulo', '.barra-texto', 'color', '.barra-hp', 4.5],
+  ['cronometro no post-it', '.timer', 'color', '.timer', 4.5],
+  ['cronometro urgente (texto grande)', '.timer.urgente', 'color', '.timer.urgente', 3],
+  ['nivel no adesivo', '.hud-nivel .valor', 'color', '.hud-nivel', 4.5],
+  ['rotulo do nivel', '.hud-nivel .rotulo', 'color', '.hud-nivel', 4.5],
+  ['nome da Banca na ata', '.banca-nome', 'color', '.banca-hud', 4.5],
+  ['fase da Banca na ata', '.banca-fase', 'color', '.banca-hud', 4.5],
+  ['fase 2 marcada', '.banca-hud.fase-2 .banca-fase', 'color', '.banca-hud.fase-2 .banca-fase', 4.5],
+  ['rotulo da cartela dos coringas', '.hud-rotulo', 'color', '.hud-grupo', 4.5],
+  ['rotulo da cartela dos modificadores', '.hud-rotulo', 'color', '.hud-grupo-mods', 4.5],
+  ['nome no post-it do coringa', '.hud-tooltip-nome', 'color', '.hud-tooltip', 4.5],
+  ['descricao no post-it do coringa', '.hud-tooltip-descricao', 'color', '.hud-tooltip', 4.5],
+  ['ponta do XP na regua', '.barra-xp .preenchimento', 'border-right', '.barra-xp', 3],
+  ['linha do XP na regua', '.barra-xp .preenchimento', 'box-shadow', '.barra-xp', 3],
+  ['ponta do HP no retangulo', '.barra-hp .preenchimento', 'border-right', '.barra-hp', 3],
+  ['retangulo a lapis do HP', '.barra-hp', 'border', '.barra-hp', 3],
+  ['tinta da Banca na ata', '.banca-hud .barra-banca .preenchimento', 'background-color', '.barra-banca', 3],
+  ['contorno da barra da Banca', '.barra-banca', 'border', '.barra-banca', 3],
+  ['borda da etiqueta na pagina', '.hud-identificacao', 'border', null, 3],
+  ['beira da regua na pagina', '.barra-xp', 'border-bottom', null, 3],
+];
+
+function checarContrasteDoHud(regras = regrasDoCss()) {
+  const papeis = [...CONTEUDO.tema.climas.map((c, i) => [`${i + 1}o periodo`, c.papel]), ['TCC', CONTEUDO.tema.climaTcc.papel]];
+  let pior = null;
+  for (const [oque, selCor, prop, selFundo, minimo] of PARES_DO_HUD) {
+    const frente = corDaDeclaracao(regras, selCor, prop);
+    if (!frente) continue;
+    let fundos;
+    if (selFundo === null) fundos = papeis.map(([clima, cor]) => ({ nome: `papel do ${clima}`, cor }));
+    else {
+      const f = corDaDeclaracao(regras, selFundo, 'background-color');
+      if (!f) continue;
+      fundos = [f];
+    }
+    for (const fundo of fundos) {
+      const razao = razaoDeContraste(frente.cor, fundo.cor);
+      if (!(razao >= minimo)) falhar(0, `contraste do HUD: ${oque}: ${frente.nome} (${frente.cor}) sobre ${fundo.nome} (${fundo.cor}) da ${razao.toFixed(2)}:1, o minimo e ${minimo}:1`);
+      const folga = razao / minimo;
+      if (!pior || folga < pior.folga) pior = { folga, texto: `${oque} ${razao.toFixed(2)}:1 (min ${minimo})` };
+    }
+  }
+  return `contraste do HUD: ${PARES_DO_HUD.length} pares lidos do style.css (${PARES_DO_HUD.filter((p) => p[3] === null).length} contra o papel de cada clima); o mais justo: ${pior ? pior.texto : '-'}`;
+}
+
+// Um documento minimo para o criarUi: todo id existe, e cada escrita que
+// muda o DOM (texto, largura, classe) e contada.
+function documentoQueConta() {
+  const conta = { escritas: 0, porId: new Map() };
+  const elemento = (id = '') => {
+    let texto = '';
+    const classes = new Set();
+    const estilo = {};
+    const no = {
+      id,
+      children: [],
+      get childElementCount() { return this.children.length; },
+      get textContent() { return texto; },
+      set textContent(v) { conta.escritas += 1; texto = String(v); },
+      className: '',
+      classList: {
+        toggle(nome, forcar) {
+          const antes = classes.has(nome);
+          const depois = forcar === undefined ? !antes : Boolean(forcar);
+          if (antes !== depois) conta.escritas += 1;
+          if (depois) classes.add(nome);
+          else classes.delete(nome);
+          return depois;
+        },
+        add(nome) { if (!classes.has(nome)) conta.escritas += 1; classes.add(nome); },
+        remove(nome) { if (classes.has(nome)) conta.escritas += 1; classes.delete(nome); },
+        contains: (nome) => classes.has(nome),
+      },
+      // Todo estilo escrito conta, mesmo igual: a string nasceu (pendencia 90).
+      style: new Proxy(estilo, { set(o, k, v) { conta.escritas += 1; o[k] = v; return true; } }),
+      appendChild(filho) { this.children.push(filho); return filho; },
+      append(...filhos) { this.children.push(...filhos); },
+      setAttribute() {},
+      addEventListener() {},
+      querySelectorAll: () => [],
+      offsetWidth: 0,
+    };
+    return no;
+  };
+  const doc = {
+    getElementById(id) {
+      if (!conta.porId.has(id)) conta.porId.set(id, elemento(id));
+      return conta.porId.get(id);
+    },
+    createElement: () => elemento(),
+    querySelectorAll: () => [],
+    documentElement: { style: { setProperty() {} } },
+  };
+  return { doc, conta };
+}
+
+// Tarefa 8 (pendencia 90): com o HUD parado, sincronizar nao escreve nada —
+// cada texto com numero so e montado quando o numero muda — e o que muda
+// continua chegando ao DOM.
+function checarHudSemEscritaParada() {
+  const { doc, conta } = documentoQueConta();
+  const ui = criarUi(doc);
+  const id = (n) => conta.porId.get(n);
+  const e = novoEstado(SEMENTE + 1801);
+  iniciarRun(e);
+  e.run.coringas.push(novaInstancia(CONTEUDO.coringas[0].id));
+  comecarAvaliacao(e, 0, 2);
+  for (let i = 0; i < 30; i += 1) atualizar(e, CONTEUDO.loop.passo);
+  e.eventos.length = 0;
+  ui.sincronizar(e);
+  conta.escritas = 0;
+  for (let i = 0; i < 5; i += 1) ui.sincronizar(e);
+  if (conta.escritas !== 0) falhar(0, `hud: 5 sincronizar com o estado parado escreveram ${conta.escritas}x no DOM (pendencia 90)`);
+  // Uma fracao de segundo e de HP que nao muda o numero mostrado: so as larguras.
+  const av = e.run.avaliacao;
+  av.restante = Math.ceil(av.restante) - 0.01;
+  ui.sincronizar(e);
+  conta.escritas = 0;
+  av.restante -= 0.5;
+  e.player.hp = Math.ceil(e.player.hp) - 0.3;
+  ui.sincronizar(e);
+  if (conta.escritas !== 2) falhar(0, `hud: meio segundo e 0,3 de HP no mesmo numero escreveram ${conta.escritas}x (esperava 2: as larguras do HP e do fantasma)`);
+  // O que muda chega: HP, nivel, cronometro, a Banca e a fase dela.
+  e.player.hp = 37.2;
+  e.player.nivel += 1;
+  av.restante = 9.4;
+  ui.sincronizar(e);
+  if (id('hp-texto').textContent !== `38/${e.player.hpMax}`) falhar(0, `hud: o HP 37.2 saiu "${id('hp-texto').textContent}"`);
+  if (id('nivel').textContent !== String(e.player.nivel)) falhar(0, `hud: o nivel ${e.player.nivel} saiu "${id('nivel').textContent}"`);
+  if (id('timer').textContent !== formatarTempo(9.4) || !id('timer').classList.contains('urgente')) falhar(0, `hud: o cronometro em 9,4s saiu "${id('timer').textContent}" sem urgente`);
+  const tcc = estadoNoTcc(SEMENTE + 1802);
+  ui.sincronizar(tcc);
+  const b = tcc.run.avaliacao.banca;
+  const fase1 = id('banca-fase').textContent;
+  b.fase = 1;
+  ui.sincronizar(tcc);
+  if (id('banca-fase').textContent === fase1 || !id('banca-hud').classList.contains('fase-2') || id('banca-hud').classList.contains('fase-1')) {
+    falhar(0, `hud: a virada da Banca nao chegou ao HUD ("${fase1}" -> "${id('banca-fase').textContent}")`);
+  }
+  if (id('banca-nome').textContent !== `${CONTEUDO.banca.emoji} ${CONTEUDO.banca.nome}`) falhar(0, `hud: o nome da Banca saiu "${id('banca-nome').textContent}"`);
+  return 'hud: 5 quadros parados, 0 escritas no DOM; meio segundo e 0,3 de HP sem trocar o numero, so as 2 larguras; HP, nivel, cronometro e fase da Banca chegam';
+}
+
+function checarFase18() {
+  const partes = [checarContrasteDoHud(), checarHudSemEscritaParada()];
+  return partes.map((p) => `\n    ${p}`).join('');
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -8036,6 +8231,9 @@ const fase16 = checarFase16();
 // Fase 17 (v2): as armas e os efeitos no papel — lapis, tinta, marca-texto,
 // numeros a mao, confete, a seta do aviso, a Banca.
 const fase17 = checarFase17();
+// Fase 18 (v2): o HUD de caderno — o contraste de cada peca, lido do CSS, e
+// o HUD parado sem escrever no DOM.
+const fase18 = checarFase18();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -8288,6 +8486,7 @@ console.log(
     `\n  caderno (fase 15):${fase15}` +
     `\n  figurinhas (fase 16):${fase16}` +
     `\n  armas e efeitos (fase 17):${fase17}` +
+    `\n  HUD de caderno (fase 18):${fase18}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +
