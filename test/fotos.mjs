@@ -1266,6 +1266,87 @@ const CENAS = [
     },
     medir: () => `foco em #${document.activeElement.id}, :focus-visible ${document.activeElement.matches(':focus-visible')}`,
   },
+  // Fase 20: as telas B. A loja com tudo o que ela mostra ao mesmo tempo: um
+  // item vendido (o carimbo), um sem credito, a cartela com um coringa gasto
+  // e o aviso; o cursor num slot (vender: a volta vermelha).
+  {
+    nome: 'telas-loja-vendido-aviso-gasto',
+    espera: 1200,
+    preparar: async () => {
+      const { e, main, garantirResultado } = window.__f;
+      const [shop, jokers] = await Promise.all([import('/src/shop.js'), import('/src/jokers.js')]);
+      garantirResultado();
+      main.sairDoResultado(e);
+      for (const id of ['caderno', 'atestado']) if (!e.run.coringas.some((c) => c.id === id)) e.run.coringas.push(jokers.novaInstancia(id));
+      e.run.coringas.find((c) => c.id === 'atestado').gasto = true;
+      e.run.creditos = 999;
+      shop.comprarItem(e, 0);
+      shop.comprarItem(e, 0); // de novo: o aviso "ja foi comprado"
+      const restantes = e.loja.itens.slice(1, e.loja.quantidade).filter((i) => i.id && !i.vendido).map((i) => i.preco);
+      e.run.creditos = Math.min(...restantes);
+      e.loja.linha = 1;
+      e.loja.selecionada = 1;
+    },
+    medir: () => `${window.__f.cabe('.mural')}; aviso "${document.getElementById('loja-aviso').textContent}"; ${document.querySelectorAll('.loja-item.vendido').length} vendido(s), ${document.querySelectorAll('.loja-item.sem-credito').length} sem credito, ${document.querySelectorAll('.loja-slot.gasto').length} gasto(s)`,
+  },
+  {
+    nome: 'telas-carta-cursor-na-terceira',
+    espera: 900,
+    preparar: () => {
+      const { e, main, passo, garantirProva, T } = window.__f;
+      garantirProva();
+      if (e.tela !== T.CARTA) {
+        e.player.xp = e.player.xpProximo;
+        main.atualizar(e, passo);
+      }
+      e.cartas.selecionada = 2;
+    },
+    medir: () => `${window.__f.cabe('.carta-bilhete', '#carta-opcoes')}; ${document.querySelectorAll('.carta-opcao.carta-nova').length} nova(s)`,
+  },
+  {
+    nome: 'telas-tcc',
+    espera: 900,
+    preparar: () => {
+      const { run, e, C } = window.__f;
+      run.iniciarRun(e);
+      const ultimo = C.periodos.length - 1;
+      run.comecarAvaliacao(e, ultimo, C.periodos[ultimo].avaliacoes.length - 1);
+      run.avancarRun(e);
+    },
+    medir: () => window.__f.cabe('.convocacao'),
+  },
+  // A colacao sem recorde novo: o recorde guardado e melhor que esta run.
+  {
+    nome: 'telas-colacao-sem-recorde-novo',
+    espera: 1100,
+    preparar: () => {
+      const { run, e, C, T, avancar, fecharPeloTempo, boss, enemies, main, passo } = window.__f;
+      // A mesma run da cena `colacao` (9 boletins pela porta de sempre).
+      run.iniciarRun(e);
+      let i = 0;
+      for (let p = 0; p < C.periodos.length; p += 1) {
+        for (let a = 0; a < C.periodos[p].avaliacoes.length; a += 1) {
+          run.comecarAvaliacao(e, p, a);
+          fecharPeloTempo(150 + 35 * i);
+          e.eventos.length = 0;
+          i += 1;
+        }
+      }
+      run.avancarRun(e);
+      run.comecarTcc(e);
+      for (let t = 0; t < 120 && e.tela !== T.COLACAO; t += 1) {
+        const corpo = boss.acharBanca(e);
+        if (corpo) enemies.aplicarDano(e, corpo, corpo.hpMax / 4);
+        avancar(1);
+      }
+      if (e.tela !== T.COLACAO) main.atualizar(e, passo);
+      e.run.colacao.novoRecorde = false;
+      e.recorde.formaturas = 3;
+      e.recorde.melhorConceito = 'A';
+      e.recorde.melhorMedia = 9.8;
+    },
+    medir: () => `${window.__f.cabe('.diploma')}; recorde "${document.getElementById('colacao-recorde').textContent}"`,
+  },
 ];
 
 // Uma foto so na tela larga: a mesa em volta da cena e os objetos dela.

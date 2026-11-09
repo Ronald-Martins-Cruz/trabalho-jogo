@@ -8226,9 +8226,9 @@ function corDoFundo(regras, seletor, prop) {
   return { nome, cor };
 }
 
-function checarContrasteDasTelas(regras = regrasDoCss()) {
+function checarContrasteDasTelas(regras = regrasDoCss(), pares = PARES_DAS_TELAS) {
   let pior = null;
-  for (const [oque, selCor, prop, selFundo, propFundo, minimo] of PARES_DAS_TELAS) {
+  for (const [oque, selCor, prop, selFundo, propFundo, minimo] of pares) {
     const valor = (regras.get(selCor) || {})[prop];
     if (valor === undefined) {
       falhar(0, `contraste das telas: style.css nao tem "${prop}" em "${selCor}"`);
@@ -8247,7 +8247,7 @@ function checarContrasteDasTelas(regras = regrasDoCss()) {
     const folga = razao / minimo;
     if (!pior || folga < pior.folga) pior = { folga, texto: `${oque} ${razao.toFixed(2)}:1 (min ${minimo})` };
   }
-  return `contraste das telas: ${PARES_DAS_TELAS.length} pares lidos do style.css; o mais justo: ${pior ? pior.texto : '-'}`;
+  return `contraste das telas: ${pares.length} pares lidos do style.css; o mais justo: ${pior ? pior.texto : '-'}`;
 }
 
 // Os papeis em que um texto destas telas pode morar. Cada um tem fundo opaco
@@ -8429,6 +8429,276 @@ function checarFase19() {
   return partes.map((p) => `\n    ${p}`).join('');
 }
 
+// ---------------------------------------------------------------- fase 20
+
+// As telas B: os post-its da carta, o mural da loja, a convocacao do TCC e
+// o diploma. Os mesmos pares da fase 19 (lidos do style.css), agora destas
+// quatro telas. O texto do post-it e medido contra a cor de cada posicao.
+const PARES_DAS_TELAS_B = [
+  ['titulo no bilhete da carta', '.titulo-carta', 'color', '.folha', 'background-color', 4.5],
+  ['subtitulo no bilhete', '.subtitulo-carta', 'color', '.folha', 'background-color', 4.5],
+  ...[1, 2, 3, 4].flatMap((n) => [
+    [`nome no post-it ${n}`, '.carta-opcao', 'color', `.carta .carta-opcao:nth-child(${n})`, '--postit-cor', 4.5],
+    [`nivel no post-it ${n}`, '.carta-nivel', 'color', `.carta .carta-opcao:nth-child(${n})`, '--postit-cor', 4.5],
+    [`descricao no post-it ${n}`, '.carta-descricao', 'color', `.carta .carta-opcao:nth-child(${n})`, '--postit-cor', 4.5],
+    [`numero a lapis no post-it ${n}`, '.carta-atalho', 'color', `.carta .carta-opcao:nth-child(${n})`, '--postit-cor', 4.5],
+  ]),
+  ['adesivo "Nova"', '.carta-selo', 'color', '.carta-selo', 'background-color', 4.5],
+  ['titulo do mural', '.titulo-loja', 'color', '.folha', 'background-color', 4.5],
+  ['creditos na moedinha do mural', '.creditos', 'color', '.loja-creditos', 'background', 4.5],
+  ['aviso no bilhete', '.loja-aviso', 'color', '.loja-aviso', 'background-color', 4.5],
+  ['nome no cartao', '.carta-opcao', 'color', '.loja-item', 'background-color', 4.5],
+  ['descricao no cartao', '.loja-item .carta-descricao', 'color', '.loja-item', 'background-color', 4.5],
+  ['numero a lapis no cartao', '.carta-atalho', 'color', '.loja-item', 'background-color', 4.5],
+  ['preco na etiqueta barata', '.loja-preco', 'color', '.loja-preco', 'background-color', 4.5],
+  ['preco na etiqueta media', '.loja-preco', 'color', '.loja-item.raridade-medio .loja-preco', 'background-color', 4.5],
+  ['preco na etiqueta cara', '.loja-preco', 'color', '.loja-item.raridade-caro .loja-preco', 'background-color', 4.5],
+  ['preco sem credito', '.loja-preco', 'color', '.loja-item.sem-credito .loja-preco', 'background-color', 4.5],
+  ['carimbo VENDIDO no cartao', '.loja-item.vendido .loja-preco.carimbo', 'color', '.loja-item', 'background-color', 4.5],
+  ['rerrolar sem credito', '.loja-acao.sem-credito', 'color', '.adesivo', 'background', 4.5],
+  ['rotulo da cartela', '.loja-rotulo', 'color', '.loja-cartela', 'background-color', 4.5],
+  ['nome na figurinha', '.loja-slot-nome', 'color', '.loja-slot', 'background', 4.5],
+  ['venda na figurinha', '.loja-slot-venda', 'color', '.loja-slot', 'background', 4.5],
+  ['nome na figurinha que vai vender', '.loja-slot-nome', 'color', '.loja-slot.selecionada', 'background', 4.5],
+  ['venda na figurinha que vai vender', '.loja-slot.selecionada .loja-slot-venda', 'color', '.loja-slot.selecionada', 'background', 4.5],
+  ['slot vazio na cartela', '.loja-slot-nome', 'color', '.loja-cartela', 'background-color', 4.5],
+  ['dica no post-it do mural', '.loja .loja-dica', 'color', '.postit-verde', '--postit-cor', 4.5],
+  ['"Fim do curso" na convocacao', '.anuncio-novo-periodo', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['TCC na convocacao', '.titulo-tcc', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['"Convocacao para a defesa"', '.convocacao-titulo', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['texto da convocacao', '.convocacao .subtitulo', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['nome da Banca', '.tcc-banca-nome', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['o que a Banca faz', '.tcc-banca-descricao', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['sem cronometro', '.decomposicao', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['dica na convocacao', '.dica', 'color', '.folha-timbrada', 'background-color', 4.5],
+  ['cabecalho do diploma', '.resultado-cabecalho', 'color', '.diploma', 'background-color', 4.5],
+  ['Formado', '.titulo-colacao', 'color', '.diploma', 'background-color', 4.5],
+  ['TCC aprovado', '.subtitulo', 'color', '.diploma', 'background-color', 4.5],
+  ['media na caixa', '.nota-valor', 'color', '.nota-caixa', 'background', 4.5],
+  ['rotulo da media', '.prova-rotulo', 'color', '.nota-caixa', 'background', 4.5],
+  ['conceito geral carimbado', '.nota-conceito', 'color', '.diploma', 'background-color', 4.5],
+  ['periodo no historico', '.colacao-periodo-nome', 'color', '.diploma', 'background-color', 4.5],
+  ['materia no historico', '.colacao-materia', 'color', '.diploma', 'background-color', 4.5],
+  ['avaliacao no historico', '.colacao-avaliacao', 'color', '.diploma', 'background-color', 4.5],
+  ['nota no historico', '.colacao-nota', 'color', '.diploma', 'background-color', 4.5],
+  ['conceito no historico', '.colacao-conceito-av', 'color', '.diploma', 'background-color', 4.5],
+  ['conceito A no historico', '.colacao-linha.conceito-A .colacao-conceito-av', 'color', '.diploma', 'background-color', 4.5],
+  ['conceito D/F no historico', '.colacao-linha.conceito-D .colacao-conceito-av', 'color', '.diploma', 'background-color', 4.5],
+  ['rotulo dos coringas', '.colacao-rotulo', 'color', '.diploma', 'background-color', 4.5],
+  ['coringas a mao', '.colacao-coringas', 'color', '.diploma', 'background-color', 4.5],
+  ['recorde', '.colacao-recorde', 'color', '.diploma', 'background-color', 4.5],
+  ['recorde novo no selo dourado', '.colacao-recorde.novo', 'color', '.colacao-recorde.novo', 'background-color', 4.5],
+  ['dica no diploma', '.dica', 'color', '.diploma', 'background-color', 4.5],
+];
+
+// Os papeis novos das telas B. O mural de cortica NAO e papel: nada e
+// escrito direto nele. As fileiras que o ui.js enche (as opcoes da carta, a
+// vitrine) ficam de fora da conta do index.html e sao conferidas depois de
+// montadas: cada filho e um papel.
+const PAPEIS_DAS_TELAS_B = [
+  ['loja-creditos', '.loja-creditos', 'background'],
+  ['loja-aviso', '.loja-aviso', 'background-color'],
+  ['loja-cartela', '.loja-cartela', 'background-color'],
+];
+const TELAS_DA_FASE_20 = ['carta', 'loja', 'tcc', 'colacao'];
+const FILEIRAS_MONTADAS = ['carta-opcoes', 'loja-itens'];
+
+function checarEstruturaDasTelasB(regras = regrasDoCss()) {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const nav = criarNavegador({ html });
+  const doc = nav.document;
+  const $ = (id) => doc.getElementById(id);
+  const tem = (no, classe) => Boolean(no && no.classList && no.classList.contains(classe));
+  const dentroDe = (no, classe, ate) => {
+    for (let n = no; n && n !== ate.parentNode; n = n.parentNode) if (tem(n, classe)) return n;
+    return null;
+  };
+  const descendentes = (raiz) => {
+    const lista = [];
+    const visitar = (no) => {
+      for (const filho of no.children) {
+        lista.push(filho);
+        visitar(filho);
+      }
+    };
+    visitar(raiz);
+    return lista;
+  };
+  const exigir = (cond, msg) => {
+    if (!cond) falhar(0, `telas B (index.html): ${msg}`);
+  };
+  const objeto = (tela, classes, ids) => {
+    const achado = descendentes($(tela)).find((n) => classes.every((c) => tem(n, c)));
+    exigir(achado, `#${tela} nao tem um .${classes.join('.')}`);
+    if (!achado) return null;
+    for (const id of ids) exigir($(id) && dentroDe($(id), classes[0], achado) === achado, `#${id} nao esta dentro do .${classes.join('.')} de #${tela}`);
+    return achado;
+  };
+  objeto('carta', ['folha', 'carta-bilhete'], []);
+  exigir($('carta-opcoes') && $('carta-opcoes').parentNode === $('carta'), '#carta-opcoes saiu da camada da carta');
+  objeto('loja', ['mural'], ['loja-creditos', 'loja-aviso', 'loja-itens', 'botao-rerolar', 'botao-seguir', 'loja-contagem', 'loja-coringas', 'loja-dica-compra']);
+  objeto('tcc', ['folha', 'folha-timbrada'], ['tcc-descricao', 'botao-tcc']);
+  objeto('colacao', ['folha', 'diploma'], ['colacao-tcc', 'colacao-media', 'colacao-conceito', 'colacao-boletins', 'colacao-coringas', 'colacao-recorde', 'botao-colacao']);
+  exigir(dentroDe($('colacao-media'), 'nota-caixa', $('colacao')), '#colacao-media nao esta na caixa');
+  exigir(tem($('colacao-conceito'), 'carimbo') && !dentroDe($('colacao-conceito'), 'nota-caixa', $('colacao')), '#colacao-conceito nao e um carimbo fora da caixa');
+  exigir(dentroDe($('loja-coringas'), 'loja-cartela', $('loja')), 'os coringas do jogador nao estao na cartela');
+  exigir(tem($('loja-dica-compra').parentNode, 'postit'), 'a dica de teclas da loja nao e um post-it');
+
+  // Nenhum texto direto no veu nem na cortica.
+  const papeis = [...PAPEIS_DAS_TELAS, ...PAPEIS_DAS_TELAS_B].map((p) => p[0]);
+  let textos = 0;
+  for (const tela of TELAS_DA_FASE_20) {
+    const camada = $(tela);
+    for (const no of descendentes(camada)) {
+      if (no.getAttribute('aria-hidden') === 'true' || ['svg', 'use', 'path', 'symbol'].includes(no.localName)) continue;
+      if (FILEIRAS_MONTADAS.includes(no.id)) continue;
+      const proprio = no.childNodes.some((f) => f.nodeType === 3 && f.data.trim() !== '');
+      if (!proprio && !no.id) continue;
+      textos += 1;
+      if (!papeis.some((p) => dentroDe(no, p, camada))) falhar(0, `telas B (index.html): ${no.id ? '#' + no.id : '.' + [...no.classList._s].join('.')} de #${tela} esta direto no veu, sem papel por baixo`);
+    }
+  }
+  for (const [, seletor, prop] of PAPEIS_DAS_TELAS_B) corDoFundo(regras, seletor, prop);
+  for (const sel of ['.loja-item', '.loja-slot', '.carta-selo']) corDoFundo(regras, sel, sel === '.loja-slot' ? 'background' : 'background-color');
+
+  let botoes = 0;
+  for (const tela of TELAS_DA_FASE_20) {
+    for (const no of descendentes($(tela))) {
+      if (no.localName !== 'button') continue;
+      botoes += 1;
+      const nome = no.id || no.getAttribute('data-relatorio');
+      exigir(tem(no, 'adesivo') || tem(no, 'botao'), `o botao ${nome} de #${tela} nao e um adesivo`);
+      exigir(no.getAttribute('tabindex') === null || Number(no.getAttribute('tabindex')) >= 0, `o botao ${nome} de #${tela} tem tabindex negativo`);
+      exigir(!no.hasAttribute('disabled'), `o botao ${nome} de #${tela} nasce desabilitado`);
+    }
+  }
+
+  // O que o ui.js monta: cada opcao da carta e um post-it com o adesivo
+  // "Nova" escrito de content.js; cada item da loja, um cartao; cada slot, uma
+  // figurinha. Os filhos continuam os botoes (o dom.mjs clica neles).
+  criarUi(doc);
+  const opcoes = $('carta-opcoes').children;
+  exigir(opcoes.length === CONTEUDO.cartas.quantidade, `${opcoes.length} opcoes de carta montadas`);
+  for (const b of opcoes) {
+    exigir(b.localName === 'button' && tem(b, 'carta-opcao') && tem(b, 'postit'), 'uma opcao da carta nao e um <button>.carta-opcao.postit');
+    const selo = b.children.find((n) => tem(n, 'carta-selo'));
+    exigir(selo && selo.textContent === CONTEUDO.textos.cartas.nova, `o post-it nao tem o adesivo "${CONTEUDO.textos.cartas.nova}" (textos.cartas.nova)`);
+  }
+  for (const b of $('loja-itens').children) exigir(b.localName === 'button' && tem(b, 'loja-item'), 'um item da loja nao e um <button>.loja-item');
+  for (const b of $('loja-coringas').children) exigir(b.localName === 'button' && tem(b, 'loja-slot'), 'um slot da loja nao e um <button>.loja-slot');
+  return `telas B: os quatro objetos com os ids no lugar; ${textos} textos, todos num papel (nada na cortica); ${botoes} botoes, todos adesivos; ${opcoes.length} post-its e ${$('loja-itens').children.length} cartoes montados pelo ui.js`;
+}
+
+// O destaque que decide acao sai so do estado (pendencia 26 da v1): nenhum
+// :hover acende carta, cartao, slot ou folheto (o unico :hover ali e o que
+// DESLIGA o do adesivo); cada um tem a sua .selecionada; e o cursor da loja
+// nao e amarelo, a cor do "Seguir" (pendencia 102).
+function checarSelecaoSoDoEstado(regras = regrasDoCss()) {
+  const alvos = /carta-opcao|loja-item|loja-slot|loja-acao/;
+  let hovers = 0;
+  for (const [sel, decl] of regras) {
+    if (!sel.includes(':hover') || !alvos.test(sel)) continue;
+    hovers += 1;
+    if (!sel.includes(':not(.selecionada)')) falhar(0, `selecao: "${sel}" acende pelo mouse, fora do estado (pendencia 26)`);
+    if (Object.values(decl).some((v) => /marca-amarelo/.test(v))) falhar(0, `selecao: "${sel}" pinta de amarelo no :hover`);
+  }
+  for (const sel of ['.carta .carta-opcao.selecionada', '.loja-item.selecionada', '.loja-acao.selecionada', '.loja-slot.selecionada']) {
+    if (!regras.has(sel)) falhar(0, `selecao: style.css nao tem "${sel}"`);
+  }
+  for (const [sel, decl] of regras) {
+    if (!sel.includes('.selecionada') || !/loja-/.test(sel)) continue;
+    if (Object.values(decl).some((v) => /marca-amarelo/.test(v))) falhar(0, `selecao: "${sel}" usa o amarelo do "Seguir" — o cursor se confunde com o destaque (pendencia 102)`);
+  }
+  const destaque = (regras.get('.adesivo-destaque') || {}).background || '';
+  if (!/marca-amarelo/.test(destaque)) falhar(0, 'selecao: o destaque (.adesivo-destaque) deixou de ser o amarelo; a pendencia 102 supoe que ele e');
+  return `selecao: ${hovers} :hover nas pecas que decidem acao, todos so desligando; o cursor da loja nao usa o amarelo do destaque`;
+}
+
+// Pendencia 90, a parte da loja: com a loja parada, nenhum texto com numero
+// e montado (os modelos de textos.loja e o simbolo do credito nao sao lidos),
+// e o que muda continua chegando.
+function checarLojaSemMontarParada() {
+  const { doc, conta } = documentoQueConta();
+  const ui = criarUi(doc);
+  const id = (n) => conta.porId.get(n);
+  const e = novoEstado(SEMENTE + 2001);
+  iniciarRun(e);
+  e.run.coringas.push(novaInstancia(CONTEUDO.coringas[0].id));
+  e.run.creditos = 500;
+  e.tela = TELAS.RESULTADO;
+  e.run.conceito = CONTEUDO.nota.faixas[0].conceito;
+  abrirLoja(e);
+  ui.sincronizar(e);
+  const loja = CONTEUDO.textos.loja;
+  const resultado = CONTEUDO.textos.resultado;
+  let montagens = 0;
+  const contar = (orig, chaves) => new Proxy(orig, { get(o, k) { if (chaves.includes(k)) montagens += 1; return o[k]; } });
+  CONTEUDO.textos.loja = contar(loja, ['dicaCompra', 'rerolar', 'gratis', 'vender', 'gasto', 'vendido']);
+  CONTEUDO.textos.resultado = contar(resultado, ['simboloCredito', 'separador']);
+  let parada;
+  try {
+    conta.escritas = 0;
+    for (let i = 0; i < 5; i += 1) ui.sincronizar(e);
+    parada = { montagens, escritas: conta.escritas };
+    if (montagens !== 0) falhar(0, `loja: 5 quadros com a loja parada montaram ${montagens} texto(s) com numero (pendencia 90)`);
+    if (conta.escritas !== 0) falhar(0, `loja: 5 quadros com a loja parada escreveram ${conta.escritas}x no DOM`);
+    // O que muda chega: creditos, uma compra (vendido + carimbo), um reroll, uma venda.
+    e.run.creditos = 499;
+    ui.sincronizar(e);
+    if (id('loja-creditos').textContent !== `${resultado.simboloCredito} 499`) falhar(0, `loja: os creditos 499 sairam "${id('loja-creditos').textContent}"`);
+    const item = e.loja.itens[0];
+    e.run.creditos = item.preco + 1;
+    comprarItem(e, 0);
+    ui.sincronizar(e);
+    const botao = id('loja-itens').children[0];
+    const preco = botao.children.find((n) => n.className === 'loja-preco');
+    if (!botao.classList.contains('vendido') || !preco || preco.textContent !== loja.vendido || !preco.classList.contains('carimbo')) {
+      falhar(0, `loja: o item comprado nao virou o carimbo "${loja.vendido}" (saiu "${preco && preco.textContent}")`);
+    }
+    if (id('loja-contagem').textContent !== `${e.run.coringas.length}/${CONTEUDO.loja.teto}`) falhar(0, `loja: a contagem saiu "${id('loja-contagem').textContent}"`);
+    e.run.creditos = 1000;
+    const antes = id('botao-rerolar').textContent;
+    rerolar(e);
+    ui.sincronizar(e);
+    if (precoReroll(e.loja) > 0 && id('botao-rerolar').textContent === antes) falhar(0, `loja: o preco do reroll nao andou ("${antes}")`);
+    if (id('loja-itens').children[0].classList.contains('vendido') && e.loja.itens[0].id && !e.loja.itens[0].vendido) falhar(0, 'loja: o reroll deixou o carimbo de vendido no item novo');
+    venderCoringa(e, 0);
+    ui.sincronizar(e);
+    const slot = id('loja-coringas').children[0];
+    const nome = slot.children.find((n) => n.className === 'loja-slot-nome');
+    const primeiro = e.run.coringas[0] ? CONTEUDO.coringas.find((c) => c.id === e.run.coringas[0].id).nome : loja.semCoringa;
+    if (nome.textContent !== primeiro) falhar(0, `loja: depois da venda o 1o slot diz "${nome.textContent}", esperava "${primeiro}"`);
+  } finally {
+    CONTEUDO.textos.loja = loja;
+    CONTEUDO.textos.resultado = resultado;
+  }
+  return `loja: 5 quadros parados, ${parada.montagens} textos montados e ${parada.escritas} escritas; creditos, compra (o carimbo), reroll e venda chegam`;
+}
+
+// Um par mede a cor do texto no seletor dele; se uma variante de estado (o
+// fundo do par: sem credito, raridade, selecionada, a posicao do post-it)
+// trocar tambem a cor do texto, o par mediria a cor errada e passaria calado.
+function checarCorDasVariantes(regras, pares) {
+  const variante = /\.(sem-credito|raridade-|selecionada|vendido|novo|gasto|vazio)|:nth-child/;
+  for (const [oque, selCor, prop, selFundo] of pares) {
+    if (prop !== 'color' || selCor === selFundo || !variante.test(selFundo)) continue;
+    const propria = (regras.get(selFundo) || {}).color;
+    if (propria !== undefined) falhar(0, `contraste das telas: ${oque}: "${selFundo}" troca a cor do texto (${propria}), e o par mede a de "${selCor}" — meca a variante`);
+  }
+}
+
+function checarFase20() {
+  const regras = regrasDoCss();
+  checarCorDasVariantes(regras, PARES_DAS_TELAS_B);
+  const partes = [
+    checarContrasteDasTelas(regras, PARES_DAS_TELAS_B),
+    checarEstruturaDasTelasB(regras),
+    checarSelecaoSoDoEstado(regras),
+    checarLojaSemMontarParada(),
+  ];
+  return partes.map((p) => `\n    ${p}`).join('');
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -8506,6 +8776,10 @@ const fase18 = checarFase18();
 // amassada: contraste lido do CSS, a estrutura do index.html, a pagina que
 // nao pisca e o recorde do menu sem montar a linha parado.
 const fase19 = checarFase19();
+// Fase 20 (v2): as telas B — post-its, mural, convocacao, diploma: contraste
+// lido do CSS, a estrutura, o destaque so do estado e a loja parada sem
+// montar texto.
+const fase20 = checarFase20();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -8760,6 +9034,7 @@ console.log(
     `\n  armas e efeitos (fase 17):${fase17}` +
     `\n  HUD de caderno (fase 18):${fase18}` +
     `\n  telas A (fase 19):${fase19}` +
+    `\n  telas B (fase 20):${fase20}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +

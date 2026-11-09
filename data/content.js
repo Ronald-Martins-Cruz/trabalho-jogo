@@ -502,6 +502,9 @@ export const CONTEUDO = {
       '--hud-fade': '150ms',
       '--hud-translucido': '0.3', // opacidade do topo do HUD com alguem embaixo
       '--pulso-banca': '350ms', // a ata da Banca pisca na virada de fase (era 0.35s escrito no CSS)
+      // Fase 20: o post-it (carta) e o cartao (loja) do cursor levantam e
+      // endireitam; o slot de coringa tambem. Eram 120ms/160ms escritos no CSS.
+      '--postit-levantar': '140ms',
     },
   },
 
@@ -1953,6 +1956,9 @@ export const CONTEUDO = {
     // tela (titulo, dica de teclado) mora no index.html.
     cartas: {
       novidade: 'Nova arma',
+      // O adesivo no canto do post-it de uma arma que o jogador ainda nao tem
+      // (fase 20), escrito uma vez por ui.js; o CSS so o mostra na .carta-nova.
+      nova: 'Nova',
       nivel: 'Nv.',
       seta: '→',
       cura: 'de HP',

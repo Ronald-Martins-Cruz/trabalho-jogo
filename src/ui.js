@@ -206,16 +206,23 @@ export function criarUi(doc) {
   // reinicia no meio. E o padrao que a loja (fase 07) copia.
   const opcoes = [];
 
+  // Cada opcao e um post-it (v2, fase 20): a cor e o giro saem da posicao, no
+  // CSS. O adesivo "Nova" e escrito uma vez aqui; o CSS so o mostra quando a
+  // opcao tem .carta-nova.
   function montarOpcoes() {
     if (!el.cartaOpcoes || opcoes.length > 0) return;
     for (let i = 0; i < CONTEUDO.cartas.quantidade; i += 1) {
       const botao = doc.createElement('button');
       botao.type = 'button';
-      botao.className = 'carta-opcao';
+      botao.className = 'carta-opcao postit';
 
       const atalho = doc.createElement('span');
       atalho.className = 'carta-atalho';
       atalho.textContent = String(i + 1);
+
+      const selo = doc.createElement('span');
+      selo.className = 'carta-selo';
+      selo.textContent = CONTEUDO.textos.cartas.nova;
 
       const emoji = doc.createElement('span');
       emoji.className = 'carta-emoji';
@@ -229,7 +236,7 @@ export function criarUi(doc) {
       const descricao = doc.createElement('span');
       descricao.className = 'carta-descricao';
 
-      botao.append(atalho, emoji, nome, nivel, descricao);
+      botao.append(atalho, selo, emoji, nome, nivel, descricao);
       el.cartaOpcoes.appendChild(botao);
       opcoes.push({ botao, emoji, nome, nivel, descricao });
     }
@@ -340,7 +347,9 @@ export function criarUi(doc) {
         const descricao = span('carta-descricao');
         botao.append(atalho, emoji, nome, preco, descricao);
         el.lojaItens.appendChild(botao);
-        itensLoja.push({ botao, emoji, nome, preco, descricao, raridade: '' });
+        // `id`, `vendido` e `valor`: o que o cartao mostra agora (null = nada
+        // ainda), para so montar o preco quando um deles muda.
+        itensLoja.push({ botao, emoji, nome, preco, descricao, raridade: '', id: null, vendido: null, valor: null, comDados: false });
       }
     }
     if (el.lojaCoringas && slotsCoringa.length === 0) {
@@ -353,7 +362,7 @@ export function criarUi(doc) {
         const venda = span('loja-slot-venda');
         botao.append(emoji, nome, venda);
         el.lojaCoringas.appendChild(botao);
-        slotsCoringa.push({ botao, emoji, nome, venda });
+        slotsCoringa.push({ botao, emoji, nome, venda, id: null, gasto: null });
       }
     }
   }
@@ -406,23 +415,39 @@ export function criarUi(doc) {
     ligarAcao(el.botaoSeguir, acoes.seguir, acoes.apontarSeguir, true);
   }
 
-  let vitrineDesenhada = '';
+  // Pendencia 90, a parte da loja: cada texto com numero (os creditos, a
+  // contagem, a dica, o preco do reroll, o preco de cada item e de cada venda)
+  // so e montado quando o numero que ele mostra muda; com a loja parada, o
+  // quadro so le o estado e confere as classes. A vitrine compara os tres
+  // numeros que a definem, sem montar chave. `null` e o valor que nenhum
+  // estado tem: o 1o quadro sempre escreve.
+  const lojaMostrada = { creditos: null, coringas: null, quantidade: null, reroll: null, abertaEm: null, rerolls: null, gratis: null };
 
   function sincronizarLoja(estado) {
     const loja = estado.loja;
     const run = estado.run;
     const t = CONTEUDO.textos.loja;
-    const simbolo = CONTEUDO.textos.resultado.simboloCredito;
+    const m = lojaMostrada;
     const naVitrine = loja.linha === LINHA_VITRINE;
 
-    texto(el.lojaCreditos, `${simbolo} ${run.creditos}`);
-    texto(el.lojaContagem, `${run.coringas.length}/${CONTEUDO.loja.teto}`);
+    if (run.creditos !== m.creditos) {
+      m.creditos = run.creditos;
+      texto(el.lojaCreditos, `${CONTEUDO.textos.resultado.simboloCredito} ${run.creditos}`);
+    }
+    if (run.coringas.length !== m.coringas) {
+      m.coringas = run.coringas.length;
+      texto(el.lojaContagem, `${run.coringas.length}/${CONTEUDO.loja.teto}`);
+    }
     texto(el.lojaAviso, loja.aviso ? t.avisos[loja.aviso] || '' : '');
-    texto(el.lojaDicaCompra, dicaDaLoja(loja.quantidade));
+    if (loja.quantidade !== m.quantidade) {
+      m.quantidade = loja.quantidade;
+      texto(el.lojaDicaCompra, dicaDaLoja(loja.quantidade));
+    }
     // Uma vitrine nova (abertura ou reroll) entra deslizando como as cartas.
-    const vitrine = `${loja.abertaEm}:${loja.rerolls}:${loja.gratis}`;
-    if (vitrine !== vitrineDesenhada) {
-      vitrineDesenhada = vitrine;
+    if (loja.abertaEm !== m.abertaEm || loja.rerolls !== m.rerolls || loja.gratis !== m.gratis) {
+      m.abertaEm = loja.abertaEm;
+      m.rerolls = loja.rerolls;
+      m.gratis = loja.gratis;
       reiniciarEntrada(el.lojaItens);
     }
 
@@ -432,24 +457,21 @@ export function criarUi(doc) {
       const existe = i < loja.quantidade;
       visivel(no.botao, existe);
       if (!existe) continue;
-      const dados = item.id ? dadosDoCoringa(item.id) : null;
-      escrever(no.emoji, dados ? dados.emoji : '');
-      escrever(no.nome, dados ? dados.nome : t.vazio);
-      escrever(no.descricao, dados ? dados.descricao : '');
-      escrever(no.preco, !dados ? '' : item.vendido ? t.vendido : `${simbolo} ${item.preco}`);
-      classe(no.botao, 'vendido', !dados || item.vendido);
-      classe(no.botao, 'sem-credito', Boolean(dados) && !item.vendido && run.creditos < item.preco);
-      const raridade = dados ? `raridade-${dados.raridade}` : '';
-      if (no.raridade !== raridade) {
-        if (no.raridade) no.botao.classList.remove(no.raridade);
-        if (raridade) no.botao.classList.add(raridade);
-        no.raridade = raridade;
+      if (item.id !== no.id || item.vendido !== no.vendido || item.preco !== no.valor) {
+        no.id = item.id;
+        no.vendido = item.vendido;
+        no.valor = item.preco;
+        sincronizarItem(no, item, t);
       }
+      classe(no.botao, 'sem-credito', no.comDados && !item.vendido && run.creditos < item.preco);
       classe(no.botao, 'selecionada', naVitrine && loja.selecionada === i);
     }
 
     const reroll = precoReroll(loja);
-    texto(el.botaoRerolar, rotuloDoReroll(reroll, t, simbolo));
+    if (reroll !== m.reroll) {
+      m.reroll = reroll;
+      texto(el.botaoRerolar, rotuloDoReroll(reroll, t, CONTEUDO.textos.resultado.simboloCredito));
+    }
     classe(el.botaoRerolar, 'selecionada', naVitrine && loja.selecionada === posicaoRerolar(loja));
     classe(el.botaoRerolar, 'sem-credito', run.creditos < reroll);
     classe(el.botaoRerolar, 'inativo', !rerolarTrazNovidade(estado));
@@ -459,14 +481,44 @@ export function criarUi(doc) {
     for (let i = 0; i < slotsCoringa.length; i += 1) {
       const no = slotsCoringa[i];
       const inst = run.coringas[i];
-      const dados = inst ? dadosDoCoringa(inst.id) : null;
-      escrever(no.emoji, dados ? dados.emoji : '');
-      escrever(no.nome, dados ? dados.nome : t.semCoringa);
-      escrever(no.venda, dados ? rotuloDeVenda(inst, valorDeVenda(inst.id), t, simbolo) : '');
-      classe(no.botao, 'vazio', !dados);
-      classe(no.botao, 'gasto', Boolean(inst && inst.gasto));
+      const id = inst ? inst.id : '';
+      const gasto = Boolean(inst && inst.gasto);
+      if (id !== no.id || gasto !== no.gasto) {
+        no.id = id;
+        no.gasto = gasto;
+        sincronizarSlot(no, inst, t);
+      }
       classe(no.botao, 'selecionada', !naVitrine && loja.selecionada === i);
     }
+  }
+
+  // O cartao de um item, quando o item, o preco ou o vendido mudam. Vendido,
+  // a etiqueta do preco vira o carimbo (o componente .carimbo, que cai com a
+  // animacao da fase 12); "Esgotado" (sem candidato) nao tem etiqueta.
+  function sincronizarItem(no, item, t) {
+    const dados = item.id ? dadosDoCoringa(item.id) : null;
+    no.comDados = dados !== null;
+    escrever(no.emoji, dados ? dados.emoji : '');
+    escrever(no.nome, dados ? dados.nome : t.vazio);
+    escrever(no.descricao, dados ? dados.descricao : '');
+    escrever(no.preco, !dados ? '' : item.vendido ? t.vendido : `${CONTEUDO.textos.resultado.simboloCredito} ${item.preco}`);
+    classe(no.botao, 'vendido', !dados || item.vendido);
+    classe(no.preco, 'carimbo', no.comDados && item.vendido);
+    const raridade = dados ? `raridade-${dados.raridade}` : '';
+    if (no.raridade !== raridade) {
+      if (no.raridade) no.botao.classList.remove(no.raridade);
+      if (raridade) no.botao.classList.add(raridade);
+      no.raridade = raridade;
+    }
+  }
+
+  function sincronizarSlot(no, inst, t) {
+    const dados = inst ? dadosDoCoringa(inst.id) : null;
+    escrever(no.emoji, dados ? dados.emoji : '');
+    escrever(no.nome, dados ? dados.nome : t.semCoringa);
+    escrever(no.venda, dados ? rotuloDeVenda(inst, valorDeVenda(inst.id), t, CONTEUDO.textos.resultado.simboloCredito) : '');
+    classe(no.botao, 'vazio', !dados);
+    classe(no.botao, 'gasto', Boolean(inst && inst.gasto));
   }
 
   // --------------------------------------------------------------- anuncio
@@ -1006,9 +1058,6 @@ export function textoDaBancaNoTcc(banca = CONTEUDO.banca, modelo = CONTEUDO.text
   return preencher(modelo, { fases: banca.fases.length, limiar: Math.round(banca.fases[0].ate * 100) });
 }
 
-// Escreve cada variavel de um mapa (juice.css; tema.css) no :root (style.css
-// so as le). Devolve quantas escreveu; sem `style` (node, DOM falso) nao faz
-// nada.
 // A classe do <html> que esconde a pagina enquanto as variaveis CSS nao
 // existem (pendencia 101). index.html a poe, style.css esconde por ela.
 export const CLASSE_CARREGANDO = 'carregando';
@@ -1019,6 +1068,9 @@ export function revelarPagina(raiz) {
   return true;
 }
 
+// Escreve cada variavel de um mapa (juice.css; tema.css) no :root (style.css
+// so as le). Devolve quantas escreveu; sem `style` (node, DOM falso) nao faz
+// nada.
 export function aplicarVariaveisCss(raiz, css = CONTEUDO.juice.css) {
   if (!raiz || !raiz.style || typeof raiz.style.setProperty !== 'function') return 0;
   let n = 0;

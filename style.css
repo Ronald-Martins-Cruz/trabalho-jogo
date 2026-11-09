@@ -996,35 +996,53 @@ body {
 
 /* --------------------------------------------------------------- cartas */
 
-/* A tela de carta e a primeira camada de DOM por cima do canvas que o jogador
-   opera. As opcoes sao <button> de verdade: foco, Enter e clique vem de graca
-   do navegador, e o teclado continua funcionando se o mouse falhar. */
+/* v2 (fase 20): tres post-its colados sobre a arena, um por opcao, amarelo,
+   rosa e azul pela posicao, cada um torto do seu jeito e preso por uma fita
+   (o .postit dos componentes). Sem veu: o canvas ja escurece a arena
+   (visual.corSombraCarta) e o HUD continua por cima, como na pausa. O titulo
+   e a dica moram num bilhete de papel. As opcoes sao <button> de verdade:
+   foco, Enter e clique vem de graca do navegador, e o teclado continua
+   funcionando se o mouse falhar. */
 .carta {
-  background: color-mix(in srgb, var(--papel) 78%, transparent);
-  backdrop-filter: blur(2px);
-  gap: 0.5em;
+  gap: 1.3em;
+}
+
+.carta-bilhete {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.45em 1.8em 0.5em;
+  text-align: center;
+  --folha-giro: -1deg;
 }
 
 .titulo-carta {
   margin: 0;
   font-family: var(--fonte-manuscrita);
-  font-size: 1.9em;
+  font-size: 1.7em;
   font-weight: 700;
   color: var(--caneta-verde);
 }
 
 .subtitulo-carta {
-  margin: 0 0 0.4em;
+  margin: 0;
   font-family: var(--fonte-manuscrita);
   font-size: 0.9em;
   color: var(--tinta-fraca);
 }
 
+.carta-bilhete .dica {
+  margin: 0.15em 0 0;
+  font-size: 0.72em;
+}
+
+/* A fileira de opcoes, da carta e da loja: a forma e a entrada (ver
+   "transicoes") sao as mesmas; a cara de cada uma vem abaixo. */
 .carta-opcoes {
   display: flex;
   align-items: stretch;
   justify-content: center;
-  gap: 1.1em;
+  gap: 1.8em;
 }
 
 .carta-opcao {
@@ -1034,28 +1052,57 @@ body {
   align-items: center;
   gap: 0.25em;
   width: 9.5em;
-  padding: 1.1em 0.9em 1.3em;
   font: inherit;
   text-align: center;
   color: var(--tinta);
-  background: var(--adesivo);
-  border: 0.1em solid var(--tinta);
-  border-radius: 0.5em;
-  box-shadow: 0 0.25em 0.6em var(--sombra);
+  border: 0;
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+  transition:
+    transform var(--postit-levantar) ease-out,
+    rotate var(--postit-levantar) ease-out,
+    box-shadow var(--postit-levantar) ease-out;
+}
+
+.carta .carta-opcao {
+  width: 10em;
+  min-height: 11.5em;
+  padding: 1.6em 0.9em 1.5em;
+}
+
+.carta .carta-opcao:nth-child(1) {
+  --postit-cor: var(--marca-amarelo);
+  --postit-giro: -2.6deg;
+}
+
+.carta .carta-opcao:nth-child(2) {
+  --postit-cor: var(--marca-rosa);
+  --postit-giro: 1.8deg;
+}
+
+.carta .carta-opcao:nth-child(3) {
+  --postit-cor: var(--marca-azul);
+  --postit-giro: -1.3deg;
+}
+
+.carta .carta-opcao:nth-child(4) {
+  --postit-cor: var(--marca-verde);
+  --postit-giro: 2.2deg;
 }
 
 /* O destaque sai SO de `cartas.selecionada`: passar o mouse e focar com Tab
    escrevem nesse campo (ui.js -> apontarCarta), e o sincronizar de cada frame
    pinta a classe a partir dele. Um `:hover` independente aqui poria duas
    cartas levantadas ao mesmo tempo — a do mouse e a do cursor — e foi
-   exatamente esse o bug que a revisao da fase 04 pegou. A selecionada e a
-   marcada de marca-texto. */
-.carta-opcao.selecionada {
-  transform: translateY(-0.5em);
-  background: var(--marca-amarelo);
-  box-shadow: 0 0.8em 1.4em var(--sombra);
+   exatamente esse o bug que a revisao da fase 04 pegou. A selecionada
+   levanta, endireita e ganha a volta de caneta (o "circulado", abaixo, o
+   mesmo cursor da loja). */
+.carta .carta-opcao.selecionada {
+  --postit-giro: 0deg;
+  z-index: 1;
+  transform: translateY(-0.7em) scale(1.05);
+  box-shadow:
+    inset 0 -0.6em 0.7em -0.6em color-mix(in srgb, var(--tinta) 14%, transparent),
+    0.25em 1em 1.3em var(--sombra);
   outline: none;
 }
 
@@ -1063,140 +1110,352 @@ body {
   transform: translateY(-0.2em);
 }
 
-.carta-opcao.carta-nova {
-  border-color: var(--carimbo);
-  border-style: dashed;
+/* O cursor da carta e da loja: uma volta de caneta em torno do que ele
+   aponta, como quem circula a resposta. So existe em .selecionada (estado). */
+.carta-opcao.selecionada::after,
+.loja-acao.selecionada::after,
+.loja-slot.selecionada::after {
+  content: '';
+  position: absolute;
+  inset: -0.5em -0.45em;
+  border: solid var(--tinta);
+  border-width: 0.13em 0.15em 0.12em 0.1em;
+  border-radius: 1.7em 2.3em 1.9em 2.1em / 1.3em 1.6em 1.2em 1.5em;
+  rotate: -1.6deg;
+  pointer-events: none;
 }
 
+/* O numero da tecla, escrito a lapis no canto (em tinta: e informacao). */
 .carta-atalho {
   position: absolute;
-  top: 0.4em;
-  left: 0.5em;
-  font-size: 0.7em;
-  color: var(--tinta-fraca);
-  border: 1px solid var(--lapis);
-  border-radius: 0.25em;
-  padding: 0 0.35em;
+  top: 0.3em;
+  left: 0.55em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.15em;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--tinta);
+  rotate: -8deg;
+}
+
+/* O adesivo "Nova" no canto (textos.cartas.nova): so na arma nova. */
+.carta-selo {
+  display: none;
+  position: absolute;
+  top: -0.55em;
+  right: -0.7em;
+  padding: 0.18em 0.55em 0.12em;
+  font-family: var(--fonte-carimbo);
+  font-size: 0.85em;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--carimbo);
+  background-color: var(--adesivo);
+  border-radius: 0.6em;
+  box-shadow:
+    inset 0 0 0 0.12em var(--carimbo),
+    0.05em 0.15em 0.25em var(--sombra);
+  rotate: 12deg;
+}
+
+.carta-nova .carta-selo {
+  display: block;
+}
+
+/* O emoji grande, como figurinha: o contorno branco recortado (o DOM nao
+   cozinha sprite; o text-shadow faz a volta) e a sombra. */
+.carta-emoji,
+.tcc-banca-emoji {
+  text-shadow:
+    0.035em 0 0 var(--adesivo),
+    -0.035em 0 0 var(--adesivo),
+    0 0.035em 0 var(--adesivo),
+    0 -0.035em 0 var(--adesivo),
+    0.025em 0.025em 0 var(--adesivo),
+    -0.025em 0.025em 0 var(--adesivo),
+    0.025em -0.025em 0 var(--adesivo),
+    -0.025em -0.025em 0 var(--adesivo),
+    0.03em 0.07em 0.05em var(--sombra);
 }
 
 .carta-emoji {
-  font-size: 2.6em;
+  font-size: 2.9em;
   line-height: 1.1;
 }
 
 .carta-nome {
-  font-size: 1em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.05em;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  line-height: 1.2;
 }
 
 .carta-nivel {
-  font-size: 0.75em;
+  font-size: 0.7em;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--caneta-verde);
+  color: var(--tinta);
 }
 
-.carta-nova .carta-nivel {
-  color: var(--carimbo);
-}
-
+/* No post-it o texto e todo em tinta: a tinta fraca da 4,3:1 no amarelo e a
+   caneta verde, 3:1 no rosa. */
 .carta-descricao {
   margin-top: 0.3em;
-  font-size: 0.7em;
+  font-size: 0.72em;
   line-height: 1.35;
-  color: var(--tinta-fraca);
-}
-
-/* No marca-texto, o texto fraco vira tinta: o contraste do rotulo fraco e
-   medido sobre o papel. */
-.carta-opcao.selecionada .carta-descricao,
-.carta-opcao.selecionada .carta-atalho {
   color: var(--tinta);
 }
 
 /* ----------------------------------------------------------------- loja */
 
-/* A loja reusa a carta (.carta-opcao) para os itens: mesmo tamanho, mesmo
-   destaque. Como nas cartas, NAO ha :hover proprio: o destaque sai so de
-   .selecionada, que ui.js pinta a partir do cursor em estado.loja. */
+/* v2 (fase 20): o mural de cortica do Centro Academico, numa moldura de
+   madeira. Os itens sao cartoes pregados (o percevejo em ::before), com a
+   etiqueta de preco pendurada; Rerrolar e Seguir sao folhetos pregados; os
+   coringas do jogador, uma cartela de figurinhas como a do HUD. Nenhum texto
+   fica direto na cortica: cada um tem o seu papel.
+   O cursor (loja.linha, loja.selecionada) e o UNICO destaque, e e o mesmo nos
+   itens, nos botoes e nos slots: levanta e ganha a volta de caneta. O
+   amarelo e so do "Seguir" (o destaque da tela): na v1 o item selecionado
+   tambem era amarelo, e quem procurava "o amarelo" apertava Enter achando que
+   seguia (pendencia 102). Como nas cartas, NAO ha :hover proprio. */
 .loja {
-  background: color-mix(in srgb, var(--papel) 92%, transparent);
-  gap: 0.4em;
+  background: color-mix(in srgb, var(--tinta) 24%, transparent);
 }
 
-/* A carta da loja e mais baixa que a de nivel: a tela ainda tem acoes e a
-   fileira de coringas embaixo, e com 5 coringas o tamanho da carta de nivel
-   empurrava a dica para fora do quadro 16:9. */
+.mural {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'titulo aviso creditos'
+    'itens itens acoes'
+    'cartela cartela dica';
+  align-items: center;
+  gap: 1em 1.4em;
+  padding: 1.2em 1.5em 1.3em;
+  background-color: color-mix(in srgb, var(--mesa) 62%, var(--moeda));
+  background-image:
+    radial-gradient(color-mix(in srgb, var(--tinta) 13%, transparent) 0.04em, transparent 0.07em),
+    radial-gradient(color-mix(in srgb, var(--papel) 30%, transparent) 0.05em, transparent 0.08em),
+    radial-gradient(color-mix(in srgb, var(--tinta) 10%, transparent) 0.1em, transparent 0.16em),
+    radial-gradient(ellipse at 30% 40%, color-mix(in srgb, var(--papel) 10%, transparent), transparent 70%);
+  background-size: 0.37em 0.43em, 0.71em 0.59em, 1.13em 1.37em, 100% 100%;
+  background-position: 0 0, 0.21em 0.13em, 0.47em 0.83em, 0 0;
+  border: 0.55em solid color-mix(in srgb, var(--mesa) 72%, var(--tinta));
+  border-radius: 0.35em;
+  box-shadow:
+    inset 0 0 0 0.08em color-mix(in srgb, var(--tinta) 35%, transparent),
+    inset 0 0.3em 0.9em color-mix(in srgb, var(--tinta) 30%, transparent),
+    0 0 0 0.08em color-mix(in srgb, var(--mesa) 60%, var(--tinta)),
+    0.3em 0.6em 1.2em var(--sombra);
+}
+
+/* O percevejo: os cartoes, o titulo e os folhetos sao pregados. */
+.mural-titulo::before,
+.loja-item::before,
+.loja-acao::before {
+  content: '📌';
+  position: absolute;
+  top: -0.6em;
+  left: 50%;
+  translate: -50% 0;
+  font-size: 1.15em;
+  line-height: 1;
+  filter: drop-shadow(0.06em 0.12em 0.05em var(--sombra));
+  pointer-events: none;
+}
+
+.mural-titulo {
+  grid-area: titulo;
+  justify-self: start;
+  padding: 0.35em 1.3em 0.3em;
+  --folha-giro: -1.2deg;
+}
+
+.titulo-loja {
+  margin: 0;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.35em;
+  font-weight: 700;
+  color: var(--tinta);
+}
+
+/* Os creditos, a moedinha no canto do mural. */
+.loja-creditos {
+  grid-area: creditos;
+  justify-self: end;
+  margin: 0;
+  padding: 0.15em 0.9em;
+  font-size: 1.4em;
+  border: 0.08em solid var(--tinta);
+  border-radius: 1em;
+  background: var(--moeda);
+  box-shadow: inset 0 -0.14em 0 color-mix(in srgb, var(--tinta) 22%, transparent), 0 0.15em 0.3em var(--sombra);
+  rotate: 2deg;
+}
+
+/* O aviso: um bilhete pregado, em caneta vermelha. Vazio, fica invisivel no
+   mesmo lugar (a loja nao pula quando ele aparece). */
+.loja-aviso {
+  grid-area: aviso;
+  justify-self: center;
+  max-width: 22em;
+  margin: 0;
+  padding: 0.3em 0.9em 0.35em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--caneta-vermelha);
+  background-color: var(--papel);
+  border-radius: 0.1em;
+  box-shadow: 0.06em 0.2em 0.35em var(--sombra);
+  rotate: 1.5deg;
+}
+
+.loja-aviso:empty {
+  visibility: hidden;
+}
+
+.loja-itens {
+  grid-area: itens;
+  gap: 1.1em;
+}
+
+/* Um cartao pregado: a ficha de papel, torta pela posicao. */
 .loja-item {
-  padding: 0.7em 0.8em 0.8em;
+  width: 8.3em;
+  padding: 1.05em 0.7em 0.9em;
+  background-color: var(--papel);
+  border-radius: 0.12em;
+  box-shadow: 0.1em 0.3em 0.45em var(--sombra);
+  rotate: var(--cartao-giro, 0deg);
+}
+
+.loja-item:nth-child(1) {
+  --cartao-giro: -1.6deg;
+}
+
+.loja-item:nth-child(2) {
+  --cartao-giro: 1.2deg;
+}
+
+.loja-item:nth-child(3) {
+  --cartao-giro: -0.8deg;
+}
+
+.loja-item:nth-child(4) {
+  --cartao-giro: 1.7deg;
+}
+
+.loja-item.selecionada {
+  --cartao-giro: 0deg;
+  z-index: 1;
+  transform: translateY(-0.45em) scale(1.04);
+  box-shadow: 0.2em 0.8em 1.1em var(--sombra);
+  outline: none;
 }
 
 .loja-item .carta-emoji {
   font-size: 2.1em;
 }
 
-.loja-topo {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 2em;
-  width: min(44em, 90%);
+.loja-item .carta-nome {
+  font-size: 0.95em;
 }
 
-.titulo-loja {
-  margin: 0;
-  font-family: var(--fonte-manuscrita);
-  font-size: 1.4em;
-  font-weight: 700;
-  color: var(--tinta);
+.loja-item .carta-descricao {
+  font-size: 0.68em;
+  color: var(--tinta-fraca);
 }
 
-.loja-creditos {
-  margin: 0;
-  font-size: 1.5em;
-}
-
+/* A etiqueta de preco, pendurada torta no cartao. A cor e a da raridade. */
 .loja-preco {
+  position: relative;
+  margin-top: 0.35em;
+  padding: 0.12em 0.6em 0.1em;
   font-size: 0.85em;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--tinta);
+  background-color: var(--adesivo);
+  border: 0.08em solid var(--tinta);
+  border-radius: 0.2em 0.6em 0.6em 0.2em;
+  rotate: -4deg;
 }
 
-.loja-item.raridade-medio {
-  border-color: var(--caneta-verde);
+.loja-preco:empty {
+  display: none;
 }
 
-.loja-item.raridade-caro {
-  border-color: var(--moeda);
-  border-width: 0.16em;
+.loja-item.raridade-medio .loja-preco {
+  background-color: var(--marca-verde);
 }
 
+.loja-item.raridade-caro .loja-preco {
+  background-color: var(--moeda);
+}
+
+/* Sem credito: a etiqueta apagada, com a borda tracejada de vermelho. */
 .loja-item.sem-credito .loja-preco {
-  color: var(--caneta-vermelha);
+  background-color: var(--papel-sombra);
+  border-style: dashed;
+  border-color: var(--caneta-vermelha);
 }
 
-.loja-item.vendido {
-  opacity: 0.4;
+/* Vendido: o cartao apaga, e a etiqueta vira o carimbo por cima dele. */
+.loja-item.vendido > :not(.loja-preco) {
+  opacity: 0.35;
 }
 
-.loja-item.vendido .loja-preco {
-  color: var(--tinta-fraca);
+.loja-item.vendido .loja-preco.carimbo {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  margin: 0;
+  padding: 0.1em 0.45em;
+  translate: -50% -50%;
+  font-size: 1.1em;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--carimbo);
+  background-color: color-mix(in srgb, var(--papel) 70%, transparent);
+  border: 0.16em double var(--carimbo);
+  border-radius: 0.3em;
+  rotate: -14deg;
 }
 
+/* Rerrolar e Seguir: folhetos pregados (o adesivo, sem o relevo do botao). */
 .loja-acoes {
+  grid-area: acoes;
   display: flex;
-  gap: 1.2em;
-  margin-top: 0.3em;
+  flex-direction: column;
+  gap: 1.3em;
 }
 
-/* O cursor da loja nos botoes: levantado e com um halo de marca-texto azul
-   (o amarelo ja e o do botao de destaque). */
+.loja-acao {
+  position: relative;
+  padding: 0.75em 1.1em 0.6em;
+  font-size: 1em;
+  border-width: 0.1em;
+  border-radius: 0.2em;
+  box-shadow: 0.08em 0.3em 0.45em var(--sombra);
+  transition:
+    transform var(--postit-levantar) ease-out,
+    box-shadow var(--postit-levantar) ease-out;
+}
+
+#botao-rerolar {
+  rotate: -2deg;
+}
+
+#botao-seguir {
+  rotate: 1.5deg;
+}
+
 .loja-acao.selecionada {
-  transform: translateY(-0.12em) rotate(-1deg);
-  box-shadow: 0 0.28em 0 var(--tinta), 0 0 0 0.3em var(--marca-azul), 0 0.7em 1.1em var(--sombra);
+  transform: translateY(-0.2em);
+  box-shadow: 0.15em 0.6em 0.8em var(--sombra);
 }
 
 .loja-acao.sem-credito {
@@ -1208,76 +1467,109 @@ body {
   opacity: 0.45;
 }
 
-/* O :hover generico de .botao e desligado aqui: com ele o mouse e o cursor
+/* O :hover generico do adesivo e desligado aqui: com ele o mouse e o cursor
    do teclado acenderiam dois botoes ao mesmo tempo. */
 .loja-acao:hover:not(.selecionada),
 .loja-acao:focus-visible:not(.selecionada) {
-  box-shadow: 0 0.16em 0 var(--tinta), 0 0.4em 0.8em var(--sombra);
+  box-shadow: 0.08em 0.3em 0.45em var(--sombra);
   transform: none;
 }
 
+/* Os coringas do jogador: a cartela de figurinhas, como a do HUD. */
+.loja-cartela {
+  grid-area: cartela;
+  justify-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  padding: 0.45em 0.8em 0.6em;
+  background-color: var(--marca-azul);
+  border-radius: 0.7em;
+  box-shadow: 0.08em 0.25em 0.45em var(--sombra);
+  rotate: -0.6deg;
+}
+
 .loja-rotulo {
-  margin: 0.2em 0 0;
-  font-size: 0.8em;
+  margin: 0;
+  font-size: 0.72em;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--tinta-fraca);
+  color: var(--tinta);
 }
 
 .loja-coringas {
   display: flex;
-  gap: 0.6em;
+  gap: 0.55em;
 }
 
 .loja-slot {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15em;
-  width: 7.2em;
-  padding: 0.35em 0.4em;
+  gap: 0.12em;
+  width: 6em;
+  padding: 0.35em 0.3em 0.3em;
   font: inherit;
   color: var(--tinta);
   background: var(--adesivo);
-  border: 1px solid var(--tinta-fraca);
-  border-radius: 0.4em;
-  box-shadow: 0 0.15em 0.4em var(--sombra);
+  border: 1px solid var(--papel-sombra);
+  border-radius: 0.5em;
+  box-shadow: 0.04em 0.12em 0.25em var(--sombra);
+  rotate: -2deg;
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  transition:
+    transform var(--postit-levantar) ease-out,
+    rotate var(--postit-levantar) ease-out,
+    box-shadow var(--postit-levantar) ease-out;
 }
 
-/* Vender e corrigir de vermelho. */
+.loja-slot:nth-child(even) {
+  rotate: 1.8deg;
+}
+
+/* Vender e corrigir de vermelho: o slot apontado fica rosa, e a volta de
+   caneta, vermelha. */
 .loja-slot.selecionada {
+  z-index: 1;
   transform: translateY(-0.3em);
-  border-color: var(--caneta-vermelha);
+  rotate: 0deg;
   background: var(--marca-rosa);
-  box-shadow: 0 0.5em 0.9em var(--sombra);
+  box-shadow: 0.1em 0.45em 0.7em var(--sombra);
   outline: none;
 }
 
+.loja-slot.selecionada::after {
+  border-color: var(--caneta-vermelha);
+}
+
 .loja-slot.vazio {
-  opacity: 0.35;
-  border-style: dashed;
-  border-color: var(--lapis);
+  background: transparent;
+  border: 0.08em dashed var(--tinta-fraca);
+  box-shadow: none;
   cursor: default;
 }
 
 .loja-slot.gasto .loja-slot-emoji {
   filter: grayscale(1);
+  opacity: 0.55;
 }
 
 .loja-slot-emoji {
-  font-size: 1.4em;
+  font-size: 1.35em;
   line-height: 1.1;
 }
 
 .loja-slot-nome {
-  font-size: 0.7em;
+  font-size: 0.68em;
+  line-height: 1.2;
   text-align: center;
+  color: var(--tinta);
 }
 
 .loja-slot-venda {
-  font-size: 0.6em;
+  font-size: 0.58em;
   color: var(--tinta-fraca);
 }
 
@@ -1285,11 +1577,18 @@ body {
   color: var(--tinta);
 }
 
-.loja-aviso {
-  min-height: 1.2em;
-  margin: 0.2em 0 0;
-  font-size: 0.85em;
-  color: var(--caneta-vermelha);
+/* A dica de teclas num post-it pequeno. Em tinta: a tinta fraca no verde da
+   3,9:1. */
+.loja .loja-dica {
+  grid-area: dica;
+  justify-self: end;
+  width: 10.5em;
+  margin: 0;
+  padding: 0.9em 0.75em 0.65em;
+  font-size: 0.7em;
+  line-height: 1.35;
+  color: var(--tinta);
+  --postit-giro: 3deg;
 }
 
 /* O rodape do HUD: as cartelas de figurinhas — os coringas da run numa
@@ -1757,48 +2056,83 @@ body {
 
 /* ------------------------------------------------------------------ tcc */
 
-/* O anuncio da defesa: a mesma familia visual do anuncio de avaliacao, com
-   a Banca apresentada antes da luta (o que ela faz e que ela avisa). Folha
-   branca, como o papel timbrado da defesa. */
+/* v2 (fase 20): a convocacao para a defesa, numa folha timbrada (o papel da
+   defesa, como a pagina do TCC). O texto e de maquina (fonte de texto, nao
+   manuscrita), e A Banca aparece como figurinha grande ao lado do que ela
+   faz e de que ela avisa. */
 .tcc {
-  background: color-mix(in srgb, var(--adesivo) 93%, transparent);
+  background: color-mix(in srgb, var(--tinta) 24%, transparent);
+}
+
+.convocacao {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5em;
+  width: 40em;
+  padding: 2em 3.4em 1.8em;
   text-align: center;
-  gap: 0.6em;
+  --folha-giro: 0.5deg;
 }
 
 .titulo-tcc {
-  margin: 0;
-  font-family: var(--fonte-manuscrita);
-  font-size: 2.8em;
+  margin: 0.05em 0 0;
+  font-family: var(--fonte-texto);
+  font-size: 2.4em;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 0.32em;
+  color: var(--tinta);
+}
+
+.convocacao-titulo {
+  margin: 0 0 0.3em;
+  padding: 0 1.2em 0.3em;
+  font-size: 0.85em;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--tinta);
+  border-bottom: 0.1em solid var(--tinta);
+}
+
+.convocacao .subtitulo,
+.convocacao .dica {
+  font-family: var(--fonte-texto);
+}
+
+.convocacao .subtitulo {
+  font-size: 0.95em;
   color: var(--tinta);
 }
 
 .tcc-banca {
   display: grid;
-  grid-template-columns: 3.4em 1fr;
+  grid-template-columns: 6em 1fr;
   align-items: center;
-  column-gap: 0.9em;
-  width: min(36em, 88%);
-  padding: 0.7em 1em;
-  border: 0.1em solid var(--caneta-vermelha);
-  border-radius: 0.5em;
-  background: var(--papel);
-  box-shadow: 0 0.3em 0.8em var(--sombra);
+  column-gap: 1.1em;
+  width: 100%;
+  margin: 0.2em 0;
+  padding: 0.5em 0;
   text-align: left;
+  border-top: 0.06em dashed var(--tinta-fraca);
+  border-bottom: 0.06em dashed var(--tinta-fraca);
 }
 
+/* A Banca colada como figurinha, grande e torta (o contorno esta em
+   "cartas", com o emoji das cartas). */
 .tcc-banca-emoji {
-  font-size: 3em;
+  font-size: 4.4em;
+  line-height: 1;
   text-align: center;
+  rotate: -8deg;
 }
 
 .tcc-banca-nome {
   margin: 0 0 0.2em;
-  font-size: 1.15em;
+  font-size: 1.1em;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--caneta-vermelha);
 }
@@ -1806,8 +2140,12 @@ body {
 .tcc-banca-descricao {
   margin: 0;
   font-size: 0.82em;
-  line-height: 1.4;
+  line-height: 1.45;
   color: var(--tinta-fraca);
+}
+
+.convocacao .dica {
+  margin: 0;
 }
 
 /* ------------------------------------------------------- A Banca no HUD */
@@ -1918,59 +2256,155 @@ body {
 
 /* -------------------------------------------------------------- colacao */
 
-/* O momento de apresentacao do trabalho: a run inteira numa tela. Nota e
-   conceito geral em destaque, as 9 avaliacoes em tres colunas (uma por
-   periodo), os coringas e o recorde embaixo. */
-/* A tela mais cheia do jogo: tudo tem que caber no 16:9 sem rolar, com folga
+/* v2 (fase 20): o diploma. Folha creme com a borda dupla (tinta e um fio de
+   moeda), os quatro cantos em esquadro, o selo 🎓 dourado em relevo,
+   "Formado" em letra de carimbo, a media numa caixa e o conceito carimbado, e
+   as 9 avaliacoes como historico escolar (tres colunas, uma por periodo). E a
+   tela mais cheia do jogo: tudo tem que caber no 16:9 sem rolar, com folga
    embaixo para a barra de relatorio (debug) nao cobrir o botao. */
 .colacao {
-  background: color-mix(in srgb, var(--papel) 94%, transparent);
-  gap: 0.25em;
-  padding-bottom: 2.6em;
+  background: color-mix(in srgb, var(--tinta) 24%, transparent);
+  padding-bottom: 2.4em;
+}
+
+.diploma {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2em;
+  width: 48em;
+  padding: 1.2em 2.8em 1.05em;
   text-align: center;
+  background-color: var(--papel);
+  background-image:
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta)),
+    linear-gradient(var(--tinta), var(--tinta));
+  background-repeat: no-repeat;
+  background-size:
+    2.2em 0.12em, 0.12em 2.2em,
+    2.2em 0.12em, 0.12em 2.2em,
+    2.2em 0.12em, 0.12em 2.2em,
+    2.2em 0.12em, 0.12em 2.2em;
+  background-position:
+    left 1.15em top 1.15em, left 1.15em top 1.15em,
+    right 1.15em top 1.15em, right 1.15em top 1.15em,
+    left 1.15em bottom 1.15em, left 1.15em bottom 1.15em,
+    right 1.15em bottom 1.15em, right 1.15em bottom 1.15em;
+  box-shadow:
+    inset 0 0 0 0.35em var(--papel),
+    inset 0 0 0 0.52em var(--tinta),
+    inset 0 0 0 0.66em var(--papel),
+    inset 0 0 0 0.74em var(--moeda),
+    0.08em 0.1em 0 var(--papel-sombra),
+    0.35em 0.6em 1.2em var(--sombra);
+  --folha-giro: -0.4deg;
+}
+
+/* O selo dourado, em relevo, no canto de cima. Enfeite (aria-hidden). */
+.diploma-selo {
+  position: absolute;
+  top: 0.7em;
+  right: 1.6em;
+  display: grid;
+  place-items: center;
+  width: 1.9em;
+  height: 1.9em;
+  font-size: 2.3em;
+  line-height: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, color-mix(in srgb, var(--moeda) 55%, var(--adesivo)) 0%, var(--moeda) 52%, color-mix(in srgb, var(--moeda) 72%, var(--tinta)) 100%);
+  box-shadow:
+    inset 0 0 0 0.08em color-mix(in srgb, var(--moeda) 70%, var(--tinta)),
+    inset 0.05em 0.07em 0.08em color-mix(in srgb, var(--adesivo) 65%, transparent),
+    inset -0.05em -0.07em 0.08em color-mix(in srgb, var(--tinta) 30%, transparent),
+    0.04em 0.1em 0.14em var(--sombra);
+  text-shadow:
+    -0.02em -0.03em 0 color-mix(in srgb, var(--adesivo) 70%, transparent),
+    0.03em 0.05em 0.02em color-mix(in srgb, var(--tinta) 45%, transparent);
+  rotate: 10deg;
+}
+
+.diploma .resultado-cabecalho {
+  font-size: 0.75em;
+  letter-spacing: 0.3em;
 }
 
 .titulo-colacao {
   margin: 0;
-  font-family: var(--fonte-manuscrita);
+  font-family: var(--fonte-carimbo);
   font-size: 1.9em;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   color: var(--tinta);
 }
 
+/* A media na caixa e o conceito carimbado ao lado, como no boletim. */
+.diploma-nota {
+  display: flex;
+  align-items: center;
+  gap: 1.6em;
+  margin: 0.1em 0;
+}
+
 .colacao-caixa {
-  margin: 0.15em 0;
-  padding: 0.2em 1.2em;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 0.2em 1.2em 0.3em;
+  border-radius: 0.2em;
+  box-shadow: none;
 }
 
 .colacao-caixa .nota-valor {
-  font-size: 2.6em;
+  font-size: 2em;
 }
 
+/* Pendencia 121: o conceito geral fica com a borda dupla do componente
+   .carimbo, de proposito. E o carimbo do diploma (fora da caixa, como o
+   conceito do boletim) e a borda dupla e o que o le como carimbo. */
+.diploma .nota-conceito {
+  font-size: 1.3em;
+}
+
+/* O historico escolar: tres colunas riscadas, uma por periodo, com as
+   linhas que ui.js monta (materia, avaliacao, nota, conceito). */
 .colacao-boletins {
-  display: flex;
-  gap: 0.9em;
-  margin: 0.2em 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  width: 100%;
+  margin: 0.15em 0;
+  padding: 0.25em 0;
+  border-top: 0.1em solid var(--tinta);
+  border-bottom: 0.1em solid var(--tinta);
 }
 
 .colacao-periodo {
   display: flex;
   flex-direction: column;
-  gap: 0.15em;
-  width: 13.5em;
-  padding: 0.5em 0.6em;
-  border: 1px solid var(--papel-sombra);
-  border-radius: 0.45em;
-  background: var(--adesivo);
-  box-shadow: 0 0.2em 0.5em var(--sombra);
+  gap: 0.1em;
+  padding: 0 0.9em;
+}
+
+.colacao-periodo + .colacao-periodo {
+  border-left: 0.06em solid var(--lapis);
 }
 
 .colacao-periodo-nome {
-  font-size: 0.72em;
+  padding-bottom: 0.15em;
+  font-size: 0.68em;
+  font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--tinta-fraca);
+  border-bottom: 0.08em solid var(--tinta-fraca);
 }
 
 .colacao-linha {
@@ -1979,21 +2413,26 @@ body {
   grid-template-rows: auto auto;
   column-gap: 0.5em;
   align-items: baseline;
+  padding: 0.05em 0 0.08em;
   text-align: left;
+  border-bottom: 0.06em dotted var(--lapis);
 }
 
 .colacao-materia {
   grid-column: 1;
   font-size: 0.78em;
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--tinta);
 }
 
 .colacao-avaliacao {
   grid-column: 1;
   grid-row: 2;
   font-size: 0.62em;
+  line-height: 1.2;
   color: var(--tinta-fraca);
 }
 
@@ -2001,14 +2440,18 @@ body {
   grid-column: 2;
   grid-row: 1 / span 2;
   font-size: 1.05em;
+  line-height: 1;
+  color: var(--tinta);
 }
 
 .colacao-conceito-av {
   grid-column: 3;
   grid-row: 1 / span 2;
   min-width: 1.1em;
-  font-size: 1.05em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.1em;
   font-weight: 700;
+  line-height: 1;
   color: var(--tinta);
 }
 
@@ -2021,33 +2464,76 @@ body {
   color: var(--caneta-vermelha);
 }
 
+/* Os coringas da formatura, escritos a mao depois do rotulo impresso. */
+.diploma-coringas {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.6em;
+  max-width: 44em;
+  margin: 0;
+}
+
 .colacao-rotulo {
-  margin: 0.2em 0 0;
   font-size: 0.72em;
+  font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--tinta-fraca);
 }
 
 .colacao-coringas {
-  margin: 0;
-  max-width: 44em;
-  font-size: 0.78em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 0.85em;
+  line-height: 1.25;
+  color: var(--tinta);
 }
 
 .colacao-recorde {
-  margin: 0.1em 0 0.2em;
+  margin: 0;
   font-size: 0.82em;
   color: var(--tinta-fraca);
 }
 
-.colacao .dica {
-  margin-top: 0.2em;
+/* Recorde novo: o selo dourado com a estrelinha recortada (a do menu). */
+.colacao-recorde.novo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.25em 0.9em 0.25em 0.5em;
+  font-weight: 700;
+  color: var(--tinta);
+  background-color: var(--moeda);
+  border: 0.08em solid var(--tinta);
+  border-radius: 0.5em;
+  box-shadow: inset 0 -0.12em 0 color-mix(in srgb, var(--tinta) 22%, transparent), 0 0.15em 0.3em var(--sombra);
+  rotate: -1deg;
 }
 
-.colacao-recorde.novo {
-  font-weight: 700;
-  color: var(--caneta-verde);
+.colacao-recorde.novo::before {
+  content: '';
+  flex: none;
+  width: 1.3em;
+  height: 1.3em;
+  background-color: var(--adesivo);
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+}
+
+.diploma-rodape {
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+  margin-top: 0.3em;
+}
+
+.diploma-rodape .dica {
+  margin: 0;
+}
+
+.diploma-rodape .adesivo {
+  font-size: 1em;
+  padding: 0.45em 1.9em;
 }
 
 /* ---------------------------------------------------- jubilado e menu */
@@ -2149,7 +2635,10 @@ body {
    As tres animacoes de entrada usam `backwards`, nunca `both`: o fim delas e
    o estado de base, e `both` seguraria o ultimo quadro (opacity 1) por cima de
    classes de estado que chegam depois — o item .vendido da loja deixava de
-   esmaecer, porque #loja-itens fica com .entrando para sempre. */
+   esmaecer, porque #loja-itens fica com .entrando para sempre.
+   Fase 20: o 100% nao fixa `rotate`, entao a carta assenta no giro dela (o
+   post-it e o cartao sao tortos, --postit-giro / --cartao-giro) em vez de
+   chegar reta e pular para o giro no fim. */
 .carta-opcoes.entrando .carta-opcao {
   animation: deslizar-carta var(--deslize-carta) ease-out backwards;
 }
@@ -2169,7 +2658,7 @@ body {
 @keyframes deslizar-carta {
   0% { opacity: 0; translate: 0 var(--deslize-distancia); rotate: -3deg; }
   70% { opacity: 1; translate: 0 -0.25em; rotate: 0.5deg; }
-  100% { opacity: 1; translate: 0 0; rotate: 0deg; }
+  100% { opacity: 1; translate: 0 0; }
 }
 
 /* O carimbo (a forma esta em "componentes de papel") cai grande e torto e

@@ -153,42 +153,59 @@
       </div>
     </div>
 
-    <!-- TCC: o anúncio da defesa. A luta em si é uma avaliação com A Banca. -->
+    <!-- TCC: a convocação para a defesa, numa folha timbrada, em letra de
+         máquina (v2, fase 20). A Banca é a figurinha grande ao lado do que ela
+         faz. A luta em si é uma avaliação com A Banca. -->
     <div id="tcc" class="camada tcc oculto">
-      <p class="anuncio-novo-periodo">Fim do curso</p>
-      <h2 class="titulo-tcc">TCC</h2>
-      <p class="subtitulo">Você sobreviveu a todos os períodos. Falta a defesa.</p>
-      <div class="tcc-banca">
-        <span class="tcc-banca-emoji">📋</span>
-        <div class="tcc-banca-texto">
-          <p class="tcc-banca-nome">A Banca</p>
-          <!-- Montado por ui.js a partir de content.js (textos.banca.descricao,
-               com o número de rodadas e o limiar da virada). -->
-          <p id="tcc-descricao" class="tcc-banca-descricao"></p>
+      <div class="folha folha-timbrada convocacao">
+        <p class="anuncio-novo-periodo">Fim do curso</p>
+        <h2 class="titulo-tcc">TCC</h2>
+        <p class="convocacao-titulo">Convocação para a defesa</p>
+        <p class="subtitulo">Você sobreviveu a todos os períodos. Falta a defesa.</p>
+        <div class="tcc-banca">
+          <span class="tcc-banca-emoji" aria-hidden="true">📋</span>
+          <div class="tcc-banca-texto">
+            <p class="tcc-banca-nome">A Banca</p>
+            <!-- Montado por ui.js a partir de content.js (textos.banca.descricao,
+                 com o número de rodadas e o limiar da virada). -->
+            <p id="tcc-descricao" class="tcc-banca-descricao"></p>
+          </div>
         </div>
+        <p class="decomposicao">Sem cronômetro: a defesa acaba quando ela cair — ou você.</p>
+        <button id="botao-tcc" class="adesivo adesivo-destaque" type="button">Começar a defesa</button>
+        <p class="dica">Enter ou Espaço para começar</p>
       </div>
-      <p class="decomposicao">Sem cronômetro: a defesa acaba quando ela cair — ou você.</p>
-      <button id="botao-tcc" class="botao botao-destaque" type="button">Começar a defesa</button>
-      <p class="dica">Enter ou Espaço para começar</p>
     </div>
 
-    <!-- Colação de Grau: A Banca caiu. As linhas das 9 avaliações são montadas
-         por ui.js a partir de content.js (periodos); os números saem de
-         estado.run.boletins e estado.run.colacao. -->
+    <!-- Colação de Grau: A Banca caiu. O diploma (v2, fase 20): folha creme de
+         borda dupla e cantos, o selo 🎓, a média na caixa, o conceito
+         carimbado e o histórico escolar. As linhas das 9 avaliações são
+         montadas por ui.js a partir de content.js (periodos); os números saem
+         de estado.run.boletins e estado.run.colacao. -->
     <div id="colacao" class="camada colacao oculto">
-      <p class="resultado-cabecalho">Colação de Grau</p>
-      <h2 class="titulo-colacao">🎓 Formado</h2>
-      <p id="colacao-tcc" class="subtitulo">TCC aprovado pela Banca</p>
-      <div class="nota-caixa colacao-caixa">
-        <span id="colacao-media" class="nota-valor">0,0</span>
-        <span id="colacao-conceito" class="nota-conceito carimbo">Conceito geral</span>
+      <div class="folha folha-timbrada diploma">
+        <span class="diploma-selo" aria-hidden="true">🎓</span>
+        <p class="resultado-cabecalho">Colação de Grau</p>
+        <h2 class="titulo-colacao">Formado</h2>
+        <p id="colacao-tcc" class="subtitulo">TCC aprovado pela Banca</p>
+        <div class="diploma-nota">
+          <div class="nota-caixa colacao-caixa">
+            <span class="prova-rotulo">Média</span>
+            <span id="colacao-media" class="nota-valor">0,0</span>
+          </div>
+          <span id="colacao-conceito" class="nota-conceito carimbo">Conceito geral</span>
+        </div>
+        <div id="colacao-boletins" class="colacao-boletins"></div>
+        <p class="diploma-coringas">
+          <span class="colacao-rotulo">Coringas na formatura</span>
+          <span id="colacao-coringas" class="colacao-coringas"></span>
+        </p>
+        <p id="colacao-recorde" class="colacao-recorde"></p>
+        <div class="diploma-rodape">
+          <button id="botao-colacao" class="adesivo adesivo-destaque" type="button">Voltar ao menu</button>
+          <p class="dica">Enter ou Espaço para voltar</p>
+        </div>
       </div>
-      <div id="colacao-boletins" class="colacao-boletins"></div>
-      <p class="colacao-rotulo">Coringas na formatura</p>
-      <p id="colacao-coringas" class="colacao-coringas"></p>
-      <p id="colacao-recorde" class="colacao-recorde"></p>
-      <button id="botao-colacao" class="botao botao-destaque" type="button">Voltar ao menu</button>
-      <p class="dica">Enter ou Espaço para voltar</p>
       <div class="relatorio-barra oculto" data-relatorio-barra>
         <span class="relatorio-rotulo">Relatório</span>
         <button class="botao botao-relatorio" type="button" data-relatorio="avaliacao">Do TCC</button>
@@ -224,13 +241,17 @@
       </div>
     </div>
 
-    <!-- Carta de nível: as opções são montadas uma vez por ui.js e só trocam
-         de conteúdo, nunca de quantidade (CONTEUDO.cartas.quantidade). -->
+    <!-- Carta de nível: três post-its colados sobre a arena (v2, fase 20), um
+         por opção, montados uma vez por ui.js e só trocando de conteúdo, nunca
+         de quantidade (CONTEUDO.cartas.quantidade). O título e a dica, num
+         bilhete de papel. -->
     <div id="carta" class="camada carta oculto">
-      <h2 class="titulo-carta">Subiu de nível</h2>
-      <p class="subtitulo-carta">Escolha uma carta</p>
+      <div class="folha carta-bilhete">
+        <h2 class="titulo-carta">Subiu de nível</h2>
+        <p class="subtitulo-carta">Escolha uma carta</p>
+        <p class="dica">1 · 2 · 3 para escolher · ← → e Enter também servem</p>
+      </div>
       <div id="carta-opcoes" class="carta-opcoes"></div>
-      <p class="dica">1 · 2 · 3 para escolher · ← → e Enter também servem</p>
     </div>
 
     <!-- Pausa: um post-it "Intervalo" colado sobre a arena (o canvas fica
@@ -293,24 +314,32 @@
       </div>
     </div>
 
-    <!-- Loja: entre avaliações, depois de um boletim aprovado. Os itens e os
-         slots de coringa são montados uma vez por ui.js e só trocam de
-         conteúdo; o destaque vem do cursor em estado.loja. -->
+    <!-- Loja: entre avaliações, depois de um boletim aprovado. O mural de
+         cortiça do Centro Acadêmico (v2, fase 20): os itens são cartões
+         pregados, Rerrolar e Seguir são folhetos, os coringas do jogador uma
+         cartela de figurinhas. Os itens e os slots são montados uma vez por
+         ui.js e só trocam de conteúdo; o destaque vem do cursor em
+         estado.loja, e de mais nada. -->
     <div id="loja" class="camada loja oculto">
-      <div class="loja-topo">
-        <h2 class="titulo-loja">Loja do Centro Acadêmico</h2>
+      <div class="mural">
+        <div class="folha mural-titulo">
+          <h2 class="titulo-loja">Loja do Centro Acadêmico</h2>
+        </div>
+        <!-- O bilhete do aviso: vazio, fica invisível sem sair do lugar. -->
+        <p id="loja-aviso" class="loja-aviso"></p>
         <span id="loja-creditos" class="creditos loja-creditos">◉ 0</span>
+        <div id="loja-itens" class="carta-opcoes loja-itens"></div>
+        <div class="loja-acoes">
+          <button id="botao-rerolar" class="adesivo loja-acao" type="button">Rerrolar</button>
+          <button id="botao-seguir" class="adesivo adesivo-destaque loja-acao" type="button">Seguir →</button>
+        </div>
+        <div class="loja-cartela">
+          <p class="loja-rotulo">Seus coringas <span id="loja-contagem">0/5</span> · clique para vender</p>
+          <div id="loja-coringas" class="loja-coringas"></div>
+        </div>
+        <!-- As teclas de compra saem de quantos itens a loja tem (ui.js). -->
+        <p class="dica postit postit-verde loja-dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
       </div>
-      <div id="loja-itens" class="carta-opcoes loja-itens"></div>
-      <div class="loja-acoes">
-        <button id="botao-rerolar" class="botao loja-acao" type="button">Rerrolar</button>
-        <button id="botao-seguir" class="botao botao-destaque loja-acao" type="button">Seguir →</button>
-      </div>
-      <p class="loja-rotulo">Seus coringas <span id="loja-contagem">0/5</span> · clique para vender</p>
-      <div id="loja-coringas" class="loja-coringas"></div>
-      <p id="loja-aviso" class="loja-aviso"></p>
-      <!-- As teclas de compra saem de quantos itens a loja tem (ui.js). -->
-      <p class="dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
     </div>
 
     <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. A folha
