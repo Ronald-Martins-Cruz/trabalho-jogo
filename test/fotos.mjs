@@ -13,6 +13,18 @@
 //   npm run fotos -- --so loja,clima      so as cenas cujo nome contem um dos trechos
 //   CHROME=<caminho> npm run fotos        outro Chrome/Chromium
 //   npm run fotos -- --perf               nao fotografa: mede o desenho (fase 16)
+//   npm run fotos -- --perf --acelerado   idem, com o canvas na placa de video: so a
+//                                         thread principal (sem getImageData)
+//   npm run fotos -- --reduzido           as cenas com prefers-reduced-motion emulado,
+//                                         fotografadas logo depois de preparar (fase 22)
+//   npm run fotos -- --jogar              ~3 min jogados pelo TECLADO, sem mexer no
+//                                         estado, com foto a cada troca de tela (fase 22)
+//
+// Fase 22: toda foto sai com a conferencia da tela ao lado (window.__f.conferir):
+// o que sai da cena, o texto cortado pela caixa, o foco de teclado de cada
+// botao, o HUD por cima da pausa e da carta, o tooltip por cima de tudo, o
+// carimbo assentado e as animacoes ainda rodando. E a foto da mesa confere os
+// objetos de mesa em varias proporcoes de janela.
 //
 // O --perf e o metodo do handoff 12, refeito como codigo: o Chrome sem janela
 // com o canvas em raster por CPU (sem GPU, que e o caso pessimista), 400
@@ -46,6 +58,10 @@ const opcao = (nome, padrao) => {
 const SAIDA = resolve(opcao('--saida', join(tmpdir(), 'semana-de-provas-fotos')));
 const SO = opcao('--so', '').split(',').map((s) => s.trim()).filter(Boolean);
 const PERF = args.includes('--perf');
+const ACELERADO = args.includes('--acelerado');
+const REDUZIDO = args.includes('--reduzido');
+const JOGAR = args.includes('--jogar');
+const JOGAR_SEGUNDOS = Number(opcao('--segundos', '180'));
 // O --perf: quadros medidos (depois do aquecimento) por linha da ablacao,
 // rodadas de cada linha, e segundos do laco real.
 const PERF_QUADROS = 150;
@@ -402,7 +418,99 @@ async function ajudantesDaPagina() {
       return `${s} ${(r.width / em).toFixed(1)}x${(r.height / em).toFixed(1)}em ${dentro ? 'dentro' : 'SAI da cena'}`;
     }).join(' · ');
   };
-  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud, cabe };
+  // Fase 22: a conferencia de cada foto (o que a lista da fase pede ver).
+  const visivel = (no) => {
+    const r = no.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const s = getComputedStyle(no);
+    return s.visibility !== 'hidden' && s.display !== 'none' && Number(s.opacity) > 0.01;
+  };
+  const nomeDe = (no) => (no.id ? `#${no.id}` : `${no.tagName.toLowerCase()}.${[...no.classList].join('.')}`);
+  const conferir = async () => {
+    const cena = document.querySelector('.cena').getBoundingClientRect();
+    const raizes = [...document.querySelectorAll('.camada:not(.oculto)')].filter(visivel);
+    const fora = [];
+    const estouro = [];
+    const reticencias = [];
+    for (const raiz of raizes) {
+      for (const no of raiz.querySelectorAll('*')) {
+        if (no.closest('.relatorio-barra, svg') || !visivel(no)) continue;
+        const texto = [...no.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+        const r = no.getBoundingClientRect();
+        if ((texto || no.tagName === 'BUTTON') && (r.left < cena.left - 1 || r.top < cena.top - 1 || r.right > cena.right + 1 || r.bottom > cena.bottom + 1)) fora.push(nomeDe(no));
+        const s = getComputedStyle(no);
+        if (!texto || s.display === 'inline') continue;
+        // Cortado: a caixa recorta (overflow) e o texto nao cabe nela. Com
+        // overflow visivel, so o que vaza para o lado: a manuscrita passa da
+        // altura da linha por natureza, e nada e cortado.
+        const recorta = s.overflowX !== 'visible' || s.overflowY !== 'visible';
+        const largo = no.scrollWidth > no.clientWidth + (recorta ? 1 : 2);
+        // Com reticencias so a largura conta (a linha unica e de proposito).
+        if (largo || (recorta && s.textOverflow !== 'ellipsis' && no.scrollHeight > no.clientHeight + 1)) {
+          (s.textOverflow === 'ellipsis' ? reticencias : estouro).push(`${nomeDe(no)}${recorta ? '' : ' (vaza)'}`);
+        }
+      }
+    }
+    const rodando = document.getAnimations().filter((a) => a.playState === 'running');
+    const animacoes = `animacoes rodando: ${rodando.length}${rodando.length ? ` (${[...new Set(rodando.map((a) => a.animationName || a.transitionProperty || '?'))].join(', ')})` : ''}`;
+    const carimbos = [];
+    for (const c of document.querySelectorAll('.camada:not(.oculto) .carimbo')) {
+      if (!visivel(c)) continue;
+      const s = getComputedStyle(c);
+      carimbos.push(`carimbo ${nomeDe(c)}: escala ${s.scale}, opacidade ${s.opacity}, giro ${s.rotate}`);
+    }
+    // O foco de teclado: cada botao visivel focado como pelo Tab tem contorno
+    // ou vira o cursor (na carta e na loja o foco escreve o cursor). O cursor
+    // do estado volta ao que era depois.
+    const guarda = [e.cartas && e.cartas.selecionada, e.loja && e.loja.linha, e.loja && e.loja.selecionada];
+    const semFoco = [];
+    let botoes = 0;
+    for (const raiz of raizes) {
+      for (const b of raiz.querySelectorAll('button')) {
+        if (!visivel(b)) continue;
+        botoes += 1;
+        b.focus({ focusVisible: true });
+        await doisQuadros();
+        const s = getComputedStyle(b);
+        if (!(s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) && !b.classList.contains('selecionada')) semFoco.push(nomeDe(b));
+      }
+    }
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    if (e.cartas) e.cartas.selecionada = guarda[0];
+    if (e.loja) {
+      e.loja.linha = guarda[1];
+      e.loja.selecionada = guarda[2];
+    }
+    const partes = [`fora da cena: ${fora.length ? fora.join(' ') : '0'}`, `texto cortado: ${estouro.length ? estouro.join(' ') : '0'}`];
+    if (reticencias.length) partes.push(`reticencias: ${reticencias.join(' ')}`);
+    partes.push(`foco: ${botoes - semFoco.length}/${botoes}${semFoco.length ? ` (sem: ${semFoco.join(' ')})` : ''}`);
+    // Quem fica por cima: o HUD sobre a pausa e a carta; o tooltip sobre tudo.
+    const hud = document.getElementById('hud');
+    const z = (no) => getComputedStyle(no).zIndex;
+    if ((e.tela === T.PAUSA || e.tela === T.CARTA) && visivel(hud)) {
+      const tela = document.getElementById(e.tela === T.PAUSA ? 'pausa' : 'carta');
+      partes.push(`z-index hud ${z(hud)} / ${tela.id} ${z(tela)}`);
+    }
+    const dica = [...document.querySelectorAll('.hud-tooltip')].find(visivel);
+    if (dica) {
+      const r = dica.getBoundingClientRect();
+      // O tooltip nao recebe o mouse (pointer-events: none): ligado so para
+      // perguntar quem esta por cima naquele ponto.
+      const antes = dica.style.pointerEvents;
+      dica.style.pointerEvents = 'auto';
+      const topo = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      dica.style.pointerEvents = antes;
+      const dentro = r.left >= cena.left && r.right <= cena.right && r.top >= cena.top && r.bottom <= cena.bottom;
+      partes.push(`tooltip por cima: ${topo && dica.contains(topo) ? 'sim' : `NAO (${topo ? nomeDe(topo) : '-'})`}, ${dentro ? 'dentro' : 'SAI'} da cena`);
+    }
+    const translucido = document.querySelector('#hud .translucido, #hud.translucido');
+    if (translucido) partes.push(`hud esmaecido (${nomeDe(translucido)}, opacidade ${getComputedStyle(translucido).opacity})`);
+    partes.push(...carimbos, animacoes);
+    const fx = render.efeitosDe(document.querySelector('canvas').getContext('2d'));
+    if (fx.movimento && fx.movimento.matches) partes.push(`canvas: movimento reduzido, tremor aplicado ${fx.tremorX},${fx.tremorY} (sorteado ${fx.tremor.toFixed(1)})`);
+    return partes.join(' · ');
+  };
+  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud, cabe, conferir, visivel, depois: null };
   await document.fonts.ready;
   return true;
 }
@@ -479,7 +587,8 @@ async function medirNaPagina(op) {
   const canvas = document.createElement('canvas');
   canvas.width = C.arena.largura;
   canvas.height = C.arena.altura;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  // willReadFrequently poe o canvas na CPU: so no caso pessimista (op.forcar).
+  const ctx = canvas.getContext('2d', { willReadFrequently: op.forcar });
   const desenho = [];
   // Um fx so, como o jogo (um por canvas): as camadas e a folha de
   // figurinhas nascem uma vez. Uma avaliacao nova a cada rodada zera os
@@ -496,7 +605,7 @@ async function medirNaPagina(op) {
         injetar(e, q);
         const t0 = performance.now();
         render.desenhar(e, ctx, fx);
-        ctx.getImageData(0, 0, 1, 1);
+        if (op.forcar) ctx.getImageData(0, 0, 1, 1);
         const t1 = performance.now();
         e.eventos.length = 0;
         if (q >= op.aquecimento) tempos.push(t1 - t0);
@@ -562,7 +671,7 @@ async function medir(cdp, sessao, url) {
     if (r.result.value === true) break;
     await dormir(50);
   }
-  const op = { quadros: PERF_QUADROS, aquecimento: PERF_AQUECIMENTO, rodadas: PERF_RODADAS, laco: PERF_LACO };
+  const op = { quadros: PERF_QUADROS, aquecimento: PERF_AQUECIMENTO, rodadas: PERF_RODADAS, laco: PERF_LACO, forcar: !ACELERADO };
   const r = await cdp.enviar('Runtime.evaluate', { expression: `(${medirNaPagina})(${JSON.stringify(op)})`, awaitPromise: true, returnByValue: true }, sessao, 600000);
   if (r.exceptionDetails) throw new Error(`na pagina: ${(r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text}`);
   return r.result.value;
@@ -570,7 +679,7 @@ async function medir(cdp, sessao, url) {
 
 function imprimirDesempenho(m) {
   const ms = (x) => x.toFixed(2);
-  console.log(`desempenho (${m.agente}, raster por CPU, 400 inimigos misturados; ${PERF_QUADROS} quadros x ${PERF_RODADAS} rodadas por linha)`);
+  console.log(`desempenho (${m.agente}, ${ACELERADO ? 'canvas acelerado, so a thread principal' : 'raster por CPU'}, 400 inimigos misturados; ${PERF_QUADROS} quadros x ${PERF_RODADAS} rodadas por linha)`);
   console.log('');
   console.log('| o que e desenhado | media (ms) | mediana | p95 | max | faiscas | numeros |');
   console.log('|---|---|---|---|---|---|---|');
@@ -645,6 +754,7 @@ const CENAS = [
       window.__f.garantirResultado();
       window.__f.main.sairDoResultado(window.__f.e);
     },
+    medir: () => window.__f.cabe('.mural'),
   },
   {
     nome: 'clima-1-manha',
@@ -994,7 +1104,6 @@ const CENAS = [
       return window.__f.recorteEm(b.x, b.y, 230);
     },
   })),
-  // Por ultimo: o fx forcado vale ate a pagina recarregar (o tamanho seguinte).
   {
     // O fallback de emoji forcado (como a 14B): um fx novo no canvas do jogo,
     // com todos os emoji marcados como faltando — a forma colorida e cozida
@@ -1004,9 +1113,14 @@ const CENAS = [
     preparar: () => {
       const { run, e, avancar, horda, render } = window.__f;
       const fx = render.efeitosDe(document.querySelector('canvas').getContext('2d'));
-      Object.assign(fx, render.criarEfeitos());
+      const movimento = fx.movimento;
+      Object.assign(fx, render.criarEfeitos(), { movimento });
       fx.emojiConferido = true;
       fx.emojiFaltando = new Set(render.emojisDoCanvas());
+      // Fase 22: desfeito antes da cena seguinte (window.__f.depois). Antes, o
+      // fallback valia ate a pagina recarregar, e as cenas 35 em diante saiam
+      // com as figurinhas em circulos no canvas.
+      window.__f.depois = () => Object.assign(fx, render.criarEfeitos(), { movimento });
       run.iniciarRun(e);
       run.comecarAvaliacao(e, 0, 0, []);
       avancar(2);
@@ -1347,6 +1461,92 @@ const CENAS = [
     },
     medir: () => `${window.__f.cabe('.diploma')}; recorde "${document.getElementById('colacao-recorde').textContent}"`,
   },
+  // Fase 22: o que a lista da conferencia pede ver e nenhuma cena mostrava.
+  // A loja com a cartela cheia: o aviso mais longo (pendencia 125) e o cursor
+  // num slot de venda, com a volta vermelha longe do rotulo (pendencia 123).
+  {
+    nome: 'conferencia-loja-cheia-aviso-longo',
+    espera: 1200,
+    preparar: async () => {
+      const { e, C, run, main, avancar, garantirResultado } = window.__f;
+      const [shop, jokers] = await Promise.all([import('/src/shop.js'), import('/src/jokers.js')]);
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 0);
+      avancar(3);
+      garantirResultado();
+      main.sairDoResultado(e);
+      const teto = document.querySelectorAll('.loja-slot').length;
+      for (const c of C.coringas) if (e.run.coringas.length < teto && !e.run.coringas.some((x) => x.id === c.id)) e.run.coringas.push(jokers.novaInstancia(c.id));
+      e.run.creditos = 999;
+      shop.comprarItem(e, Math.max(0, e.loja.itens.findIndex((x) => x.id && !x.vendido)));
+      e.loja.linha = 1;
+      e.loja.selecionada = 0;
+    },
+    medir: () => {
+      const a = document.getElementById('loja-aviso');
+      const faixa = document.createRange();
+      faixa.selectNodeContents(a);
+      const rotulo = document.querySelector('.loja-rotulo').getBoundingClientRect();
+      const slot = document.querySelector('.loja-slot.selecionada');
+      const folga = slot ? (slot.getBoundingClientRect().top - rotulo.bottom).toFixed(1) : '-';
+      return `${window.__f.cabe('.mural')}; aviso "${a.textContent}" em ${faixa.getClientRects().length} linha(s); ${folga}px entre o rotulo e o slot apontado`;
+    },
+  },
+  // O HUD com a avaliacao de nome mais comprido e o tooltip do coringa de
+  // nome mais longo, na pausa (texto estourando; o tooltip por cima de tudo).
+  {
+    nome: 'conferencia-hud-nome-longo-tooltip',
+    espera: 500,
+    preparar: async () => {
+      const { run, e, C, main, avancar, centralizar } = window.__f;
+      const jokers = await import('/src/jokers.js');
+      const longo = [...C.coringas].sort((a, b) => b.nome.length - a.nome.length)[0];
+      let maior = [0, 0, -1];
+      C.periodos.forEach((p, i) => p.avaliacoes.forEach((av, j) => {
+        const n = `${av.materia || ''} · ${av.nome || ''}`.length;
+        if (n > maior[2]) maior = [i, j, n];
+      }));
+      run.iniciarRun(e);
+      for (const id of [longo.id, 'caderno', 'wifi']) if (!e.run.coringas.some((c) => c.id === id)) e.run.coringas.push(jokers.novaInstancia(id));
+      run.comecarAvaliacao(e, maior[0], maior[1], ['professorRigido', 'frequencia']);
+      avancar(6);
+      centralizar();
+      main.alternarPausa(e);
+    },
+    apontar: () => {
+      const r = document.querySelectorAll('#hud-coringas .hud-chip')[0].getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    },
+    medir: () => `etiqueta "${document.getElementById('avaliacao-nome').textContent}"`,
+  },
+  // O clique afunda (pendencia 124): o botao do mouse segurado no 2o post-it
+  // ate a foto; solto depois dela, ele escolhe a carta.
+  {
+    nome: 'conferencia-carta-clique',
+    espera: 900,
+    conferir: false,
+    preparar: () => {
+      const { e, main, passo, garantirProva, T } = window.__f;
+      garantirProva();
+      if (e.tela === T.PAUSA) main.continuarDaPausa(e);
+      if (e.tela !== T.CARTA) {
+        e.player.xp = e.player.xpProximo;
+        main.atualizar(e, passo);
+      }
+    },
+    // Espera a carta assentar (o deslize de entrada) antes de mirar.
+    apontar: async () => {
+      await window.__f.doisQuadros();
+      await new Promise((ok) => setTimeout(ok, 900));
+      const r = document.querySelectorAll('#carta-opcoes .carta-opcao')[1].getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height * 0.75 };
+    },
+    pressionar: true,
+    medir: () => {
+      const b = document.querySelectorAll('#carta-opcoes .carta-opcao')[1];
+      return `2o post-it: selecionada ${b.classList.contains('selecionada')}, :active ${b.matches(':active')}, transform ${getComputedStyle(b).transform}`;
+    },
+  },
 ];
 
 // Uma foto so na tela larga: a mesa em volta da cena e os objetos dela.
@@ -1375,23 +1575,30 @@ async function fotografar(cdp, sessao, url, tamanho, cenas) {
   await avaliar(enviar, `(${ajudantesDaPagina})()`);
   const feitas = [];
   for (const cena of cenas) {
-    await avaliar(enviar, 'window.__f.cena += 1');
+    await avaliar(enviar, 'window.__f.cena += 1; if (window.__f.depois) { window.__f.depois(); window.__f.depois = null; }');
     await avaliar(enviar, `(${cena.preparar})()`);
     // Fase 18: o mouse parado num ponto (o :hover do CSS), e de volta ao
     // canto depois da foto, para nao acender nada na cena seguinte.
     if (cena.apontar) {
       const { x, y } = await avaliar(enviar, `(${cena.apontar})()`);
       await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      // Fase 22: o botao apertado e segurado ate a foto (o :active).
+      if (cena.pressionar) await enviar('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+      cena.ponto = { x, y };
     }
-    await dormir(cena.espera);
+    // Movimento reduzido: a foto logo depois de preparar mostra se alguma
+    // entrada ainda anda.
+    await dormir(REDUZIDO ? Math.min(cena.espera, 80) : cena.espera);
     const tela = await enviar('Runtime.evaluate', { expression: 'window.__estado.tela', returnByValue: true });
     const { data } = await enviar('Page.captureScreenshot', { format: 'png' });
-    if (cena.apontar) await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 });
-    const base = `${String(cena.ordem).padStart(2, '0')}-${cena.nome}-${largura}x${altura}`;
+    const base = `${String(cena.ordem).padStart(2, '0')}-${cena.nome}-${largura}x${altura}${REDUZIDO ? '-reduzido' : ''}`;
     const arquivo = join(SAIDA, `${base}.png`);
     writeFileSync(arquivo, Buffer.from(data, 'base64'));
     const medida = cena.medir ? `; ${await avaliar(enviar, `(${cena.medir})()`)}` : '';
-    feitas.push({ arquivo, tela: `${tela.result.value}${medida}` });
+    if (cena.pressionar) await enviar('Input.dispatchMouseEvent', { type: 'mouseReleased', ...cena.ponto, button: 'left', clickCount: 1 });
+    const conferencia = cena.conferir === false ? '' : `; ${await avaliar(enviar, 'window.__f.conferir()')}`;
+    if (cena.apontar) await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 });
+    feitas.push({ arquivo, tela: `${tela.result.value}${medida}${conferencia}` });
     if (cena.detalhe) {
       const clip = await avaliar(enviar, `(${cena.detalhe})()`);
       const ampliada = await enviar('Page.captureScreenshot', { format: 'png', clip });
@@ -1412,6 +1619,144 @@ async function avaliar(enviar, expressao) {
   return r.result.value;
 }
 
+// --------------------------------------------------------------- --jogar
+
+// Fase 22: a run jogada pelo teclado, como o jogador faz, sem tocar no
+// estado: Enter nas telas de seguir, WASD em circulo na prova, 1 na carta, a
+// loja pelas setas, um ESC no meio de uma prova. Cada troca de tela tira duas
+// fotos, na troca e 450 ms depois (a transicao de verdade e o repouso).
+const TECLAS = { Enter: [13, 'Enter'], Escape: [27, 'Escape'], ArrowRight: [39, 'ArrowRight'], Digit1: [49, '1'], KeyW: [87, 'w'], KeyA: [65, 'a'], KeyS: [83, 's'], KeyD: [68, 'd'] };
+
+async function tecla(enviar, code, tipo) {
+  const [codigo, key] = TECLAS[code];
+  const texto = tipo === 'keyDown' && key.length === 1 ? { text: key } : {};
+  await enviar('Input.dispatchKeyEvent', { type: tipo, code, key, windowsVirtualKeyCode: codigo, nativeVirtualKeyCode: codigo, ...texto });
+}
+
+async function tocarTecla(enviar, code) {
+  await tecla(enviar, code, 'keyDown');
+  await dormir(60);
+  await tecla(enviar, code, 'keyUp');
+}
+
+async function jogarPeloTeclado(cdp, sessao, url) {
+  const enviar = (metodo, params) => cdp.enviar(metodo, params, sessao);
+  await enviar('Emulation.setDeviceMetricsOverride', { width: 1920, height: 1080, deviceScaleFactor: 1, mobile: false });
+  const carregou = cdp.esperarEvento('Page.loadEventFired', sessao);
+  await enviar('Page.navigate', { url });
+  await carregou;
+  for (let i = 0; i < 200; i += 1) {
+    if (await avaliar(enviar, '!!window.__estado')) break;
+    await dormir(50);
+  }
+  await avaliar(enviar, 'document.fonts.ready.then(() => true)');
+  const feitas = [];
+  const inicio = Date.now();
+  const relogio = () => ((Date.now() - inicio) / 1000).toFixed(1);
+  let n = 0;
+  const foto = async (rotulo) => {
+    n += 1;
+    const { data } = await enviar('Page.captureScreenshot', { format: 'png' });
+    const arquivo = join(SAIDA, `jogo-${String(n).padStart(3, '0')}-${rotulo}.png`);
+    writeFileSync(arquivo, Buffer.from(data, 'base64'));
+    feitas.push({ arquivo, tela: `${relogio()}s` });
+  };
+  const DIRECOES = ['KeyW', 'KeyD', 'KeyS', 'KeyA'];
+  let anterior = null;
+  let desde = Date.now();
+  let acoes = 0;
+  let andando = null;
+  let pausou = false;
+  let ultimaDaProva = Date.now();
+  const soltar = async () => {
+    if (andando) await tecla(enviar, andando, 'keyUp');
+    andando = null;
+  };
+  while (Date.now() - inicio < JOGAR_SEGUNDOS * 1000) {
+    const tela = await avaliar(enviar, 'window.__estado.tela');
+    if (tela !== anterior) {
+      await soltar();
+      await foto(`${tela}-entrando`);
+      await dormir(450);
+      await foto(tela);
+      anterior = tela;
+      desde = Date.now();
+      acoes = 0;
+      continue;
+    }
+    const ha = Date.now() - desde;
+    const vez = ha > 1200 + 1500 * acoes;
+    if (tela === 'avaliacao') {
+      const d = DIRECOES[Math.floor(ha / 700) % DIRECOES.length];
+      if (d !== andando) {
+        await soltar();
+        await tecla(enviar, d, 'keyDown');
+        andando = d;
+      }
+      if (!pausou && ha > 15000) {
+        pausou = true;
+        await soltar();
+        await tocarTecla(enviar, 'Escape');
+      } else if (Date.now() - ultimaDaProva > 30000) {
+        ultimaDaProva = Date.now();
+        await foto('avaliacao-jogando');
+      }
+    } else if (tela === 'pausa' && vez) {
+      acoes += 1;
+      await tocarTecla(enviar, 'Escape');
+    } else if (tela === 'carta' && ha > 700 + 1500 * acoes) {
+      acoes += 1;
+      await tocarTecla(enviar, 'Digit1');
+    } else if (tela === 'loja' && vez) {
+      // 1 compra o 1o item (se der); depois as setas levam o cursor ate o
+      // "Seguir" e o Enter segue.
+      acoes += 1;
+      if (acoes === 1) await tocarTecla(enviar, 'Digit1');
+      else {
+        for (let i = 0; i < 8; i += 1) await tocarTecla(enviar, 'ArrowRight');
+        await tocarTecla(enviar, 'Enter');
+      }
+    } else if (tela !== 'avaliacao' && tela !== 'pausa' && tela !== 'carta' && tela !== 'loja' && vez) {
+      acoes += 1;
+      await tocarTecla(enviar, 'Enter');
+    }
+    await dormir(100);
+  }
+  await soltar();
+  return feitas;
+}
+
+// Fase 22: os objetos de mesa (fora da cena) nunca por cima dela, em varias
+// proporcoes de janela. A pagina e a da foto da mesa (o menu).
+const JANELAS = [[1920, 1080], [2079, 1080], [2100, 1080], [2200, 1080], [2560, 1080], [3440, 1440], [1366, 768], [1280, 1024], [800, 600], [1080, 1920]];
+
+async function conferirMesas(cdp, sessao) {
+  const enviar = (metodo, params) => cdp.enviar(metodo, params, sessao);
+  const linhas = [];
+  for (const [w, h] of JANELAS) {
+    await enviar('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+    await dormir(250);
+    const r = await avaliar(enviar, `(${() => {
+      const c = document.querySelector('.cena').getBoundingClientRect();
+      const objetos = [...document.querySelectorAll('.mesa-objeto')].filter((o) => getComputedStyle(o).display !== 'none' && o.getBoundingClientRect().width > 0);
+      const caixa = (o) => o.getBoundingClientRect();
+      const sobre = objetos.filter((o) => { const r = caixa(o); return r.right > c.left && r.left < c.right && r.bottom > c.top && r.top < c.bottom; });
+      const fora = objetos.filter((o) => { const r = caixa(o); return r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight; });
+      const folga = objetos.length ? Math.min(...objetos.map((o) => { const r = caixa(o); return r.right <= c.left ? c.left - r.right : r.left - c.right; })) : null;
+      const caixas = objetos.map((o) => { const r = caixa(o); return `${o.className.split(' ')[1]} ${r.left.toFixed(0)}-${r.right.toFixed(0)}`; }).join(', ');
+      return `${objetos.length} objeto(s) de mesa a vista, ${sobre.length} por cima da cena, ${fora.length} fora da janela${folga === null ? '' : `, folga minima ate a cena ${folga.toFixed(0)}px`} (cena ${c.left.toFixed(0)}-${c.right.toFixed(0)}${caixas ? `; ${caixas}` : ''})`;
+    }})()`);
+    linhas.push({ arquivo: `mesa ${w}x${h}`, tela: r });
+    if (w === 2200) {
+      const { data } = await enviar('Page.captureScreenshot', { format: 'png' });
+      const arquivo = join(SAIDA, `${String(MESA.ordem).padStart(2, '0')}-mesa-limite-${w}x${h}.png`);
+      writeFileSync(arquivo, Buffer.from(data, 'base64'));
+      linhas.push({ arquivo, tela: 'menu, a janela mais estreita com os objetos a vista' });
+    }
+  }
+  return linhas;
+}
+
 async function principal() {
   const caminho = acharChrome();
   if (!caminho) {
@@ -1424,8 +1769,8 @@ async function principal() {
     return 1;
   }
   mkdirSync(SAIDA, { recursive: true });
-  const cenas = PERF ? [] : SO.length === 0 ? CENAS : CENAS.filter((c) => SO.some((s) => c.nome.includes(s)));
-  const comMesa = !PERF && (SO.length === 0 || SO.some((s) => MESA.nome.includes(s)));
+  const cenas = PERF || JOGAR ? [] : SO.length === 0 ? CENAS : CENAS.filter((c) => SO.some((s) => c.nome.includes(s)));
+  const comMesa = !PERF && !JOGAR && (SO.length === 0 || SO.some((s) => MESA.nome.includes(s)));
   if (PERF) {
     // Chrome sem janela de outra execucao deixa a maquina lenta: o numero nao
     // valeria. So avisa (pode ser de outro programa); quem mede decide.
@@ -1451,7 +1796,8 @@ async function principal() {
       '--window-size=1920,1080',
       // --perf: o canvas em raster por CPU (o caso pessimista, o do handoff
       // 12) e os quadros sem trava de 60 Hz (o intervalo e o custo).
-      ...(PERF ? ['--disable-gpu', '--disable-accelerated-2d-canvas', '--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
+      ...(PERF && !ACELERADO ? ['--disable-gpu', '--disable-accelerated-2d-canvas'] : []),
+      ...(PERF ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
       'about:blank',
     ],
     { stdio: 'ignore' }
@@ -1474,11 +1820,15 @@ async function principal() {
     await cdp.enviar('Runtime.enable', {}, sessionId);
     // A pagina "com foco": sem isto um blur do headless pausaria a prova.
     await cdp.enviar('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+    // Fase 22: o prefers-reduced-motion emulado (vale para o CSS e para o
+    // matchMedia que o render.js consulta).
+    if (REDUZIDO) await cdp.enviar('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] }, sessionId);
     if (PERF) imprimirDesempenho(await medir(cdp, sessionId, servidor.url));
+    else if (JOGAR) feitas.push(...(await jogarPeloTeclado(cdp, sessionId, servidor.url)));
     else for (const tamanho of TAMANHOS) feitas.push(...(await fotografar(cdp, sessionId, servidor.url, tamanho, cenas)));
     if (comMesa) {
-      const [foto] = await fotografar(cdp, sessionId, servidor.url, MESA.tamanho, [MESA]);
-      feitas.push(foto);
+      feitas.push(...(await fotografar(cdp, sessionId, servidor.url, MESA.tamanho, [MESA])));
+      feitas.push(...(await conferirMesas(cdp, sessionId)));
     }
   } catch (e) {
     console.error(`fotos: ${e.message}`);
@@ -1516,7 +1866,7 @@ async function principal() {
   }
 
   for (const f of feitas) console.log(`${f.arquivo}  (${f.tela})`);
-  if (!PERF) console.log(`fotos: ${feitas.length} em ${SAIDA}`);
+  if (!PERF) console.log(`fotos: ${feitas.filter((f) => f.arquivo.endsWith('.png')).length} em ${SAIDA}`);
   if (orfaos === null) console.warn('fotos: nao deu para listar os processos e conferir orfaos');
   else console.log(`fotos: Chrome fechado pelo protocolo, ${orfaos.length} processo(s) orfao(s)`);
   if (erros.length > 0) {

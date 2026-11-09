@@ -29,10 +29,26 @@ export function efeitosDe(ctx) {
   let fx = efeitosPorContexto.get(ctx);
   if (!fx) {
     fx = criarEfeitos();
+    fx.movimento = consultaDeMovimento(ctx);
     efeitosPorContexto.set(ctx, fx);
   }
   return fx;
 }
+
+// Fase 22: o `prefers-reduced-motion` do navegador tambem vale no canvas. A
+// consulta e da janela do proprio canvas, aberta uma vez (ela acompanha a
+// preferencia ao vivo); no node, e no contexto falso, nao existe e nada muda.
+function consultaDeMovimento(ctx) {
+  const janela = ctx && ctx.canvas && ctx.canvas.ownerDocument && ctx.canvas.ownerDocument.defaultView;
+  return janela && typeof janela.matchMedia === 'function' ? janela.matchMedia('(prefers-reduced-motion: reduce)') : null;
+}
+
+function movimentoReduzido(fx) {
+  return fx.movimento !== null && fx.movimento.matches === true;
+}
+// Lido uma vez por quadro (avancarEfeitos) em fx.parado: o `matches` da
+// consulta e uma ida ao navegador, e o balanco o pediria por figurinha
+// (centenas por quadro; o laco real mediu +0,5 ms).
 
 export function criarEfeitos(cfg = CONTEUDO.juice, tema = CONTEUDO.tema, fig = CONTEUDO.visual.figurinhas) {
   return {
@@ -96,6 +112,10 @@ export function criarEfeitos(cfg = CONTEUDO.juice, tema = CONTEUDO.tema, fig = C
     fonteAtual: '',
     tamanhoFonte: -1,
     relogio: null, // estado.tempo do ultimo quadro desenhado
+    // A preferencia de movimento reduzido (efeitosDe; null = sem navegador).
+    // Com ela o tremor e o balanco ficam parados; o rng anda igual.
+    movimento: null,
+    parado: false, // movimentoReduzido(fx) deste quadro
     dt: 0,
     avaliacao: null, // a avaliacao cujos efeitos estao na tela
     tremor: 0,
@@ -272,6 +292,13 @@ function avancarEfeitos(estado, fx) {
   } else if (dt > 0 || (fx.tremorX === 0 && fx.tremorY === 0)) {
     fx.tremorX = fx.rng.range(-1, 1) * fx.tremor;
     fx.tremorY = fx.rng.range(-1, 1) * fx.tremor;
+  }
+  // Movimento reduzido: o sorteio acontece igual (as faiscas seguem a mesma
+  // sequencia), so o deslocamento nao e aplicado.
+  fx.parado = movimentoReduzido(fx);
+  if (fx.parado) {
+    fx.tremorX = 0;
+    fx.tremorY = 0;
   }
 }
 
@@ -1839,7 +1866,7 @@ export function desenharFigurinha(ctx, fx, emoji, x, y, tamanho, opcoes = OPCOES
   // Sobe e volta: 0 a `amplitude` px para cima (a sombra no chao, cozida na
   // celula, vai junto).
   const b = p.balanco;
-  const sobe = b.amplitude > 0 ? b.amplitude * 0.5 * (1 + Math.sin(p.omega * fx.relogio + opcoes.nasc * b.fasePorNasc)) : 0;
+  const sobe = b.amplitude > 0 && !fx.parado ? b.amplitude * 0.5 * (1 + Math.sin(p.omega * fx.relogio + opcoes.nasc * b.fasePorNasc)) : 0;
   // O degrau da inclinacao: -niveis..niveis, pela velocidade horizontal.
   let nivel = 0;
   if (p.inclinacaoMax > 0) {

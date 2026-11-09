@@ -53,7 +53,10 @@ body {
 .mesa-objeto {
   position: fixed;
   z-index: 0;
-  font-size: clamp(2rem, calc((100vw - 100vh * 16 / 9) * 0.28), 5.5rem);
+  /* 0,24 da faixa livre: a caixa do emoji girado (~1,5em) cabe na metade da
+     faixa logo depois do limite da @media (fase 22: com 0,28 ela encostava
+     4px por baixo da cena em 2100-2200px de largura). */
+  font-size: clamp(2rem, calc((100vw - 100vh * 16 / 9) * 0.24), 5.5rem);
   line-height: 1;
   pointer-events: none;
   user-select: none;
@@ -652,9 +655,17 @@ body {
    dentro) e duas linhas da pauta; o periodo pequeno em caixa alta e a
    avaliacao escrita a mao, numa linha so com reticencias — duas linhas
    empurravam o HP para cima da parede da Sala Lotada. */
+/* A etiqueta cresce para a direita alem da coluna (ate 20em) quando o nome
+   da avaliacao pede: "Probabilidade e Estatistica · Avaliacao 2" perdia o
+   numero nas reticencias (fase 22). O HP embaixo continua com 15em, e o
+   cronometro fica longe (a coluna da esquerda e 1fr da cena). */
 .hud-identificacao {
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  max-width: 20em;
   padding: 0.08em 0.6em 0.18em;
   background-color: var(--adesivo);
   border: 0.08em solid var(--tinta);
@@ -1106,8 +1117,21 @@ body {
   outline: none;
 }
 
-.carta-opcao:active {
-  transform: translateY(-0.2em);
+/* O clique afunda (pendencia 124). A opcao clicada e sempre a selecionada (o
+   mouse escreve o cursor antes do clique), e a .selecionada tem mais
+   especificidade que um :active solto: por isso o :active mora nela, em cada
+   peca, um pouco abaixo do levantado. */
+.carta .carta-opcao.selecionada:active {
+  transform: translateY(-0.3em) scale(1.02);
+}
+
+.loja-item.selecionada:active {
+  transform: translateY(-0.15em) scale(1.01);
+}
+
+.loja-acao.selecionada:active,
+.loja-slot.selecionada:active {
+  transform: translateY(0.06em);
 }
 
 /* O cursor da carta e da loja: uma volta de caneta em torno do que ele
@@ -1231,7 +1255,7 @@ body {
     'itens itens acoes'
     'cartela cartela dica';
   align-items: center;
-  gap: 1em 1.4em;
+  gap: 1.25em 1.4em;
   padding: 1.2em 1.5em 1.3em;
   background-color: color-mix(in srgb, var(--mesa) 62%, var(--moeda));
   background-image:
@@ -1299,7 +1323,10 @@ body {
 .loja-aviso {
   grid-area: aviso;
   justify-self: center;
+  display: flex;
+  align-items: center;
   max-width: 22em;
+  min-height: 2.5em;
   margin: 0;
   padding: 0.3em 0.9em 0.35em;
   font-family: var(--fonte-manuscrita);
@@ -1481,7 +1508,7 @@ body {
   justify-self: start;
   display: flex;
   flex-direction: column;
-  gap: 0.35em;
+  gap: 0.55em;
   padding: 0.45em 0.8em 0.6em;
   background-color: var(--marca-azul);
   border-radius: 0.7em;
@@ -1508,8 +1535,10 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.12em;
   width: 6em;
+  min-height: 4.4em;
   padding: 0.35em 0.3em 0.3em;
   font: inherit;
   color: var(--tinta);
@@ -1533,14 +1562,17 @@ body {
    caneta, vermelha. */
 .loja-slot.selecionada {
   z-index: 1;
-  transform: translateY(-0.3em);
+  transform: translateY(-0.15em);
   rotate: 0deg;
   background: var(--marca-rosa);
   box-shadow: 0.1em 0.45em 0.7em var(--sombra);
   outline: none;
 }
 
+/* A volta de cima mais justa no slot (pendencia 123): com o inset comum ela
+   subia 0,8em acima da cartela e cortava o rotulo "Seus coringas". */
 .loja-slot.selecionada::after {
+  inset: -0.22em -0.4em -0.4em;
   border-color: var(--caneta-vermelha);
 }
 
@@ -2680,5 +2712,14 @@ body {
   .timer.urgente,
   .banca-hud.transicao .barra-banca {
     animation: none;
+  }
+
+  /* Fase 22: as transicoes tambem (o post-it e o cartao que levantam, o
+     fantasma do HP, a regua): cada peca vai direto ao estado novo. O canvas
+     para o tremor e o balanco das figurinhas (render.js, consultaDeMovimento). */
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
   }
 }

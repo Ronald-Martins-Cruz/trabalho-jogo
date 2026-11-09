@@ -7973,8 +7973,27 @@ function checarFase17() {
 
 // As regras do style.css, sem comentario: seletor exato -> declaracoes, na
 // ordem do arquivo (a ultima ganha, como no CSS).
+// Pendencia 117: as regras de dentro de @media ficam de fora. So valem numa
+// janela ou numa preferencia (o movimento reduzido, a mesa larga), e misturadas
+// com as de fora a ultima ganharia: o par mediria a cor de uma @media.
+function semMedia(css) {
+  let saida = '';
+  let i = 0;
+  for (;;) {
+    const j = css.indexOf('@media', i);
+    if (j < 0) return saida + css.slice(i);
+    saida += css.slice(i, j);
+    let k = css.indexOf('{', j);
+    for (let fundo = 0; k < css.length; k += 1) {
+      if (css[k] === '{') fundo += 1;
+      else if (css[k] === '}' && (fundo -= 1) === 0) break;
+    }
+    i = k + 1;
+  }
+}
+
 function regrasDoCss() {
-  const css = readFileSync(new URL('../style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const css = semMedia(readFileSync(new URL('../style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''));
   const regras = new Map();
   for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const decl = {};

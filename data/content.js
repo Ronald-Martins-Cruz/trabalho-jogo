@@ -442,7 +442,7 @@ export const CONTEUDO = {
       // quanto a largura cai ate a ponta).
       orbital: {
         orbita: { cor: COR.lapis, alfa: 0.4, largura: 1.2, tracejado: [4, 8] },
-        risco: { cor: COR.tinta, alfa: 0.75, largura: 4, graus: 95, segmentos: 6, afina: 0.75 },
+        risco: { cor: COR.tinta, alfa: 0.95, largura: 5, graus: 100, segmentos: 7, afina: 0.6 },
       },
       // 📝 resumo (onda): o anel e um circulo desenhado a mao a lapis — raio
       // com um ruido senoidal de baixa frequencia (`ondulacao` x o raio,
@@ -3233,7 +3233,9 @@ export function validarConteudo(conteudo = CONTEUDO) {
         exigeNumero(m.raioMax, 'juice.fundo.mancha.raioMax', { min: Number.isFinite(m.raioMin) ? m.raioMin : 2, max: altura / 4 });
         exigeNumero(m.largura, 'juice.fundo.mancha.largura', { min: 0.5, max: 20 });
         exigeNumero(m.arco, 'juice.fundo.mancha.arco', { min: 0.05, max: 0.95 }); // o 2o arco e incompleto
-        exigeNumero(m.desvio, 'juice.fundo.mancha.desvio', { min: 0 });
+        // O 2o arco tem raio r +- desvio/2: acima de 2 x raioMin ele fica
+        // negativo e o arc() do navegador lanca (pendencia 105).
+        exigeNumero(m.desvio, 'juice.fundo.mancha.desvio', { min: 0, max: Number.isFinite(m.raioMin) ? 2 * m.raioMin - 2 : 0 });
         exigeNumero(m.folga, 'juice.fundo.mancha.folga', { min: 0 });
       }
       if (exigeObjeto(f.vinco, 'juice.fundo.vinco')) {
