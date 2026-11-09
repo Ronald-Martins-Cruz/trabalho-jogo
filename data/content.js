@@ -1924,6 +1924,9 @@ export const CONTEUDO = {
     // modificadores; o texto fixo (titulo, dica, botao) mora no index.html.
     anuncio: {
       semModificador: 'Sem modificadores: aula normal.',
+      // O sinal no canto de cada aviso grampeado (fase 19). Com o seletor de
+      // texto: o glifo sai na tinta do carimbo, nao como emoji colorido.
+      aviso: '⚠︎',
     },
     // A loja: rotulos que ui.js monta com numeros do estado. O texto fixo
     // (titulo, dica de teclado) mora no index.html.

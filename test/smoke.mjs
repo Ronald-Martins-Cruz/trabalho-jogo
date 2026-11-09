@@ -121,7 +121,10 @@ import {
   dicaDaLoja,
   hudCobreAlguem,
   textoDaBancaNoTcc,
+  textoDoRecordeNoMenu,
+  CLASSE_CARREGANDO,
 } from '../src/ui.js';
+import { criarNavegador } from './dom-falso.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 import {
   aplicarDano,
@@ -8161,6 +8164,271 @@ function checarFase18() {
   return partes.map((p) => `\n    ${p}`).join('');
 }
 
+// ---------------------------------------------------------------- fase 19
+
+// As cinco telas como objetos da mesa (menu, anuncio, pausa, resultado,
+// jubilado). Os pares de contraste, como os do HUD, sao lidos do style.css:
+// [o que, seletor da cor, propriedade, seletor do fundo, propriedade do fundo,
+// minimo]. Todo texto destas telas mora num papel opaco (a checagem de
+// estrutura abaixo garante), entao o fundo e sempre uma peca, nunca o papel
+// do clima nem o veu (pendencia 103).
+const PARES_DAS_TELAS = [
+  ['titulo na etiqueta da capa', '.titulo', 'color', '.capa-etiqueta', 'background-color', 4.5],
+  ['subtitulo na etiqueta', '.subtitulo', 'color', '.capa-etiqueta', 'background-color', 4.5],
+  ['dica no post-it da capa', '.menu .menu-dica', 'color', '.postit-verde', '--postit-cor', 4.5],
+  ['recorde no selo', '.menu-recorde', 'color', '.menu-recorde', 'background-color', 4.5],
+  ['foco na capa escura', '.menu .adesivo:focus-visible', 'outline-color', '.menu', 'background-color', 3],
+  ['texto do adesivo', '.adesivo', 'color', '.adesivo', 'background', 4.5],
+  ['texto do adesivo de destaque', '.adesivo', 'color', '.adesivo-destaque', 'background', 4.5],
+  ['texto do adesivo discreto', '.adesivo-discreto', 'color', '.adesivo', 'background', 4.5],
+  ['foco do adesivo na folha', '.adesivo:focus-visible', 'outline', '.folha', 'background-color', 3],
+  ['foco do adesivo no post-it', '.adesivo:focus-visible', 'outline', '.postit-amarelo', '--postit-cor', 3],
+  ['instituicao da prova', '.prova-instituicao', 'color', '.folha', 'background-color', 4.5],
+  ['rotulo do cabecalho', '.prova-rotulo', 'color', '.folha', 'background-color', 4.5],
+  ['valor do cabecalho', '.prova-valor', 'color', '.folha', 'background-color', 4.5],
+  ['materia', '.titulo-anuncio', 'color', '.folha', 'background-color', 4.5],
+  ['carimbo na folha', '.carimbo', 'color', '.folha', 'background-color', 4.5],
+  ['sinal do aviso (glifo grande)', '.anuncio-mod-aviso', 'color', '.anuncio-modificador', '--postit-cor', 3],
+  ['nome do modificador', '.anuncio-mod-nome', 'color', '.anuncio-modificador', '--postit-cor', 4.5],
+  ['descricao do modificador', '.anuncio-mod-descricao', 'color', '.anuncio-modificador', '--postit-cor', 4.5],
+  ['anotacao a lapis (sem modificador)', '.anuncio-sem-modificador', 'color', '.folha', 'background-color', 4.5],
+  ['dica na folha', '.dica', 'color', '.folha', 'background-color', 4.5],
+  ['INTERVALO no post-it', '.titulo-pausa', 'color', '.postit-amarelo', '--postit-cor', 4.5],
+  ['dica no post-it da pausa', '.intervalo .dica', 'color', '.postit-amarelo', '--postit-cor', 4.5],
+  ['nota em caneta vermelha', '.nota-valor', 'color', '.nota-caixa', 'background', 4.5],
+  ['rotulo da nota', '.prova-rotulo', 'color', '.nota-caixa', 'background', 4.5],
+  ['Aprovado a mao', '.titulo-resultado', 'color', '.folha', 'background-color', 4.5],
+  ['conceito carimbado', '.nota-conceito', 'color', '.folha', 'background-color', 4.5],
+  ['anotacao do professor', '.correcao-anotacao', 'color', '.folha', 'background-color', 4.5],
+  ['creditos na moedinha', '.creditos', 'color', '.prova-creditos', 'background', 4.5],
+  ['subtitulo na folha amassada', '.folha-amassada .subtitulo', 'color', '.folha', 'background-color', 4.5],
+  ['onde caiu', '.jubilado-onde', 'color', '.folha', 'background-color', 4.5],
+  ['quanto faltava', '.jubilado-faltava', 'color', '.folha', 'background-color', 4.5],
+  ['resumo do jubilado', '.folha-amassada .jubilado-resumo', 'color', '.folha', 'background-color', 4.5],
+];
+
+// A cor de um fundo: a ultima var(--cor) de tema.css na declaracao (o
+// post-it e `var(--postit-cor, var(--marca-amarelo))`; a variante o troca
+// por `--postit-cor: var(--marca-...)`), opaca.
+function corDoFundo(regras, seletor, prop) {
+  const valor = (regras.get(seletor) || {})[prop];
+  if (valor === undefined) {
+    falhar(0, `telas: style.css nao tem "${prop}" em "${seletor}"`);
+    return null;
+  }
+  const nomes = [...valor.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1]).filter((n) => n in CONTEUDO.tema.css);
+  const nome = nomes[nomes.length - 1];
+  const cor = nome ? CONTEUDO.tema.css[nome] : null;
+  if (!cor || !/^#[0-9a-fA-F]{6}$/.test(cor)) {
+    falhar(0, `telas: o fundo "${seletor} { ${prop}: ${valor} }" nao e uma cor opaca de tema.css`);
+    return null;
+  }
+  return { nome, cor };
+}
+
+function checarContrasteDasTelas(regras = regrasDoCss()) {
+  let pior = null;
+  for (const [oque, selCor, prop, selFundo, propFundo, minimo] of PARES_DAS_TELAS) {
+    const valor = (regras.get(selCor) || {})[prop];
+    if (valor === undefined) {
+      falhar(0, `contraste das telas: style.css nao tem "${prop}" em "${selCor}"`);
+      continue;
+    }
+    const nomes = [...new Set([...valor.matchAll(/var\(\s*(--[a-z0-9-]+)\s*\)/g)].map((m) => m[1]))];
+    const cor = nomes.length === 1 ? CONTEUDO.tema.css[nomes[0]] : null;
+    if (!cor || !/^#[0-9a-fA-F]{6}$/.test(cor)) {
+      falhar(0, `contraste das telas: "${selCor} { ${prop}: ${valor} }" precisa de uma cor so, opaca, de tema.css`);
+      continue;
+    }
+    const fundo = corDoFundo(regras, selFundo, propFundo);
+    if (!fundo) continue;
+    const razao = razaoDeContraste(cor, fundo.cor);
+    if (!(razao >= minimo)) falhar(0, `contraste das telas: ${oque}: ${nomes[0]} (${cor}) sobre ${fundo.nome} (${fundo.cor}) da ${razao.toFixed(2)}:1, o minimo e ${minimo}:1`);
+    const folga = razao / minimo;
+    if (!pior || folga < pior.folga) pior = { folga, texto: `${oque} ${razao.toFixed(2)}:1 (min ${minimo})` };
+  }
+  return `contraste das telas: ${PARES_DAS_TELAS.length} pares lidos do style.css; o mais justo: ${pior ? pior.texto : '-'}`;
+}
+
+// Os papeis em que um texto destas telas pode morar. Cada um tem fundo opaco
+// no style.css (conferido aqui tambem).
+const PAPEIS_DAS_TELAS = [
+  ['folha', '.folha', 'background-color'],
+  ['postit', '.postit', 'background-color'],
+  ['capa-etiqueta', '.capa-etiqueta', 'background-color'],
+  ['adesivo', '.adesivo', 'background'],
+  ['menu-recorde', '.menu-recorde', 'background-color'],
+  ['nota-caixa', '.nota-caixa', 'background'],
+  ['relatorio-barra', '.relatorio-barra', 'background'],
+];
+const TELAS_DA_FASE_19 = ['menu', 'anuncio', 'pausa', 'resultado', 'jubilado'];
+
+// O index.html: cada tela e o objeto do escopo §5, com os ids de sempre no
+// lugar certo; nenhum texto fica direto no veu; todo botao e um adesivo
+// alcancavel por Tab; os rabiscos sao enfeite (aria-hidden, sem cor escrita,
+// um simbolo que existe).
+function checarEstruturaDasTelas(regras = regrasDoCss()) {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const doc = criarNavegador({ html }).document;
+  const $ = (id) => doc.getElementById(id);
+  const tem = (no, classe) => Boolean(no && no.classList && no.classList.contains(classe));
+  const dentroDe = (no, classe, ate) => {
+    for (let n = no; n && n !== ate.parentNode; n = n.parentNode) if (tem(n, classe)) return n;
+    return null;
+  };
+  const descendentes = (raiz) => {
+    const lista = [];
+    const visitar = (no) => {
+      for (const filho of no.children) {
+        lista.push(filho);
+        visitar(filho);
+      }
+    };
+    visitar(raiz);
+    return lista;
+  };
+  const exigir = (cond, msg) => {
+    if (!cond) falhar(0, `telas (index.html): ${msg}`);
+  };
+
+  // O objeto de cada tela, com os ids dentro dele.
+  const objeto = (tela, classes, ids) => {
+    const camada = $(tela);
+    const achado = descendentes(camada).find((n) => classes.every((c) => tem(n, c)));
+    exigir(achado, `#${tela} nao tem um .${classes.join('.')}`);
+    if (!achado) return null;
+    for (const id of ids) exigir($(id) && dentroDe($(id), classes[0], achado) === achado, `#${id} nao esta dentro do .${classes.join('.')} de #${tela}`);
+    return achado;
+  };
+  objeto('menu', ['capa-etiqueta'], []);
+  objeto('anuncio', ['folha', 'folha-pauta'], ['anuncio-materia', 'anuncio-avaliacao', 'anuncio-duracao', 'anuncio-modificadores', 'anuncio-sem-modificador', 'botao-comecar']);
+  objeto('pausa', ['postit'], ['botao-continuar', 'botao-menu']);
+  objeto('resultado', ['folha', 'folha-pauta'], ['resultado-nota', 'resultado-conceito', 'resultado-decomposicao', 'resultado-creditos', 'botao-resultado']);
+  objeto('jubilado', ['folha', 'folha-amassada'], ['jubilado-onde', 'jubilado-faltava', 'botao-jubilado']);
+  const carimboDoPeriodo = $('anuncio-periodo') && dentroDe($('anuncio-periodo'), 'carimbo', $('anuncio'));
+  exigir(carimboDoPeriodo && dentroDe($('anuncio-novo-periodo'), 'carimbo', $('anuncio')) === carimboDoPeriodo, 'o periodo e o "novo periodo" do anuncio nao estao no mesmo carimbo');
+  exigir(tem($('resultado-conceito'), 'carimbo'), '#resultado-conceito nao e um .carimbo');
+  exigir($('resultado-nota') && dentroDe($('resultado-nota'), 'nota-caixa', $('resultado')), '#resultado-nota nao esta na caixa da nota');
+  const jub = descendentes($('jubilado')).find((n) => tem(n, 'folha-amassada'));
+  exigir(jub && descendentes(jub).some((n) => tem(n, 'carimbo')), 'a folha amassada nao tem o carimbo');
+  exigir(Boolean((regras.get('.folha-amassada') || {})['clip-path']), 'a folha amassada nao tem a borda rasgada (clip-path)');
+  exigir(!$('menu') || !$('menu').classList.contains('oculto'), 'o menu nasce escondido');
+
+  // Nenhum texto direto no veu: todo no com texto proprio (ou com id, que o
+  // ui.js preenche) mora num papel. Os enfeites aria-hidden ficam de fora.
+  const papeis = PAPEIS_DAS_TELAS.map((p) => p[0]);
+  let textos = 0;
+  for (const tela of TELAS_DA_FASE_19) {
+    const camada = $(tela);
+    for (const no of descendentes(camada)) {
+      if (no.getAttribute('aria-hidden') === 'true' || ['svg', 'use', 'path', 'symbol'].includes(no.localName)) continue;
+      const proprio = no.childNodes.some((f) => f.nodeType === 3 && f.data.trim() !== '');
+      if (!proprio && !no.id) continue;
+      textos += 1;
+      if (!papeis.some((p) => dentroDe(no, p, camada))) falhar(0, `telas (index.html): ${no.id ? '#' + no.id : '.' + [...no.classList._s].join('.')} de #${tela} esta direto no veu, sem papel por baixo (pendencia 103)`);
+    }
+  }
+  for (const [, seletor, prop] of PAPEIS_DAS_TELAS) corDoFundo(regras, seletor, prop);
+
+  // Todo botao: um adesivo (ou o .botao do relatorio), sem tabindex
+  // negativo nem disabled: o Tab chega nele, e o foco tem contorno.
+  let botoes = 0;
+  for (const tela of TELAS_DA_FASE_19) {
+    for (const no of descendentes($(tela))) {
+      if (no.localName !== 'button') continue;
+      botoes += 1;
+      const nome = no.id || no.getAttribute('data-relatorio');
+      exigir(tem(no, 'adesivo') || tem(no, 'botao'), `o botao ${nome} de #${tela} nao e um adesivo`);
+      exigir(no.getAttribute('tabindex') === null || Number(no.getAttribute('tabindex')) >= 0, `o botao ${nome} de #${tela} tem tabindex negativo: o Tab nao chega`);
+      exigir(!no.hasAttribute('disabled'), `o botao ${nome} de #${tela} nasce desabilitado`);
+    }
+  }
+  for (const sel of ['.adesivo:focus-visible', '.botao:focus-visible']) {
+    const contorno = (regras.get(sel) || {}).outline || '';
+    exigir(/var\(--/.test(contorno) && !/none/.test(contorno), `style.css: "${sel}" sem contorno de foco visivel`);
+  }
+
+  // Os rabiscos: enfeite puro.
+  const svgs = descendentes(doc.body).filter((n) => n.localName === 'svg');
+  let rabiscos = 0;
+  for (const svg of svgs) {
+    exigir(svg.getAttribute('aria-hidden') === 'true', `um <svg> (.${[...svg.classList._s].join('.')}) sem aria-hidden`);
+    for (const no of [svg, ...descendentes(svg)]) {
+      for (const [nome, valor] of no.attributes) {
+        if (COR_ESCRITA.test(valor) && nome !== 'd') falhar(0, `telas (index.html): <${no.localName} ${nome}="${valor}"> tem cor escrita — a tinta do rabisco e a color do CSS`);
+      }
+    }
+    if (!tem(svg, 'rabisco')) continue;
+    rabiscos += 1;
+    const uso = descendentes(svg).find((n) => n.localName === 'use');
+    const alvo = uso && /^#(.+)$/.exec(uso.getAttribute('href') || '');
+    const simbolo = alvo && $(alvo[1]);
+    exigir(simbolo && simbolo.localName === 'symbol', `o rabisco .${[...svg.classList._s].join('.')} nao usa um <symbol> que existe`);
+  }
+  exigir(rabiscos >= 3, `so ${rabiscos} rabiscos nas telas (o contrato pede tres ou quatro desenhos)`);
+  exigir((regras.get('.rabisco') || {})['pointer-events'] === 'none', 'style.css: .rabisco sem pointer-events: none');
+  return `telas: os cinco objetos com os ids no lugar; ${textos} textos, todos num papel; ${botoes} botoes, todos adesivos alcancaveis por Tab; ${rabiscos} rabiscos aria-hidden, sem cor escrita`;
+}
+
+// Pendencia 101: a pagina nasce escondida e o ui.js so a mostra depois de
+// escrever as variaveis (com elas, o menu ja tem cor e fonte).
+function checarPaginaSemPiscar(regras = regrasDoCss()) {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const tag = /<html\b[^>]*>/i.exec(html);
+  const classe = tag && /\bclass\s*=\s*"([^"]*)"/.exec(tag[0]);
+  if (!classe || !classe[1].split(/\s+/).includes(CLASSE_CARREGANDO)) falhar(0, `pagina: o <html> do index.html nao nasce com a classe "${CLASSE_CARREGANDO}" (pendencia 101)`);
+  const esconde = [...regras.entries()].some(([sel, d]) => sel.includes(`.${CLASSE_CARREGANDO}`) && (d.visibility === 'hidden' || d.display === 'none' || d.opacity === '0'));
+  if (!esconde) falhar(0, `pagina: style.css nao esconde nada com .${CLASSE_CARREGANDO} (pendencia 101)`);
+  const escritas = new Set();
+  let quandoSaiu = -1;
+  const raiz = {
+    style: { setProperty: (k) => { escritas.add(k); } },
+    classList: { remove: (c) => { if (c === CLASSE_CARREGANDO && quandoSaiu < 0) quandoSaiu = escritas.size; } },
+  };
+  criarUi({ getElementById: () => null, querySelectorAll: () => [], documentElement: raiz });
+  const total = Object.keys(CONTEUDO.juice.css).length + Object.keys(CONTEUDO.tema.css).length;
+  if (quandoSaiu < 0) falhar(0, `pagina: criarUi nao tirou a classe "${CLASSE_CARREGANDO}" do <html>: a pagina ficaria escondida`);
+  else if (quandoSaiu !== total) falhar(0, `pagina: criarUi mostrou a pagina com ${quandoSaiu} de ${total} variaveis CSS escritas (o menu piscaria sem cor)`);
+  return `pagina: nasce com .${CLASSE_CARREGANDO} (escondida no CSS), mostrada so depois das ${total} variaveis`;
+}
+
+// Pendencia 90, a parte do menu: a linha do recorde so e montada quando ele
+// muda. O modelo (textos.recorde.menu) e trocado por um que conta as leituras.
+function checarRecordeSemMontarParado() {
+  const { doc, conta } = documentoQueConta();
+  const ui = criarUi(doc);
+  const no = conta.porId.get('menu-recorde');
+  const e = novoEstado(SEMENTE + 1901);
+  ui.sincronizar(e);
+  if (!no.classList.contains('oculto') || no.textContent !== '') falhar(0, `menu: sem formatura, o recorde aparece ("${no.textContent}")`);
+  e.recorde.formaturas = 2;
+  e.recorde.melhorConceito = 'B';
+  e.recorde.melhorMedia = 8.7;
+  ui.sincronizar(e);
+  const linha = textoDoRecordeNoMenu(e.recorde);
+  if (no.textContent !== linha || no.classList.contains('oculto')) falhar(0, `menu: o recorde saiu "${no.textContent}", esperava "${linha}"`);
+  const original = CONTEUDO.textos.recorde;
+  let montagens = 0;
+  CONTEUDO.textos.recorde = { get menu() { montagens += 1; return original.menu; } };
+  try {
+    for (let i = 0; i < 5; i += 1) ui.sincronizar(e);
+    if (montagens !== 0) falhar(0, `menu: 5 quadros com o recorde parado montaram a linha ${montagens}x (pendencia 90)`);
+    e.recorde.melhorMedia = 9.1;
+    ui.sincronizar(e);
+    if (montagens !== 1) falhar(0, `menu: a media nova montou a linha ${montagens}x, esperava 1`);
+  } finally {
+    CONTEUDO.textos.recorde = original;
+  }
+  if (no.textContent !== textoDoRecordeNoMenu(e.recorde)) falhar(0, `menu: a media nova nao chegou ("${no.textContent}")`);
+  return 'menu: o recorde aparece so depois da 1a formatura; 5 quadros parados, 0 linhas montadas; a media nova chega';
+}
+
+function checarFase19() {
+  const regras = regrasDoCss();
+  const partes = [checarContrasteDasTelas(regras), checarEstruturaDasTelas(regras), checarPaginaSemPiscar(regras), checarRecordeSemMontarParado()];
+  return partes.map((p) => `\n    ${p}`).join('');
+}
+
 // ------------------------------------------------------------------ corrida
 
 checarReciclagemDaPool();
@@ -8234,6 +8502,10 @@ const fase17 = checarFase17();
 // Fase 18 (v2): o HUD de caderno — o contraste de cada peca, lido do CSS, e
 // o HUD parado sem escrever no DOM.
 const fase18 = checarFase18();
+// Fase 19 (v2): as telas A — capa, prova, intervalo, correcao, folha
+// amassada: contraste lido do CSS, a estrutura do index.html, a pagina que
+// nao pisca e o recorde do menu sem montar a linha parado.
+const fase19 = checarFase19();
 // A luta dedicada (tarefa 7): sem coringas, do nivel 1, botDesvio. Duas
 // vezes com a mesma semente: HP segurado (TEM que chegar a colacao, com as 2
 // fases e os 3 padroes) e HP de verdade (so mede: e o numero da fase 13).
@@ -8487,6 +8759,7 @@ console.log(
     `\n  figurinhas (fase 16):${fase16}` +
     `\n  armas e efeitos (fase 17):${fase17}` +
     `\n  HUD de caderno (fase 18):${fase18}` +
+    `\n  telas A (fase 19):${fase19}` +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +

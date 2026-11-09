@@ -129,6 +129,9 @@ export function criarUi(doc) {
   // e fixa: escrita uma vez.
   aplicarVariaveisCss(doc.documentElement);
   aplicarVariaveisCss(doc.documentElement, CONTEUDO.tema.css);
+  // Pendencia 101: a pagina nasce escondida (index.html, style.css) e so
+  // aparece agora, com as cores e as fontes ja no :root.
+  revelarPagina(doc.documentElement);
   texto(el.tccDescricao, textoDaBancaNoTcc());
 
   // Recomeca a animacao de entrada (CSS, classe `entrando`) de um bloco que ja
@@ -479,12 +482,16 @@ export function criarUi(doc) {
       for (const av of periodo.avaliacoes) if (av.modificadores > maximo) maximo = av.modificadores;
     }
     for (let i = 0; i < maximo; i += 1) {
+      // Fase 19: cada aviso e um post-it grampeado na folha da prova, com o
+      // sinal no canto (fixo: escrito uma vez).
       const caixa = doc.createElement('div');
-      caixa.className = 'anuncio-modificador';
+      caixa.className = 'anuncio-modificador postit postit-grampeado';
+      const aviso = span('anuncio-mod-aviso');
+      aviso.textContent = CONTEUDO.textos.anuncio.aviso;
       const emoji = span('anuncio-mod-emoji');
       const nome = span('anuncio-mod-nome');
       const descricao = span('anuncio-mod-descricao');
-      caixa.append(emoji, nome, descricao);
+      caixa.append(aviso, emoji, nome, descricao);
       el.anuncioModificadores.appendChild(caixa);
       slotsModificador.push({ caixa, emoji, nome, descricao });
     }
@@ -712,6 +719,21 @@ export function criarUi(doc) {
     sincronizarArmas(el.jubiladoArmas, estado);
   }
 
+  // O recorde no menu, so depois da primeira formatura. A linha so e montada
+  // quando um dos tres numeros muda: antes ela nascia a cada quadro, depois
+  // da 1a formatura (pendencia 90). `{}` e o valor que nenhum recorde tem.
+  const recordeMostrado = { formaturas: {}, conceito: {}, media: {} };
+
+  function sincronizarRecorde(r) {
+    if (r.formaturas === recordeMostrado.formaturas && r.melhorConceito === recordeMostrado.conceito && r.melhorMedia === recordeMostrado.media) return;
+    recordeMostrado.formaturas = r.formaturas;
+    recordeMostrado.conceito = r.melhorConceito;
+    recordeMostrado.media = r.melhorMedia;
+    const linha = r.formaturas > 0 ? textoDoRecordeNoMenu(r) : '';
+    texto(el.menuRecorde, linha);
+    visivel(el.menuRecorde, linha !== '');
+  }
+
   // Linha de debug: vazia com a chave desligada, e vazia = oculta.
   function sincronizarArmas(no, estado) {
     const linha = armasDoBoletim(estado.run.resultado, estado.player.armas);
@@ -744,10 +766,7 @@ export function criarUi(doc) {
     if (noJubilado) sincronizarJubilado(estado);
     if (naColacao) sincronizarColacao(estado);
     sincronizarBanca(estado, emJogo);
-    // O recorde no menu, so depois da primeira formatura.
-    const textoRecorde = estado.recorde.formaturas > 0 ? textoDoRecordeNoMenu(estado.recorde) : '';
-    texto(el.menuRecorde, textoRecorde);
-    visivel(el.menuRecorde, textoRecorde !== '');
+    sincronizarRecorde(estado.recorde);
     sincronizarRelatorio(estado);
 
     sincronizarHud(estado, emJogo);
@@ -990,6 +1009,16 @@ export function textoDaBancaNoTcc(banca = CONTEUDO.banca, modelo = CONTEUDO.text
 // Escreve cada variavel de um mapa (juice.css; tema.css) no :root (style.css
 // so as le). Devolve quantas escreveu; sem `style` (node, DOM falso) nao faz
 // nada.
+// A classe do <html> que esconde a pagina enquanto as variaveis CSS nao
+// existem (pendencia 101). index.html a poe, style.css esconde por ela.
+export const CLASSE_CARREGANDO = 'carregando';
+
+export function revelarPagina(raiz) {
+  if (!raiz || !raiz.classList || typeof raiz.classList.remove !== 'function') return false;
+  raiz.classList.remove(CLASSE_CARREGANDO);
+  return true;
+}
+
 export function aplicarVariaveisCss(raiz, css = CONTEUDO.juice.css) {
   if (!raiz || !raiz.style || typeof raiz.style.setProperty !== 'function') return 0;
   let n = 0;

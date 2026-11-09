@@ -390,7 +390,19 @@ async function ajudantesDaPagina() {
     const canvas = document.querySelector('canvas');
     return { px, pct: (100 * px) / cena.height, canvas: (px * canvas.height) / cena.height, altura: cena.height };
   };
-  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud };
+  // Fase 19: cada caixa cabe inteira na cena? (em da cena; "SAI" se nao)
+  const cabe = (...seletores) => {
+    const cena = document.querySelector('.cena').getBoundingClientRect();
+    const em = parseFloat(getComputedStyle(document.querySelector('.cena')).fontSize);
+    return seletores.map((s) => {
+      const no = document.querySelector(s);
+      if (!no) return `${s} nao existe`;
+      const r = no.getBoundingClientRect();
+      const dentro = r.left >= cena.left - 0.5 && r.top >= cena.top - 0.5 && r.right <= cena.right + 0.5 && r.bottom <= cena.bottom + 0.5;
+      return `${s} ${(r.width / em).toFixed(1)}x${(r.height / em).toFixed(1)}em ${dentro ? 'dentro' : 'SAI da cena'}`;
+    }).join(' · ');
+  };
+  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud, cabe };
   await document.fonts.ready;
   return true;
 }
@@ -1130,6 +1142,129 @@ const CENAS = [
       const topo = window.__f.e.run.avaliacao.arena.topo;
       return `HP termina em y=${((hp.bottom - cena.top) * k).toFixed(1)} do canvas; a parede da Sala Lotada em y=${topo.toFixed(1)}`;
     },
+  },
+  // Fase 19: as telas como objetos da mesa. `medir` diz se a folha (ou a
+  // capa, o post-it) cabe inteira na cena e o que a tela mostra.
+  {
+    nome: 'telas-menu-recorde',
+    espera: 900,
+    preparar: () => {
+      const { e, state, T } = window.__f;
+      e.recorde.formaturas = 2;
+      e.recorde.melhorConceito = 'B';
+      e.recorde.melhorMedia = 8.7;
+      state.irParaTela(e, T.MENU);
+    },
+    medir: () => window.__f.cabe('.capa-etiqueta', '.menu-dica', '#menu-recorde', '#botao-jogar'),
+  },
+  {
+    nome: 'telas-anuncio-novo-periodo-sem-modificador',
+    espera: 900,
+    preparar: () => {
+      const { run, e } = window.__f;
+      run.iniciarRun(e);
+      run.anunciarAvaliacao(e, 0, 0);
+    },
+    medir: () => window.__f.cabe('#anuncio .folha'),
+  },
+  {
+    nome: 'telas-anuncio-materia-longa',
+    espera: 900,
+    preparar: () => {
+      const { run, e } = window.__f;
+      run.iniciarRun(e);
+      run.anunciarAvaliacao(e, 2, 1); // o nome de materia mais comprido, dois modificadores
+    },
+    medir: () => window.__f.cabe('#anuncio .folha'),
+  },
+  {
+    nome: 'telas-resultado-conceito-a',
+    espera: 1100,
+    preparar: () => {
+      const { run, e, avancar, fecharPeloTempo } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 1, 1);
+      avancar(5);
+      fecharPeloTempo(900);
+    },
+    medir: () => `${window.__f.cabe('#resultado .folha')}; ${document.getElementById('resultado-nota').textContent} ${document.getElementById('resultado-conceito').textContent}`,
+  },
+  {
+    nome: 'telas-resultado-conceito-f',
+    espera: 1100,
+    preparar: () => {
+      const { run, e, avancar, fecharPeloTempo } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 2, 1);
+      avancar(5);
+      e.player.hp = 3;
+      fecharPeloTempo(0);
+    },
+    medir: () => `${window.__f.cabe('#resultado .folha')}; ${document.getElementById('resultado-nota').textContent} ${document.getElementById('resultado-conceito').textContent}`,
+  },
+  {
+    nome: 'telas-jubilado-banca',
+    espera: 1000,
+    preparar: () => {
+      const { e, boss, player, main, passo, garantirTcc } = window.__f;
+      garantirTcc();
+      const corpo = boss.acharBanca(e);
+      corpo.hp = corpo.hpMax * 0.34;
+      player.receberDano(e, e.player.hp + 1, true);
+      main.atualizar(e, passo);
+    },
+    medir: () => `${window.__f.cabe('#jubilado .folha')}; ${document.getElementById('jubilado-faltava').textContent}`,
+  },
+  {
+    nome: 'telas-jubilado-avaliacao',
+    espera: 1000,
+    preparar: () => {
+      const { run, e, avancar, player, main, passo } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 2, 1);
+      avancar(8);
+      player.receberDano(e, e.player.hp + 1, true);
+      main.atualizar(e, passo);
+    },
+    medir: () => `${window.__f.cabe('#jubilado .folha')}; ${document.getElementById('jubilado-faltava').textContent}`,
+  },
+  {
+    nome: 'telas-pausa',
+    espera: 600,
+    preparar: () => {
+      const { run, e, avancar, main } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 2, 0);
+      avancar(6);
+      main.alternarPausa(e);
+    },
+    medir: () => window.__f.cabe('.intervalo'),
+  },
+  // O foco de teclado (o contorno tracejado) na capa escura e no post-it.
+  {
+    nome: 'telas-foco-menu',
+    espera: 900,
+    preparar: async () => {
+      const { e, state, T, doisQuadros } = window.__f;
+      state.irParaTela(e, T.MENU);
+      await doisQuadros();
+      document.getElementById('botao-jogar').focus({ focusVisible: true });
+    },
+    medir: () => `foco em #${document.activeElement.id}, :focus-visible ${document.activeElement.matches(':focus-visible')}`,
+  },
+  {
+    nome: 'telas-foco-pausa',
+    espera: 600,
+    preparar: async () => {
+      const { run, e, avancar, main, doisQuadros } = window.__f;
+      run.iniciarRun(e);
+      run.comecarAvaliacao(e, 0, 1);
+      avancar(4);
+      main.alternarPausa(e);
+      await doisQuadros();
+      document.getElementById('botao-menu').focus({ focusVisible: true });
+    },
+    medir: () => `foco em #${document.activeElement.id}, :focus-visible ${document.activeElement.matches(':focus-visible')}`,
   },
 ];
 

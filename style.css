@@ -124,26 +124,360 @@ body {
   display: none !important;
 }
 
-/* ---------------------------------------------------------------- menu */
-
-.menu {
-  background: color-mix(in srgb, var(--papel) 86%, transparent);
-  text-align: center;
+/* Pendencia 101: as cores e as fontes so existem depois que o ui.js escreve
+   tema.css no :root. Ate la a pagina fica escondida (o index.html nasce com
+   a classe e o ui.js a tira logo depois de escrever as variaveis), em vez de
+   piscar o menu em branco e Times. */
+.carregando body {
+  visibility: hidden;
 }
 
-/* Escrito a mao, com um risco de marca-texto por baixo. */
+/* --------------------------------------------------- componentes de papel */
+
+/* v2 (fase 19): as pecas de papel das telas (a fase 20 as reusa). Cada uma
+   tem o seu fundo opaco, entao o texto escrito nela nao depende do clima da
+   pagina nem do veu da tela; o smoke le daqui o par de cada texto.
+     .folha            folha solta, com sombra; gira por --folha-giro
+       .folha-pauta    com a pauta e a margem do caderno (texto a partir de
+                       ~4em da esquerda, depois da margem)
+       .folha-timbrada branca, com o friso duplo de tinta por dentro
+     .postit           quadrado de cor (--postit-cor, uma por marca-texto:
+                       .postit-amarelo/-verde/-rosa/-azul/-laranja), fita
+                       adesiva em ::before, canto enrolado; gira por
+                       --postit-giro
+       .postit-grampeado o grampo no lugar da fita
+     .adesivo          o botao (ver "botoes"): -destaque, -discreto, -grande
+     .carimbo          fonte e tinta de carimbo, borda dupla, giro; entra com
+                       a animacao da fase 12 (ver "transicoes");
+                       -pequeno, -grande
+     .rabisco          <svg> com um <use> dos simbolos do index.html
+                       (sublinhado, estrela, seta, xicara): traco a lapis, a
+                       cor e a `color`, nunca clicavel */
+.folha {
+  position: relative;
+  color: var(--tinta);
+  background-color: var(--papel);
+  border: 1px solid var(--papel-sombra);
+  border-radius: 0.15em;
+  box-shadow:
+    0.08em 0.1em 0 var(--papel-sombra),
+    0.35em 0.6em 1.2em var(--sombra);
+  rotate: var(--folha-giro, 0deg);
+}
+
+/* A pauta mais clara que a da pagina, para nao brigar com o que esta
+   escrito; a margem vermelha a 3,3em da esquerda. */
+.folha-pauta {
+  background-image:
+    linear-gradient(90deg, transparent 3.3em, var(--margem) 3.3em 3.4em, transparent 3.4em),
+    repeating-linear-gradient(transparent 0 1.55em, color-mix(in srgb, var(--pauta) 55%, transparent) 1.55em 1.62em);
+}
+
+.folha-timbrada {
+  background-color: var(--adesivo);
+  box-shadow:
+    inset 0 0 0 0.6em var(--adesivo),
+    inset 0 0 0 0.72em var(--tinta),
+    inset 0 0 0 0.86em var(--adesivo),
+    inset 0 0 0 0.92em var(--tinta),
+    0.08em 0.1em 0 var(--papel-sombra),
+    0.35em 0.6em 1.2em var(--sombra);
+}
+
+.postit {
+  position: relative;
+  color: var(--tinta);
+  background-color: var(--postit-cor, var(--marca-amarelo));
+  border-radius: 0.1em 0.1em 1.4em 0.1em / 0.1em 0.1em 0.5em 0.1em;
+  box-shadow:
+    inset 0 -0.6em 0.7em -0.6em color-mix(in srgb, var(--tinta) 14%, transparent),
+    0.1em 0.35em 0.5em var(--sombra);
+  rotate: var(--postit-giro, 0deg);
+}
+
+/* O pedaco de fita adesiva que segura o post-it. */
+.postit::before {
+  content: '';
+  position: absolute;
+  top: -0.55em;
+  left: 50%;
+  width: 4.6em;
+  height: 1.1em;
+  translate: -50% 0;
+  rotate: -3deg;
+  background-color: color-mix(in srgb, var(--adesivo) 55%, transparent);
+  border-left: 0.08em dashed color-mix(in srgb, var(--tinta) 14%, transparent);
+  border-right: 0.08em dashed color-mix(in srgb, var(--tinta) 14%, transparent);
+  box-shadow: 0 0.05em 0.12em var(--sombra);
+}
+
+.postit-amarelo {
+  --postit-cor: var(--marca-amarelo);
+}
+
+.postit-verde {
+  --postit-cor: var(--marca-verde);
+}
+
+.postit-rosa {
+  --postit-cor: var(--marca-rosa);
+}
+
+.postit-azul {
+  --postit-cor: var(--marca-azul);
+}
+
+.postit-laranja {
+  --postit-cor: var(--marca-laranja);
+}
+
+/* O grampo atravessando a beira de cima, no lugar da fita. */
+.postit-grampeado::before {
+  top: 0.2em;
+  width: 1.8em;
+  height: 0.22em;
+  rotate: -5deg;
+  background-color: var(--lapis);
+  border: 0;
+  border-radius: 0.1em;
+  box-shadow: 0 0.07em 0 var(--adesivo);
+}
+
+.carimbo {
+  display: inline-block;
+  padding: 0.1em 0.5em;
+  font-family: var(--fonte-carimbo);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--carimbo);
+  border: 0.2em double currentColor;
+  border-radius: 0.3em;
+  font-weight: 400;
+  rotate: var(--carimbo-giro);
+}
+
+.carimbo-pequeno {
+  font-size: 0.8em;
+  padding: 0.15em 0.55em;
+  border-width: 0.26em;
+}
+
+.carimbo-grande {
+  font-size: 2.6em;
+  padding: 0.04em 0.45em;
+  border-width: 0.13em;
+}
+
+.rabisco {
+  display: block;
+  overflow: visible;
+  color: var(--lapis);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* O <svg> com os simbolos dos rabiscos: existe, mas nao ocupa lugar. */
+.rabisco-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------- botoes */
+
+/* O adesivo: branco, cantos redondos, contorno de tinta e sombra; levanta
+   (e entorta um pouco) no hover e no foco. Fase 19: o componente se chama
+   .adesivo (o .botao da fase 15 continua como o mesmo adesivo), com as
+   variantes -destaque (marcado de amarelo), -discreto e -grande. */
+.botao,
+.adesivo {
+  font: inherit;
+  font-size: 1.1em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.55em 2.2em;
+  color: var(--tinta);
+  background: var(--adesivo);
+  border: 0.12em solid var(--tinta);
+  border-radius: 0.8em;
+  box-shadow: 0 0.16em 0 var(--tinta), 0 0.4em 0.8em var(--sombra);
+  cursor: pointer;
+  transition: transform 90ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.botao:hover,
+.botao:focus-visible,
+.adesivo:hover,
+.adesivo:focus-visible {
+  transform: translateY(-0.12em) rotate(-1deg);
+  box-shadow: 0 0.28em 0 var(--tinta), 0 0.7em 1.1em var(--sombra);
+  outline: none;
+}
+
+.botao:focus-visible,
+.adesivo:focus-visible {
+  outline: 0.12em dashed var(--tinta);
+  outline-offset: 0.3em;
+}
+
+.botao:active,
+.adesivo:active {
+  transform: translateY(0.08em);
+  box-shadow: 0 0.06em 0 var(--tinta), 0 0.2em 0.4em var(--sombra);
+}
+
+.botao-destaque,
+.adesivo-destaque {
+  background: var(--marca-amarelo);
+}
+
+.botao-discreto,
+.adesivo-discreto {
+  font-size: 0.85em;
+  color: var(--tinta-fraca);
+  border-color: var(--tinta-fraca);
+  box-shadow: 0 0.16em 0 var(--tinta-fraca), 0 0.4em 0.8em var(--sombra);
+}
+
+.botao-discreto:hover,
+.botao-discreto:focus-visible,
+.adesivo-discreto:hover,
+.adesivo-discreto:focus-visible {
+  box-shadow: 0 0.28em 0 var(--tinta-fraca), 0 0.7em 1.1em var(--sombra);
+}
+
+/* O adesivo grande: a acao principal de uma tela inteira (o "Jogar"). */
+.adesivo-grande {
+  font-size: 1.5em;
+  padding: 0.45em 2.2em;
+  letter-spacing: 0.16em;
+  border-width: 0.1em;
+  border-radius: 0.7em;
+  rotate: -2deg;
+}
+
+/* ---------------------------------------------------------------- menu */
+
+/* v2 (fase 19): a capa do caderno, fechada. A cor da capa e a tinta, mais
+   clara no meio como debaixo da luz, com a trama fina do tecido e a fita da
+   lombada no lado esquerdo. Nenhum texto fica direto na capa: cada um tem o
+   seu papel (a etiqueta, o adesivo, o post-it, o selo do recorde). */
+.menu {
+  text-align: center;
+  gap: 1.2em;
+  background-color: var(--tinta);
+  background-image:
+    linear-gradient(
+      90deg,
+      var(--carimbo) 0 2.4em,
+      color-mix(in srgb, var(--carimbo) 50%, var(--tinta)) 2.4em 2.6em,
+      transparent 2.6em
+    ),
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--papel) 5%, transparent) 0 0.06em, transparent 0.06em 0.3em),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--papel) 4%, transparent) 0 0.06em, transparent 0.06em 0.3em),
+    radial-gradient(70% 85% at 52% 44%, color-mix(in srgb, var(--tinta) 70%, var(--marca-azul)) 0%, var(--tinta) 100%);
+}
+
+/* A etiqueta do caderno, colada no meio da capa: papel, cantos redondos e o
+   friso duplo por dentro (tinta e a vermelha da margem). */
+.capa-etiqueta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1em 2.6em 1.1em;
+  background-color: var(--papel);
+  border-radius: 1em;
+  box-shadow:
+    inset 0 0 0 0.35em var(--papel),
+    inset 0 0 0 0.45em var(--tinta),
+    inset 0 0 0 0.55em var(--papel),
+    inset 0 0 0 0.62em var(--margem),
+    0 0.35em 0.9em color-mix(in srgb, var(--tinta) 85%, transparent);
+  rotate: -1deg;
+}
+
+/* O titulo escrito a mao na etiqueta; o sublinhado e o rabisco embaixo. */
 .titulo {
   margin: 0;
-  padding: 0 0.25em;
+  padding: 0 0.15em;
   font-family: var(--fonte-manuscrita);
-  font-size: 3.4em;
+  font-size: 3.1em;
   font-weight: 700;
   color: var(--tinta);
-  background: linear-gradient(
-    transparent 58%,
-    color-mix(in srgb, var(--marca-amarelo) 90%, transparent) 58% 90%,
-    transparent 90%
-  );
+}
+
+.capa-etiqueta .subtitulo {
+  margin-top: 0.15em;
+}
+
+.rabisco-sublinhado {
+  width: 100%;
+  height: 0.85em;
+  margin-top: -0.45em;
+  color: var(--caneta-vermelha);
+  stroke-width: 2.6;
+}
+
+.capa-jogar {
+  position: relative;
+}
+
+/* Corretivo na capa escura: os rabiscos do menu sao brancos, nao de lapis. */
+.menu-rabisco {
+  position: absolute;
+  color: color-mix(in srgb, var(--papel) 62%, transparent);
+}
+
+.menu-rabisco-estrela {
+  top: 2.4em;
+  right: 7em;
+  width: 3.4em;
+  height: 3.4em;
+  rotate: 14deg;
+}
+
+.menu-rabisco-xicara {
+  left: 5.5em;
+  bottom: 3.2em;
+  width: 3.8em;
+  height: 4em;
+  rotate: -8deg;
+}
+
+/* A seta apontando o "Jogar", do lado esquerdo dele. */
+.menu-rabisco-seta {
+  right: 100%;
+  top: -1.4em;
+  width: 4.6em;
+  height: 2.9em;
+  margin-right: 0.5em;
+}
+
+/* A dica num post-it pequeno, colado torto no canto da capa. Em tinta: a
+   tinta fraca no post-it verde da 4:1. */
+.menu .menu-dica {
+  position: absolute;
+  right: 3.6em;
+  bottom: 4.4em;
+  width: 13.5em;
+  margin: 0;
+  padding: 1em 0.9em 0.8em;
+  font-size: 0.8em;
+  line-height: 1.35;
+  text-align: left;
+  color: var(--tinta);
+  --postit-giro: 4deg;
+}
+
+/* O foco na capa escura: o contorno tracejado de tinta sumiria. */
+.menu .adesivo:focus-visible {
+  outline-color: var(--papel);
 }
 
 .subtitulo {
@@ -176,59 +510,6 @@ body {
 .titulo-tcc,
 .titulo-colacao {
   line-height: 1.25;
-}
-
-/* --------------------------------------------------------------- botoes */
-
-/* O adesivo: branco, cantos redondos, contorno de tinta e sombra; levanta
-   (e entorta um pouco) no hover e no foco. */
-.botao {
-  font: inherit;
-  font-size: 1.1em;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  padding: 0.55em 2.2em;
-  color: var(--tinta);
-  background: var(--adesivo);
-  border: 0.12em solid var(--tinta);
-  border-radius: 0.8em;
-  box-shadow: 0 0.16em 0 var(--tinta), 0 0.4em 0.8em var(--sombra);
-  cursor: pointer;
-  transition: transform 90ms ease, background 140ms ease, box-shadow 140ms ease;
-}
-
-.botao:hover,
-.botao:focus-visible {
-  transform: translateY(-0.12em) rotate(-1deg);
-  box-shadow: 0 0.28em 0 var(--tinta), 0 0.7em 1.1em var(--sombra);
-  outline: none;
-}
-
-.botao:focus-visible {
-  outline: 0.12em dashed var(--tinta);
-  outline-offset: 0.3em;
-}
-
-.botao:active {
-  transform: translateY(0.08em);
-  box-shadow: 0 0.06em 0 var(--tinta), 0 0.2em 0.4em var(--sombra);
-}
-
-.botao-destaque {
-  background: var(--marca-amarelo);
-}
-
-.botao-discreto {
-  font-size: 0.85em;
-  color: var(--tinta-fraca);
-  border-color: var(--tinta-fraca);
-  box-shadow: 0 0.16em 0 var(--tinta-fraca), 0 0.4em 0.8em var(--sombra);
-}
-
-.botao-discreto:hover,
-.botao-discreto:focus-visible {
-  box-shadow: 0 0.28em 0 var(--tinta-fraca), 0 0.7em 1.1em var(--sombra);
 }
 
 /* ----------------------------------------------------------------- hud */
@@ -516,43 +797,50 @@ body {
 
 /* --------------------------------------------------------------- pausa */
 
-.pausa {
-  background: color-mix(in srgb, var(--papel) 72%, transparent);
-  backdrop-filter: blur(2px);
+/* v2 (fase 19): sem veu de papel. O canvas ja escurece a arena
+   (visual.corSombraPausa) e o post-it "Intervalo" fica colado em cima dela,
+   com os dois adesivos; o HUD continua por cima (z-index). */
+.intervalo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75em;
+  width: 18em;
+  padding: 1.5em 1.4em 1.1em;
+  text-align: center;
+  --postit-giro: -2.5deg;
 }
 
 .titulo-pausa {
-  margin: 0 0 0.4em;
+  margin: 0 0 0.15em;
   font-family: var(--fonte-manuscrita);
-  font-size: 2.2em;
+  font-size: 2em;
   font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tinta);
+}
+
+/* No post-it amarelo a tinta fraca da 4,4:1: a dica vai em tinta. */
+.intervalo .dica {
+  margin: 0.2em 0 0;
   color: var(--tinta);
 }
 
 /* ------------------------------------------------------------ resultado */
 
-/* O boletim. A nota grande e o conceito ficam juntos numa caixa so, e a
-   decomposicao logo abaixo: e ela que ensina o jogador a jogar melhor, entao
-   nao pode ser rodape. */
-.resultado {
-  background: color-mix(in srgb, var(--papel) 92%, transparent);
-  gap: 0.45em;
-}
-
+/* O boletim (v2, fase 19): a prova corrigida, na folha do anuncio (ver
+   "a prova", abaixo). A nota na caixa do canto, o conceito carimbado e a
+   decomposicao logo ao lado, anotada pelo professor: e ela que ensina o
+   jogador a jogar melhor, entao nao pode ser rodape.
+   .resultado-cabecalho, .nota-caixa, .nota-valor e .nota-conceito continuam
+   como eram: a colacao os usa. */
 .resultado-cabecalho {
   margin: 0;
   font-size: 0.8em;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--tinta-fraca);
-}
-
-.titulo-resultado {
-  margin: 0;
-  font-family: var(--fonte-manuscrita);
-  font-size: 2.4em;
-  font-weight: 700;
-  color: var(--caneta-verde);
 }
 
 .nota-caixa {
@@ -602,16 +890,69 @@ body {
 
 /* ------------------------------------------------------------- jubilado */
 
-.jubilado {
-  background: color-mix(in srgb, var(--papel) 92%, transparent);
+/* v2 (fase 19): a folha amassada. Torta, com a borda rasgada (clip-path), os
+   vincos de quem amassou e desamassou (gradientes finos: o papel continua o
+   da folha, e o texto e medido contra ele), o carimbo e a caveira colada como
+   figurinha. A sombra mora no embrulho .amassada, porque o recorte cortaria
+   a box-shadow da propria folha. */
+.amassada {
+  filter: drop-shadow(0.25em 0.45em 0.5em var(--sombra));
 }
 
+.folha-amassada {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4em;
+  width: 36em;
+  padding: 1.7em 2.6em 1.5em;
+  text-align: center;
+  border: 0;
+  box-shadow: none;
+  --folha-giro: -2.5deg;
+  background-image:
+    linear-gradient(118deg, transparent 31%, color-mix(in srgb, var(--tinta) 9%, transparent) 31.2% 31.5%, color-mix(in srgb, var(--adesivo) 70%, transparent) 31.5% 32.4%, transparent 32.6%),
+    linear-gradient(64deg, transparent 58%, color-mix(in srgb, var(--tinta) 8%, transparent) 58.2% 58.5%, color-mix(in srgb, var(--adesivo) 60%, transparent) 58.5% 59.3%, transparent 59.5%),
+    linear-gradient(176deg, transparent 47%, color-mix(in srgb, var(--tinta) 7%, transparent) 47.2% 47.45%, color-mix(in srgb, var(--adesivo) 55%, transparent) 47.45% 48.2%, transparent 48.4%),
+    linear-gradient(28deg, transparent 80%, color-mix(in srgb, var(--tinta) 7%, transparent) 80.2% 80.5%, transparent 80.7%);
+  clip-path: polygon(
+    0% 1.6%, 5% 0.2%, 11% 1.4%, 18% 0%, 26% 1.8%, 33% 0.4%, 41% 1.5%, 49% 0%, 57% 1.7%, 64% 0.3%,
+    72% 1.2%, 80% 0%, 87% 1.6%, 94% 0.2%, 100% 1.2%,
+    99.3% 14%, 100% 27%, 99.1% 41%, 100% 55%, 99.4% 69%, 100% 83%, 99.2% 95%,
+    96% 98.4%, 91% 96.6%, 86% 99.6%, 80% 97.2%, 74% 100%, 68% 96.4%, 62% 99.2%, 56% 97%, 50% 100%,
+    44% 96.8%, 38% 99.5%, 32% 96.3%, 26% 99.8%, 20% 97%, 14% 99.4%, 8% 96.5%, 3% 99.2%, 0% 97%,
+    0.8% 84%, 0% 70%, 0.7% 56%, 0% 42%, 0.9% 28%, 0% 15%
+  );
+}
+
+/* O carimbo grande, no alto da folha. */
 .titulo-jubilado {
-  margin: 0;
-  font-family: var(--fonte-manuscrita);
-  font-size: 2.8em;
-  font-weight: 700;
-  color: var(--caneta-vermelha);
+  margin: 0 0 0.15em;
+  line-height: 1.1;
+}
+
+/* A caveira colada no canto, como as figurinhas da arena (o contorno branco
+   recortado e a sombra). */
+.jubilado-caveira {
+  position: absolute;
+  top: 0.7em;
+  right: 1.2em;
+  font-size: 2.6em;
+  line-height: 1;
+  rotate: 12deg;
+  filter:
+    drop-shadow(0.06em 0 0 var(--adesivo))
+    drop-shadow(-0.06em 0 0 var(--adesivo))
+    drop-shadow(0 0.06em 0 var(--adesivo))
+    drop-shadow(0 -0.06em 0 var(--adesivo))
+    drop-shadow(0.04em 0.07em 0.04em var(--sombra));
+}
+
+/* Na folha amassada o texto e todo em tinta (ou caneta): os vincos escurecem
+   o papel por onde passam, e a tinta fraca ficaria no limite. */
+.folha-amassada .subtitulo,
+.folha-amassada .jubilado-resumo {
+  color: var(--tinta);
 }
 
 /* ------------------------------------------------------------ relatorio */
@@ -1105,15 +1446,105 @@ body {
 
 /* -------------------------------------------------------------- anuncio */
 
-/* A "carta" da avaliacao antes de ela comecar: periodo, materia em destaque,
-   duracao e a lista de modificadores com emoji e descricao (design §9). Os
-   modificadores sao avisos num post-it laranja. */
-.anuncio {
-  background: color-mix(in srgb, var(--papel) 92%, transparent);
-  gap: 0.5em;
-  text-align: center;
+/* v2 (fase 19): o cabecalho da prova, numa folha pautada sobre a arena
+   escurecida. A mesma folha (.prova) serve ao resultado, que e a prova
+   corrigida. Todo texto fica na folha (papel opaco): nada e escrito direto
+   no veu, entao o contraste nao depende do clima (pendencia 103). */
+.anuncio,
+.resultado,
+.jubilado {
+  background: color-mix(in srgb, var(--tinta) 24%, transparent);
 }
 
+/* ------------------------------------------------------------- a prova */
+
+.prova {
+  display: flex;
+  flex-direction: column;
+  width: 44em;
+  padding: 1.1em 2em 1em 4.6em;
+  text-align: left;
+  --folha-giro: -0.6deg;
+}
+
+/* A instituicao a esquerda e o carimbo (ou a caixa da nota) a direita. */
+.prova-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.2em;
+}
+
+.prova-topo-texto {
+  flex: 1;
+  min-width: 0;
+}
+
+.prova-instituicao {
+  margin: 0.2em 0 0.4em;
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--tinta);
+}
+
+/* Os campos do cabecalho: rotulo impresso, valor escrito a mao. */
+.prova-cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 2.4em;
+  padding-bottom: 0.5em;
+  margin-bottom: 0.7em;
+  border-bottom: 0.1em solid var(--tinta);
+}
+
+.prova-campo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin: 0;
+}
+
+.prova-campo-inteiro {
+  flex-basis: 100%;
+}
+
+.prova-rotulo {
+  flex: none;
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tinta-fraca);
+}
+
+.prova-valor {
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.1em;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--tinta);
+}
+
+/* "Nome: ______": a linha em branco do cabecalho. */
+.prova-linha {
+  flex: 1;
+  min-width: 8em;
+  height: 1.1em;
+  border-bottom: 0.08em solid var(--tinta-fraca);
+}
+
+.titulo-anuncio {
+  margin: 0;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.7em;
+  font-weight: 700;
+  color: var(--tinta);
+}
+
+/* "Começa o semestre". A tela do TCC usa a mesma classe ("Fim do curso"). */
 .anuncio-novo-periodo {
   margin: 0;
   font-size: 0.75em;
@@ -1123,38 +1554,56 @@ body {
   color: var(--caneta-vermelha);
 }
 
-.anuncio-periodo {
+/* O periodo, carimbado pequeno no canto. */
+.prova-carimbo {
+  flex: none;
+  text-align: center;
+}
+
+.prova-carimbo .anuncio-novo-periodo,
+.prova-carimbo .anuncio-periodo {
   margin: 0;
-  font-size: 0.85em;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--tinta-fraca);
+  font-weight: 400;
+  color: inherit;
+  letter-spacing: 0.1em;
 }
 
-.titulo-anuncio {
+.prova-carimbo .anuncio-novo-periodo {
+  font-size: 0.62em;
+}
+
+.prova-carimbo .anuncio-periodo {
+  font-size: 1.05em;
+}
+
+/* Uma estrelinha a lapis na margem, de quem esperava a prova comecar. */
+.prova-rabisco {
+  position: absolute;
+  left: 0.9em;
+  top: 5.2em;
+  width: 2.2em;
+  height: 2.2em;
+  rotate: -12deg;
+}
+
+.prova-rodape {
+  display: flex;
+  align-items: center;
+  gap: 1.2em;
+  margin-top: 0.9em;
+}
+
+.prova-rodape .dica {
   margin: 0;
-  font-family: var(--fonte-manuscrita);
-  font-size: 2.6em;
-  font-weight: 700;
-  color: var(--tinta);
 }
 
-.anuncio-linha {
-  margin: 0;
-  font-size: 1em;
-  color: var(--tinta);
-}
-
-.anuncio-linha .rotulo {
-  color: var(--tinta-fraca);
-}
-
+/* Os modificadores: avisos grampeados na folha, um post-it laranja cada,
+   com o ⚠ no canto (textos.anuncio.aviso). */
 .anuncio-modificadores {
   display: flex;
-  flex-direction: column;
-  gap: 0.5em;
-  margin: 0.6em 0 0.4em;
-  width: min(34em, 88%);
+  flex-wrap: wrap;
+  gap: 1.1em;
+  margin: 0.3em 0 0.2em;
 }
 
 .anuncio-modificador {
@@ -1163,12 +1612,29 @@ body {
   grid-template-rows: auto auto;
   column-gap: 0.7em;
   align-items: center;
-  padding: 0.55em 0.9em;
-  border: 1px solid color-mix(in srgb, var(--tinta) 20%, transparent);
-  border-radius: 0.2em;
-  background: var(--marca-laranja);
-  box-shadow: 0 0.25em 0.6em var(--sombra);
+  flex: 1 1 15em;
+  max-width: 19em;
+  padding: 0.75em 1.8em 0.65em 0.8em;
   text-align: left;
+  --postit-cor: var(--marca-laranja);
+}
+
+.anuncio-modificador:nth-child(odd) {
+  --postit-giro: -1.6deg;
+}
+
+.anuncio-modificador:nth-child(even) {
+  --postit-giro: 1.4deg;
+}
+
+.anuncio-mod-aviso {
+  position: absolute;
+  top: 0.3em;
+  right: 0.45em;
+  font-size: 1.2em;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--carimbo);
 }
 
 .anuncio-mod-emoji {
@@ -1178,20 +1644,115 @@ body {
 }
 
 .anuncio-mod-nome {
-  font-size: 1em;
+  font-size: 0.95em;
   font-weight: 700;
   color: var(--tinta);
 }
 
 .anuncio-mod-descricao {
-  font-size: 0.82em;
+  font-size: 0.78em;
   color: var(--tinta);
 }
 
+/* Sem modificador: uma anotacao a lapis, sublinhada. */
 .anuncio-sem-modificador {
-  margin: 0.6em 0 0.4em;
-  font-size: 0.9em;
+  align-self: flex-start;
+  margin: 0.2em 0 0.1em 0.4em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 0.95em;
+  line-height: 1.25;
   color: var(--tinta-fraca);
+  rotate: -1.5deg;
+  border-bottom: 0.08em dashed var(--lapis);
+}
+
+/* ----------------------------------------------------- a prova corrigida */
+
+/* O cabecalho divide a linha com a caixa da nota, e o risco de baixo passa
+   pelos dois. */
+.prova-corrigida .prova-topo {
+  padding-bottom: 0.5em;
+  margin-bottom: 0.6em;
+  border-bottom: 0.1em solid var(--tinta);
+}
+
+.prova-corrigida .prova-cabecalho {
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+/* A caixa da nota no canto, onde o professor escreve: a nota em caneta
+   vermelha, grande e a mao. */
+.prova-nota {
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  min-width: 6.5em;
+  padding: 0.25em 0.9em 0.35em;
+  border-radius: 0.2em;
+  box-shadow: none;
+}
+
+.prova-nota .nota-valor {
+  font-family: var(--fonte-manuscrita);
+  font-size: 2.9em;
+  font-weight: 700;
+  rotate: -4deg;
+}
+
+/* Aprovado a mao e o conceito carimbado ao lado; a decomposicao anotada em
+   vermelho, na margem da correcao. */
+.correcao {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 2em;
+}
+
+.correcao-veredito {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3em;
+}
+
+.titulo-resultado {
+  margin: 0;
+  font-family: var(--fonte-manuscrita);
+  font-size: 2.2em;
+  font-weight: 700;
+  color: var(--caneta-verde);
+}
+
+.correcao-anotacao {
+  margin: 0;
+  max-width: 17em;
+  padding-left: 0.8em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1em;
+  line-height: 1.35;
+  text-align: left;
+  color: var(--caneta-vermelha);
+  border-left: 0.1em solid var(--caneta-vermelha);
+  rotate: -1.5deg;
+}
+
+/* Os creditos como uma moedinha: o selo dourado com o ◉ cunhado. */
+.prova-creditos {
+  align-self: flex-start;
+  margin: 0.7em 0 0;
+  padding: 0.15em 0.9em;
+  border: 0.08em solid var(--tinta);
+  border-radius: 1em;
+  background: var(--moeda);
+  box-shadow: inset 0 -0.14em 0 color-mix(in srgb, var(--tinta) 22%, transparent), 0 0.15em 0.3em var(--sombra);
+  rotate: -1deg;
+}
+
+.prova-corrigida > .dica {
+  margin: 0.4em 0 0;
 }
 
 /* ------------------------------------------------------------------ tcc */
@@ -1491,28 +2052,50 @@ body {
 
 /* ---------------------------------------------------- jubilado e menu */
 
+/* Onde caiu e quanto faltava, escritos a mao na folha amassada. */
 .jubilado-onde {
   margin: 0.2em 0 0;
-  font-size: 1em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.1em;
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--tinta);
 }
 
 .jubilado-faltava {
   margin: 0;
-  font-size: 0.9em;
-  color: var(--caneta-vermelha);
+  max-width: 28em;
+  font-family: var(--fonte-manuscrita);
+  font-size: 0.95em;
+  line-height: 1.35;
   text-align: center;
-  max-width: 40em;
+  color: var(--caneta-vermelha);
 }
 
+/* O recorde, um selo de papel com a estrelinha dourada recortada na frente. */
 .menu-recorde {
-  margin: 0.3em 0 0;
-  padding: 0 0.25em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  margin: 0;
+  padding: 0.3em 0.9em 0.3em 0.5em;
   font-size: 0.9em;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--tinta);
-  background: linear-gradient(transparent 55%, color-mix(in srgb, var(--moeda) 75%, transparent) 55% 92%, transparent 92%);
+  background-color: var(--adesivo);
+  border-radius: 0.5em;
+  box-shadow: 0 0.12em 0 var(--papel-sombra), 0 0.3em 0.7em color-mix(in srgb, var(--tinta) 80%, transparent);
+  rotate: 1deg;
+}
+
+.menu-recorde::before {
+  content: '';
+  flex: none;
+  width: 1.4em;
+  height: 1.4em;
+  background-color: var(--moeda);
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
 }
 
 /* ----------------------------------------------------------------- som */
@@ -1589,18 +2172,8 @@ body {
   100% { opacity: 1; translate: 0 0; rotate: 0deg; }
 }
 
-/* O conceito do boletim e da colacao chega como um carimbo: cai grande e
-   torto e assenta, depois do fade da tela. Fonte de carimbo, tinta de
-   carimbo (a cor vem de quem o usa: .nota-conceito). */
-.carimbo {
-  display: inline-block;
-  padding: 0.12em 0.5em;
-  font-family: var(--fonte-carimbo);
-  border: 0.12em solid currentColor;
-  border-radius: 0.3em;
-  rotate: var(--carimbo-giro);
-}
-
+/* O carimbo (a forma esta em "componentes de papel") cai grande e torto e
+   assenta, depois do fade da tela. */
 .camada:not(.oculto) .carimbo {
   animation: carimbar var(--duracao-carimbo) ease-in var(--atraso-carimbo) backwards;
 }

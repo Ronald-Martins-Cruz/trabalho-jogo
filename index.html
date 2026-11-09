@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<!-- `carregando`: a pagina fica escondida ate o ui.js escrever as cores e as
+     fontes de content.js no :root e tirar a classe (pendencia 101: sem isto o
+     menu piscava branco, em Times, enquanto os modulos carregavam). -->
+<html lang="pt-BR" class="carregando">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,6 +18,30 @@
   <span class="mesa-objeto mesa-lapis" aria-hidden="true">✏️</span>
   <span class="mesa-objeto mesa-cafe" aria-hidden="true">☕</span>
   <span class="mesa-objeto mesa-livros" aria-hidden="true">📚</span>
+
+  <!-- Os rabiscos a lápis (v2, fase 19): desenhados uma vez aqui e usados
+       com <use> onde aparecem. Só traço, sem cor: a tinta é a `color` de
+       quem usa (style.css, .rabisco). -->
+  <svg class="rabisco-defs" aria-hidden="true" focusable="false">
+    <symbol id="rabisco-sublinhado" viewBox="0 0 240 14" preserveAspectRatio="none">
+      <path d="M4 8 C 26 3, 48 12, 76 7 S 124 3, 150 8 S 202 11, 236 5"/>
+      <path d="M12 11 C 40 7, 72 13, 106 9 S 170 7, 230 9"/>
+    </symbol>
+    <symbol id="rabisco-estrela" viewBox="0 0 48 48">
+      <path d="M22 5 L26.5 17.5 L39.5 18 L29 26 L33 39.5 L22 31.5 L10.5 39.5 L15 26 L4.5 18 L17.5 17.5 L21 6.5"/>
+      <path d="M40 6 L43.5 2.5 M42 11 L46 10.5 M36 3.5 L36.5 0.5"/>
+    </symbol>
+    <symbol id="rabisco-seta" viewBox="0 0 80 50">
+      <path d="M4 8 C 20 38, 48 46, 71 31"/>
+      <path d="M59 28.5 L72 30.5 L66.5 42"/>
+    </symbol>
+    <symbol id="rabisco-xicara" viewBox="0 0 50 52">
+      <path d="M8 21 L11 39 C 12 43, 15 45, 19 45 L29 45 C 33 45, 36 43, 37 39 L40 21 Z"/>
+      <path d="M39.5 25 C 47.5 24, 47.5 35.5, 37.5 35"/>
+      <path d="M18 16 C 14 12, 21 9, 17 4 M27 16 C 23 12, 30 9, 26 4"/>
+      <path d="M3 49 C 16 51.5, 34 51.5, 47 48"/>
+    </symbol>
+  </svg>
 
   <div class="cena">
     <canvas id="palco" width="960" height="540"></canvas>
@@ -85,20 +112,45 @@
       </div>
     </div>
 
-    <!-- Anúncio: antes de cada avaliação. Os slots de modificador são montados
-         uma vez por ui.js e só trocam de conteúdo. -->
+    <!-- Anúncio: o cabeçalho da prova, numa folha pautada. O período é um
+         carimbo pequeno no canto; os modificadores, avisos grampeados
+         (post-its, os slots montados uma vez por ui.js e só trocando de
+         conteúdo). -->
     <div id="anuncio" class="camada anuncio oculto">
-      <p id="anuncio-novo-periodo" class="anuncio-novo-periodo">Começa o semestre</p>
-      <p id="anuncio-periodo" class="anuncio-periodo">1º Período</p>
-      <h2 id="anuncio-materia" class="titulo-anuncio">Cálculo I</h2>
-      <p class="anuncio-linha">
-        <span id="anuncio-avaliacao">Avaliação 1</span> ·
-        <span class="rotulo">duração</span> <span id="anuncio-duracao">1:00</span>
-      </p>
-      <div id="anuncio-modificadores" class="anuncio-modificadores"></div>
-      <p id="anuncio-sem-modificador" class="anuncio-sem-modificador"></p>
-      <button id="botao-comecar" class="botao botao-destaque" type="button">Começar</button>
-      <p class="dica">Enter ou Espaço para começar</p>
+      <div class="folha folha-pauta prova">
+        <svg class="rabisco prova-rabisco" aria-hidden="true" focusable="false"><use href="#rabisco-estrela"/></svg>
+        <div class="prova-topo">
+          <p class="prova-instituicao">Semana de Provas</p>
+          <div class="carimbo carimbo-pequeno prova-carimbo">
+            <p id="anuncio-novo-periodo" class="anuncio-novo-periodo">Começa o semestre</p>
+            <p id="anuncio-periodo" class="anuncio-periodo">1º Período</p>
+          </div>
+        </div>
+        <div class="prova-cabecalho">
+          <div class="prova-campo prova-campo-inteiro">
+            <span class="prova-rotulo">Disciplina:</span>
+            <h2 id="anuncio-materia" class="titulo-anuncio">Cálculo I</h2>
+          </div>
+          <p class="prova-campo">
+            <span class="prova-rotulo">Avaliação:</span>
+            <span id="anuncio-avaliacao" class="prova-valor">Avaliação 1</span>
+          </p>
+          <p class="prova-campo">
+            <span class="prova-rotulo">Duração:</span>
+            <span id="anuncio-duracao" class="prova-valor">1:00</span>
+          </p>
+          <p class="prova-campo prova-campo-inteiro">
+            <span class="prova-rotulo">Nome:</span>
+            <span class="prova-linha"></span>
+          </p>
+        </div>
+        <div id="anuncio-modificadores" class="anuncio-modificadores"></div>
+        <p id="anuncio-sem-modificador" class="anuncio-sem-modificador"></p>
+        <div class="prova-rodape">
+          <button id="botao-comecar" class="adesivo adesivo-destaque" type="button">Começar</button>
+          <p class="dica">Enter ou Espaço para começar</p>
+        </div>
+      </div>
     </div>
 
     <!-- TCC: o anúncio da defesa. A luta em si é uma avaliação com A Banca. -->
@@ -145,14 +197,24 @@
       </div>
     </div>
 
-    <!-- Menu -->
+    <!-- Menu: a capa do caderno. A etiqueta no meio com o título à mão e um
+         sublinhado rabiscado; "Jogar" é o adesivo grande; a dica, um post-it;
+         o recorde, uma estrelinha dourada. Os rabiscos são só enfeite. -->
     <div id="menu" class="camada menu">
-      <h1 class="titulo">Semana de Provas</h1>
-      <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
-      <button id="botao-jogar" class="botao botao-destaque" type="button">Jogar</button>
+      <svg class="rabisco menu-rabisco menu-rabisco-estrela" aria-hidden="true" focusable="false"><use href="#rabisco-estrela"/></svg>
+      <svg class="rabisco menu-rabisco menu-rabisco-xicara" aria-hidden="true" focusable="false"><use href="#rabisco-xicara"/></svg>
+      <div class="capa-etiqueta">
+        <h1 class="titulo">Semana de Provas</h1>
+        <svg class="rabisco rabisco-sublinhado" aria-hidden="true" focusable="false"><use href="#rabisco-sublinhado"/></svg>
+        <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
+      </div>
+      <div class="capa-jogar">
+        <svg class="rabisco menu-rabisco menu-rabisco-seta" aria-hidden="true" focusable="false"><use href="#rabisco-seta"/></svg>
+        <button id="botao-jogar" class="adesivo adesivo-grande adesivo-destaque" type="button">Jogar</button>
+      </div>
       <!-- O recorde (localStorage), só depois da primeira formatura. -->
       <p id="menu-recorde" class="menu-recorde oculto"></p>
-      <p class="dica">3 períodos · 9 avaliações · uma loja depois de cada · o TCC · WASD ou setas para mover · ESC pausa</p>
+      <p class="dica postit postit-verde menu-dica">3 períodos · 9 avaliações · uma loja depois de cada · o TCC · WASD ou setas para mover · ESC pausa</p>
       <!-- Só com CONTEUDO.debug.relatorio ligado e alguma partida já jogada. -->
       <div class="relatorio-barra oculto" data-relatorio-barra data-relatorio-menu>
         <span class="relatorio-rotulo">Relatório</span>
@@ -171,32 +233,57 @@
       <p class="dica">1 · 2 · 3 para escolher · ← → e Enter também servem</p>
     </div>
 
-    <!-- Pausa -->
+    <!-- Pausa: um post-it "Intervalo" colado sobre a arena (o canvas fica
+         escurecido por baixo; o HUD continua por cima). -->
     <div id="pausa" class="camada pausa oculto">
-      <h2 class="titulo-pausa">Pausado</h2>
-      <button id="botao-continuar" class="botao" type="button">Continuar</button>
-      <button id="botao-menu" class="botao botao-discreto" type="button">Desistir</button>
-      <p class="dica">ESC ou Enter continuam · trocar de aba também pausa</p>
+      <div class="postit postit-amarelo intervalo">
+        <h2 class="titulo-pausa">Intervalo</h2>
+        <button id="botao-continuar" class="adesivo" type="button">Continuar</button>
+        <button id="botao-menu" class="adesivo adesivo-discreto" type="button">Desistir</button>
+        <p class="dica">ESC ou Enter continuam · trocar de aba também pausa</p>
+      </div>
     </div>
 
-    <!-- Resultado: sobreviveu ao cronômetro. Os números saem de
+    <!-- Resultado: a prova corrigida, na mesma folha do anúncio. A nota em
+         caneta vermelha na caixa do canto, o conceito carimbado, a
+         decomposição anotada pelo professor. Os números saem de
          estado.run.resultado; aqui só mora o texto fixo. -->
     <div id="resultado" class="camada resultado oculto">
-      <p class="resultado-cabecalho">
-        <span id="resultado-periodo">1º Período</span> ·
-        <span id="resultado-avaliacao">Avaliação 1</span>
-      </p>
-      <h2 class="titulo-resultado">Aprovado</h2>
-      <div class="nota-caixa">
-        <span id="resultado-nota" class="nota-valor">0,0</span>
-        <span id="resultado-conceito" class="nota-conceito carimbo">Conceito F</span>
+      <div class="folha folha-pauta prova prova-corrigida">
+        <div class="prova-topo">
+          <div class="prova-topo-texto">
+            <p class="prova-instituicao">Semana de Provas · <span id="resultado-periodo">1º Período</span></p>
+            <div class="prova-cabecalho">
+              <p class="prova-campo prova-campo-inteiro">
+                <span class="prova-rotulo">Prova:</span>
+                <span id="resultado-avaliacao" class="prova-valor">Avaliação 1</span>
+              </p>
+              <p class="prova-campo prova-campo-inteiro">
+                <span class="prova-rotulo">Nome:</span>
+                <span class="prova-linha"></span>
+              </p>
+            </div>
+          </div>
+          <div class="nota-caixa prova-nota">
+            <span class="prova-rotulo">Nota</span>
+            <span id="resultado-nota" class="nota-valor">0,0</span>
+          </div>
+        </div>
+        <div class="correcao">
+          <div class="correcao-veredito">
+            <h2 class="titulo-resultado">Aprovado</h2>
+            <span id="resultado-conceito" class="nota-conceito carimbo">Conceito F</span>
+          </div>
+          <p id="resultado-decomposicao" class="decomposicao correcao-anotacao">—</p>
+        </div>
+        <p id="resultado-creditos" class="creditos prova-creditos">◉ 0 créditos</p>
+        <!-- Só com CONTEUDO.debug.boletimArmas ligado: nível e armas da partida. -->
+        <p id="resultado-armas" class="dica oculto"></p>
+        <div class="prova-rodape">
+          <button id="botao-resultado" class="adesivo adesivo-destaque" type="button">Continuar</button>
+          <p class="dica">Enter ou Espaço para seguir</p>
+        </div>
       </div>
-      <p id="resultado-decomposicao" class="decomposicao">—</p>
-      <p id="resultado-creditos" class="creditos">◉ 0 créditos</p>
-      <!-- Só com CONTEUDO.debug.boletimArmas ligado: nível e armas da partida. -->
-      <p id="resultado-armas" class="dica oculto"></p>
-      <button id="botao-resultado" class="botao botao-destaque" type="button">Continuar</button>
-      <p class="dica">Enter ou Espaço para seguir</p>
       <!-- Só com CONTEUDO.debug.relatorio: exporta o relatório de balanceamento. -->
       <div class="relatorio-barra oculto" data-relatorio-barra>
         <span class="relatorio-rotulo">Relatório</span>
@@ -226,17 +313,24 @@
       <p class="dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
     </div>
 
-    <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. Onde caiu e quanto
-         faltava saem de estado.run.resultado (ui.js). -->
+    <!-- Jubilado: o HP zerou. Sem nota — a run acabou aqui. A folha
+         amassada e rasgada, com o carimbo; onde caiu e quanto faltava saem de
+         estado.run.resultado (ui.js), escritos à mão. A sombra fica no
+         embrulho: o recorte da borda rasgada cortaria a da folha. -->
     <div id="jubilado" class="camada jubilado oculto">
-      <h2 class="titulo-jubilado">💀 Jubilado</h2>
-      <p class="subtitulo">Seu HP chegou a zero.</p>
-      <p id="jubilado-onde" class="jubilado-onde">—</p>
-      <p id="jubilado-faltava" class="jubilado-faltava">—</p>
-      <p id="jubilado-resumo" class="decomposicao">—</p>
-      <p id="jubilado-armas" class="dica oculto"></p>
-      <button id="botao-jubilado" class="botao" type="button">Voltar ao menu</button>
-      <p class="dica">Enter ou Espaço para voltar</p>
+      <div class="amassada">
+        <div class="folha folha-amassada">
+          <span class="jubilado-caveira" aria-hidden="true">💀</span>
+          <h2 class="titulo-jubilado carimbo carimbo-grande">Jubilado</h2>
+          <p class="subtitulo">Seu HP chegou a zero.</p>
+          <p id="jubilado-onde" class="jubilado-onde">—</p>
+          <p id="jubilado-faltava" class="jubilado-faltava">—</p>
+          <p id="jubilado-resumo" class="decomposicao jubilado-resumo">—</p>
+          <p id="jubilado-armas" class="dica oculto"></p>
+          <button id="botao-jubilado" class="adesivo" type="button">Voltar ao menu</button>
+          <p class="dica">Enter ou Espaço para voltar</p>
+        </div>
+      </div>
       <div class="relatorio-barra oculto" data-relatorio-barra>
         <span class="relatorio-rotulo">Relatório</span>
         <button class="botao botao-relatorio" type="button" data-relatorio="avaliacao">Desta avaliação</button>
