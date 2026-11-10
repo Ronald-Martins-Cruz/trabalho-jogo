@@ -13,6 +13,7 @@ import {
   atualizarRegras,
   colacaoLiberada,
   colarGrau,
+  comecarDemo,
   comecarProxima,
   comecarTcc,
   fecharAvaliacao,
@@ -555,6 +556,11 @@ function ligarTeclado(estado, audio) {
       ev.preventDefault();
       return;
     }
+    if (CONTEUDO.debug.atalhoDemo === true && !ev.repeat && ev.shiftKey && ev.code === TECLA_DEMO && menuLiberado(estado)) {
+      comecarDemo(estado);
+      ev.preventDefault();
+      return;
+    }
     // Menu e pausa: Enter/Espaco fazem o botao principal ("Jogar",
     // "Continuar"), como nas outras telas — sem mouse, o jogo nao comecava.
     // Com um botao visivel em foco (Tab), quem age e ele: o Enter no
@@ -618,6 +624,11 @@ function botaoEmFoco(ev) {
 // quem aperta ESC para pausar no instante em que o cronometro zera fecharia o
 // boletim sem ler. Na tela de fim o ESC cai em alternarPausa, que nao faz nada.
 const TECLAS_SEGUIR = new Set(['Enter', 'NumpadEnter', 'Space']);
+
+// O atalho de demonstracao (debug.atalhoDemo, fase 23): Shift+T no menu pula
+// para o TCC (run.js, comecarDemo). So com Shift e so no menu: ninguem o
+// aperta jogando, e o menu nao tem outra tecla de letra.
+const TECLA_DEMO = 'KeyT';
 
 // A unica saida das duas telas de fim de avaliacao, usada pelo teclado e
 // pelos dois botoes. Devolve false quando nao ha nada para fechar — e o que

@@ -135,6 +135,40 @@ body {
   visibility: hidden;
 }
 
+/* Fase 23: o aviso de quem abriu o index.html com dois cliques (o navegador
+   nao carrega modulo por file://). Se a pagina continua `carregando` depois
+   da espera, os modulos nao vieram: o aviso aparece por cima do corpo
+   escondido. A espera mora aqui e nao em juice.css porque juice.css so chega
+   ao CSS pelos modulos, que sao justamente o que nao carregou; e longa o
+   bastante para uma carga lenta pela internet nao piscar o aviso. Sem cor nem
+   fonte: as do tema tambem chegam pelos modulos (fica o padrao do navegador,
+   tinta preta no branco). */
+.aviso-sem-servidor {
+  display: none;
+}
+
+.carregando .aviso-sem-servidor {
+  --espera-aviso-sem-servidor: 3s;
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  max-width: 36em;
+  height: fit-content;
+  margin: auto;
+  padding: 2em;
+  line-height: 1.5;
+  visibility: visible;
+  animation: esperar-aviso-sem-servidor var(--espera-aviso-sem-servidor) step-end;
+}
+
+@keyframes esperar-aviso-sem-servidor {
+  from,
+  to {
+    visibility: hidden;
+  }
+}
+
 /* --------------------------------------------------- componentes de papel */
 
 /* v2 (fase 19): as pecas de papel das telas (a fase 20 as reusa). Cada uma

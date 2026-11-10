@@ -1666,14 +1666,27 @@ export const CONTEUDO = {
     // Linha extra no boletim (resultado e jubilado) com o nivel do jogador e
     // as armas equipadas com seus niveis. Pedido do checkpoint humano 1 para
     // dar feedback de balanceamento durante o desenvolvimento.
-    boletimArmas: true,
+    boletimArmas: false,
     // Telemetria da partida (src/telemetria.js) e os botoes que exportam o
     // relatorio de balanceamento (src/relatorio.js) nas telas de fim e no
     // menu. Pedido do usuario (todo.md): um relatorio completo para mandar a
     // agentes que balanceiam o jogo. So observa — desligar nao muda um numero
     // da simulacao, e o smoke prova isso rodando a mesma semente dos dois
     // jeitos.
-    relatorio: true,
+    relatorio: false,
+    // Fase 23: Shift+T no menu pula para o TCC com os coringas de `demo`
+    // (aqui embaixo), para a apresentacao em sala mostrar A Banca sem jogar
+    // os ~14 min da run. So no menu e so com Shift: quem joga nao o aperta.
+    // A run do atalho nao conta recorde.
+    atalhoDemo: true,
+  },
+
+  // O atalho de demonstracao (debug.atalhoDemo): a mao com que a run comeca
+  // no TCC, e a nota que fecha cada boletim pulado (o diploma da colacao sai
+  // inteiro, com esta media).
+  demo: {
+    coringas: ['caderno', 'whatsapp', 'atestado', 'energetico', 'wifi'],
+    nota: 8.5,
   },
 
   // Parametros do INSTRUMENTO de medida (debug.relatorio), nao do jogo: nada
@@ -2990,6 +3003,23 @@ export function validarConteudo(conteudo = CONTEUDO) {
     for (const [chave, valor] of Object.entries(conteudo.debug)) {
       if (typeof valor !== 'boolean') erros.push(`debug.${chave}: esperava true/false, veio ${JSON.stringify(valor)}`);
     }
+  }
+
+  // O atalho de demonstracao: coringas que existem, sem repetir, cabendo na
+  // mao (loja.teto), e uma nota dentro da escala.
+  if (exigeObjeto(conteudo.demo, 'demo')) {
+    const lista = conteudo.demo.coringas;
+    const ids = new Set((Array.isArray(conteudo.coringas) ? conteudo.coringas : []).map((c) => c && c.id));
+    if (!Array.isArray(lista)) erros.push('demo.coringas: esperava uma lista de ids de coringa');
+    else {
+      for (const id of lista) if (!ids.has(id)) erros.push(`demo.coringas: "${id}" nao e um coringa`);
+      if (new Set(lista).size !== lista.length) erros.push('demo.coringas: id repetido');
+      const teto = conteudo.loja && conteudo.loja.teto;
+      if (typeof teto === 'number' && lista.length > teto) erros.push(`demo.coringas: ${lista.length} coringas, a mao cabe ${teto} (loja.teto)`);
+    }
+    const nota = conteudo.demo.nota;
+    const maxima = conteudo.nota && conteudo.nota.maxima;
+    if (typeof nota !== 'number' || !(nota >= 0 && nota <= maxima)) erros.push(`demo.nota: esperava um numero de 0 a nota.maxima, veio ${JSON.stringify(nota)}`);
   }
 
   // Instrumento do relatorio. Nada aqui mexe no jogo, mas um zero no lugar

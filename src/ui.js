@@ -670,7 +670,12 @@ export function criarUi(doc) {
       }
     }
     texto(el.colacaoCoringas, run.coringas.length > 0 ? nomesDosCoringas(run.coringas) : t.semCoringa);
-    texto(el.colacaoRecorde, textoDoRecorde(estado.recorde, c.novoRecorde));
+    // Sem formatura guardada e sem recorde novo (a colacao do atalho de
+    // demonstracao, numa maquina que nunca formou), nao ha recorde a mostrar:
+    // a linha some, como no menu, em vez de "(0,0) · formaturas: 0".
+    const mostrarRecorde = c.novoRecorde || estado.recorde.formaturas > 0;
+    texto(el.colacaoRecorde, mostrarRecorde ? textoDoRecorde(estado.recorde, c.novoRecorde) : '');
+    visivel(el.colacaoRecorde, mostrarRecorde);
     classe(el.colacaoRecorde, 'novo', c.novoRecorde);
   }
 

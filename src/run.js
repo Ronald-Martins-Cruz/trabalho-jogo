@@ -13,7 +13,7 @@ import {
   TELAS,
 } from './state.js';
 import { liberarPoolsDoEstado } from './pool.js';
-import { aoIniciarAvaliacao } from './jokers.js';
+import { aoIniciarAvaliacao, novaInstancia } from './jokers.js';
 import { equiparArma } from './weapons.js';
 import { receberDano } from './player.js';
 import { iniciarBanca, novaBanca } from './boss.js';
@@ -298,6 +298,32 @@ export function avancarRun(estado) {
   return true;
 }
 
+// O atalho de demonstracao (debug.atalhoDemo, fase 23): uma run nova ja na
+// tela do TCC, como se a ultima Prova Final tivesse acabado de passar, com os
+// coringas de CONTEUDO.demo e cada boletim fechado na nota demo.nota (o
+// diploma sai inteiro). Uma run inteira tem ~14 min e nao cabe numa
+// apresentacao de sala. A run fica marcada (run.demo) e a formatura dela nao
+// conta recorde (colarGrau). Fora do loop (tecla no menu, main.js), entao
+// alocar aqui nao fere a regra de pool. Devolve false fora do menu.
+export function comecarDemo(estado) {
+  if (estado.tela !== TELAS.MENU) return false;
+  iniciarRun(estado);
+  const run = estado.run;
+  const demo = CONTEUDO.demo;
+  run.demo = true;
+  const ultimo = CONTEUDO.periodos.length - 1;
+  run.periodoIndex = ultimo;
+  run.avaliacaoIndex = CONTEUDO.periodos[ultimo].avaliacoes.length - 1;
+  for (const b of run.boletins) {
+    b.feita = true;
+    b.nota = demo.nota;
+    b.conceito = conceitoDaNota(demo.nota);
+  }
+  for (const id of demo.coringas) run.coringas.push(novaInstancia(id));
+  avancarRun(estado);
+  return true;
+}
+
 // O atraso de abertura da tela do TCC. Quem checa e o main.js, antes de
 // chamar comecarTcc — como no anuncio.
 export function tccLiberado(estado) {
@@ -377,7 +403,8 @@ export function colarGrau(estado) {
   c.tempoTcc = run.resultado.tempo;
   c.feita = true;
   c.abertaEm = estado.tempo;
-  const completa = runCompleta(run.boletins);
+  // A run do atalho de demonstracao (comecarDemo) tem boletins de mentira.
+  const completa = runCompleta(run.boletins) && run.demo !== true;
   c.novoRecorde = completa && registrarFormatura(estado.recorde, c.media, c.conceito);
   irParaTela(estado, TELAS.COLACAO);
   emitir(estado, 'colacao', { media: c.media, conceito: c.conceito, novoRecorde: c.novoRecorde });

@@ -7,12 +7,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Semana de Provas</title>
+  <meta name="description" content="Semana de Provas: um survivor em que você tem 3 períodos para se formar, jogado num caderno.">
+  <meta name="author" content="Ronald Martins Cruz">
   <!-- Sem isto o navegador pede /favicon.ico, que nao existe (zero asset): um
        404 vermelho no console a cada carga, bem na apresentacao. -->
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Fase 23: só aparece se os módulos do jogo não carregarem (style.css,
+       .aviso-sem-servidor), que é o que acontece ao abrir este arquivo com
+       dois cliques: o navegador não carrega módulo por file://. Sai sem as
+       cores e as fontes do caderno, de propósito: elas também chegam pelos
+       módulos. O test/zip.mjs o tira do jogar-sem-servidor.html. -->
+  <div id="aviso-sem-servidor" class="aviso-sem-servidor" role="alert">
+    <h1>Semana de Provas</h1>
+    <p>O jogo ainda não carregou. Se você abriu este <code>index.html</code> com dois cliques, é por isso: ele precisa de um servidor para rodar.</p>
+    <p><strong>Para jogar sem instalar nada:</strong> abra com dois cliques o <code>jogar-sem-servidor.html</code>, que vem no zip da entrega, ao lado deste arquivo (no Chrome ou no Edge).</p>
+    <p>Ou rode <code>npm run serve</code> nesta pasta e abra o endereço que ele mostrar. O <a href="README.md">README.md</a> explica.</p>
+  </div>
+
   <!-- A mesa em volta da cena: objetos parados, só decoração. Somem quando a
        janela não tem mesa dos lados (style.css). -->
   <span class="mesa-objeto mesa-lapis" aria-hidden="true">✏️</span>

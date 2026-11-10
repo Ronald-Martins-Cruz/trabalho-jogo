@@ -4,3 +4,5 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+# o zip da entrega (npm run zip) nasce fora do repositorio; se nascer aqui, fica fora do git
+*.zip

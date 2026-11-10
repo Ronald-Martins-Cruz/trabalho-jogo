@@ -12,7 +12,8 @@
     "fuzz": "node test/fuzz.mjs",
     "dom": "node --expose-gc test/dom.mjs",
     "serve": "node test/serve.mjs",
-    "fotos": "node test/fotos.mjs"
+    "fotos": "node test/fotos.mjs",
+    "zip": "node test/zip.mjs"
   },
   "license": "MIT"
 }

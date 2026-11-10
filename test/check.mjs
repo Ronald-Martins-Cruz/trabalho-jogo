@@ -159,9 +159,24 @@ try {
 
 // ------------------------------------------------ 5. nenhum asset binario
 
+// A unica excecao (fase 23, decisao 9 da v2): os prints do README, em
+// docs/prints/ e so ali, poucos e pequenos. O jogo nunca os carrega.
+const PASTA_PRINTS = 'docs/prints/';
+const PRINT = ['.png', '.jpg', '.jpeg', '.webp'];
+const MAX_PRINTS = 4;
+const MAX_BYTES_PRINT = 300 * 1024;
+let prints = 0;
 for (const arquivo of listarArquivos(RAIZ, (c) => EXTENSOES_BINARIAS.includes(extname(c).toLowerCase()))) {
+  const rel = relative(RAIZ, arquivo).split('\\').join('/');
+  if (rel.startsWith(PASTA_PRINTS) && !rel.slice(PASTA_PRINTS.length).includes('/') && PRINT.includes(extname(rel).toLowerCase())) {
+    prints += 1;
+    const bytes = statSync(arquivo).size;
+    if (bytes > MAX_BYTES_PRINT) erros.push(`${rel}: ${Math.round(bytes / 1024)} KB, o print do README pode ter ate ${MAX_BYTES_PRINT / 1024} KB`);
+    continue;
+  }
   erros.push(`asset binario proibido no repositorio: ${relative(RAIZ, arquivo)}`);
 }
+if (prints > MAX_PRINTS) erros.push(`${PASTA_PRINTS}: ${prints} prints, o README pode ter ate ${MAX_PRINTS}`);
 
 // --------------------------------------------- 6. integridade do conteudo
 
