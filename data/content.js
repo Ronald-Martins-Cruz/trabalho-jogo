@@ -304,8 +304,11 @@ export const CONTEUDO = {
       },
       porTipo: {
         prazo: { quantidade: 8, cores: ['#ff4d5e', '#ff8a96', '#ffd0d5'] },
-        notificacao: { quantidade: 6, cores: ['#ffd23f', '#fff1a8', '#ffb627'], fracaoRabisco: 0.6 },
-        pdf: { quantidade: 14, cores: ['#f4f6ff', '#c9d2ea', '#8fa2d6'], velocidadeMax: 140, tamanhoMax: 7, fracaoRabisco: 0.1 },
+        // Checkpoint 6 (decisao 27, pendencia 112): o 🔔 e o 📄 na mesma
+        // familia, mais escuros. O branco e o amarelo-claro de antes davam 1,02
+        // a 1,36:1 no papel e sumiam; agora 1,66 a 4,64:1.
+        notificacao: { quantidade: 6, cores: ['#ffb627', '#d9a21b', '#b8860b'], fracaoRabisco: 0.6 },
+        pdf: { quantidade: 14, cores: ['#8fa2d6', '#6f7fa8', '#4f6fb5'], velocidadeMax: 140, tamanhoMax: 7, fracaoRabisco: 0.1 },
         trabalhoGrupo: { quantidade: 9, cores: ['#56c8ff', '#9ee6ff', '#2f6dff'] },
         // A derrota da Banca: so confete, nas cores dela (o azul e o rosa das
         // duas fases, o dourado e a tinta do carimbo — o branco da v1 sumia no
@@ -324,10 +327,11 @@ export const CONTEUDO = {
         },
       },
       // O jubilado: o jogador se desfaz onde caiu (aparece por baixo da tela
-      // de jubilado, durante o fade dela).
+      // de jubilado, durante o fade dela). O branco da v1 virou a tinta
+      // (checkpoint 6): no papel, 1,06:1.
       jogador: {
         quantidade: 40,
-        cores: ['#8fd6ff', '#ffffff', '#ff5d7a'],
+        cores: ['#8fd6ff', COR.tinta, '#ff5d7a'],
         velocidadeMin: 60,
         velocidadeMax: 260,
         vidaMin: 0.5,
@@ -505,6 +509,10 @@ export const CONTEUDO = {
       // Fase 20: o post-it (carta) e o cartao (loja) do cursor levantam e
       // endireitam; o slot de coringa tambem. Eram 120ms/160ms escritos no CSS.
       '--postit-levantar': '140ms',
+      // O adesivo (botao) levantando no hover e a sombra dele. Eram 90ms e
+      // 140ms escritos no CSS.
+      '--adesivo-levantar': '90ms',
+      '--adesivo-sombra': '140ms',
     },
   },
 

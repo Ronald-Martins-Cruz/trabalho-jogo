@@ -8616,7 +8616,9 @@ function checarSelecaoSoDoEstado(regras = regrasDoCss()) {
   const alvos = /carta-opcao|loja-item|loja-slot|loja-acao/;
   let hovers = 0;
   for (const [sel, decl] of regras) {
-    if (!sel.includes(':hover') || !alvos.test(sel)) continue;
+    // Uma peca nomeada so dentro de um :not() nao e alvo do seletor: e a que
+    // ele deixa de fora (a margem invisivel do adesivo, `:not(.loja-acao)`).
+    if (!sel.includes(':hover') || !alvos.test(sel.replace(/:not\([^()]*\)/g, ''))) continue;
     hovers += 1;
     if (!sel.includes(':not(.selecionada)')) falhar(0, `selecao: "${sel}" acende pelo mouse, fora do estado (pendencia 26)`);
     if (Object.values(decl).some((v) => /marca-amarelo/.test(v))) falhar(0, `selecao: "${sel}" pinta de amarelo no :hover`);
@@ -8706,6 +8708,79 @@ function checarCorDasVariantes(regras, pares) {
   }
 }
 
+// Checkpoint 6 (fase 22): o pisca no hover. Uma transicao em `transform`,
+// `rotate`, `scale` ou `translate` faz o Chrome subir para uma camada propria,
+// enquanto ela anda, tudo o que e desenhado depois e pode encostar; um papel
+// girado numa camada propria e rasterizado de outro jeito, e o post-it do
+// menu, o HUD e as cartas vizinhas mudavam de cara no comeco e no fim de cada
+// hover (reproduzido no Chrome: fotos --hover e o handoff). O que levanta anda
+// por `top`. As animacoes de entrada (keyframes) nao contam: rodam uma vez.
+function checarTransicaoSemCamada(regras = regrasDoCss()) {
+  const proibidas = /(^|[\s,])(transform|rotate|scale|translate|all)(?=[\s,]|$)/;
+  let transicoes = 0;
+  for (const [sel, decl] of regras) {
+    for (const prop of ['transition', 'transition-property']) {
+      if (decl[prop] === undefined) continue;
+      transicoes += 1;
+      const lista = decl[prop].replace(/var\([^)]*\)/g, '').split(',').map((t) => t.trim().split(/\s+/)[0]);
+      const ruim = lista.filter((p) => proibidas.test(p));
+      if (ruim.length) falhar(0, `pisca: "${sel} { ${prop}: ${decl[prop]} }" transiciona ${ruim.join(', ')} — leva os papeis vizinhos para outra camada e eles piscam (checkpoint 6)`);
+    }
+  }
+  if (transicoes === 0) falhar(0, 'pisca: nenhuma transicao lida do style.css (o leitor de regras quebrou?)');
+  return `pisca: ${transicoes} transicoes no style.css, nenhuma em transform/rotate/scale/translate`;
+}
+
+// Rodada 2 do checkpoint 6 (o bloqueio da revisao): o que levanta pelo layout
+// no :hover (`top` negativo) sai de baixo do mouse parado perto da borda de
+// baixo, perde o :hover, desce, ganha de novo, sem parar (medido no Chrome:
+// 28 a 93 trocas por segundo). A margem invisivel (o ::before do mesmo
+// :hover, sem nada desenhado) tem de descer mais do que a peca sobe; a do
+// :active, subir mais do que a peca desce do levantado ao apertado, somado a
+// margem de cima do :hover (o clique que comeca na faixa de cima). O giro
+// depende da largura: quem mede com ele e o `fotos --hover`, no Chrome.
+function checarMargemDoHover(regras = regrasDoCss()) {
+  const em = (v) => {
+    const m = /^(-?\d*\.?\d+)em$/.exec(String(v === undefined ? '' : v).trim());
+    return m ? Number(m[1]) : null;
+  };
+  const margem = (d) => {
+    const [t, r = t, b = t, l = r] = String(d.inset || '').trim().split(/\s+/).map(em);
+    return { t: d.top !== undefined ? em(d.top) : t, r, b, l };
+  };
+  // O ::before do estado, com as pecas de fora (`:not(...)`) tiradas do nome.
+  const doEstado = (base, estado) => [...regras].filter(([s]) => s.replace(/:not\([^()]*\)/g, '') === `${base}:${estado}::before`).map(([s, d]) => [s, d]);
+  const pecas = [];
+  for (const [sel, decl] of regras) {
+    if (!/^\.[\w-]+:hover$/.test(sel)) continue;
+    const sobe = em(decl.top);
+    if (sobe === null || sobe >= 0) continue;
+    const base = sel.slice(0, -':hover'.length);
+    const apertado = regras.get(`${base}:active`) || {};
+    const desce = em(apertado.top) || 0;
+    const hover = doEstado(base, 'hover');
+    const active = doEstado(base, 'active');
+    if (hover.length === 0) {
+      falhar(0, `margem do hover: "${sel}" levanta ${-sobe}em por top e nao tem a margem invisivel ("${base}:hover::before"): com o mouse parado perto da borda de baixo, a peca vibra`);
+      continue;
+    }
+    for (const [s, d] of hover) {
+      const m = margem(d);
+      if (d.content === undefined || d.position !== 'absolute' || m.b === null || m.t === null) falhar(0, `margem do hover: "${s}" precisa de content, position: absolute e inset em em`);
+      else if (-m.b <= -sobe) falhar(0, `margem do hover: "${s}" desce ${-m.b}em, e "${sel}" sobe ${-sobe}em: a peca ainda sai de baixo do mouse`);
+    }
+    for (const [s, d] of active) {
+      const m = margem(d);
+      const precisa = -sobe + desce + Math.max(...hover.map(([, h]) => -margem(h).t));
+      if (m.t === null || -m.t <= precisa) falhar(0, `margem do hover: "${s}" sobe ${m.t === null ? '?' : -m.t}em, e do levantado ao apertado a peca desce ${-sobe + desce}em (mais a margem de cima do :hover): o clique que comeca na faixa de cima nao vale`);
+    }
+    if (desce > 0 && active.length === 0) falhar(0, `margem do hover: "${base}:active" desce a peca ${desce}em e nao tem a margem invisivel ("${base}:active::before")`);
+    pecas.push(`${base} (sobe ${-sobe}em, margem ${-margem(hover[0][1]).b}em embaixo; apertado ${active.length ? `${-margem(active[0][1]).t}em em cima` : 'sem margem'})`);
+  }
+  if (pecas.length === 0) falhar(0, 'margem do hover: nenhuma peca levanta por top no :hover (o leitor de regras quebrou?)');
+  return `margem do hover: ${pecas.join(', ')}`;
+}
+
 function checarFase20() {
   const regras = regrasDoCss();
   checarCorDasVariantes(regras, PARES_DAS_TELAS_B);
@@ -8714,6 +8789,8 @@ function checarFase20() {
     checarEstruturaDasTelasB(regras),
     checarSelecaoSoDoEstado(regras),
     checarLojaSemMontarParada(),
+    checarTransicaoSemCamada(regras),
+    checarMargemDoHover(regras),
   ];
   return partes.map((p) => `\n    ${p}`).join('');
 }

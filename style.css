@@ -311,14 +311,24 @@ body {
   border-radius: 0.8em;
   box-shadow: 0 0.16em 0 var(--tinta), 0 0.4em 0.8em var(--sombra);
   cursor: pointer;
-  transition: transform 90ms ease, background 140ms ease, box-shadow 140ms ease;
+  /* O pisca do checkpoint 6: transicao em `transform` (ou `rotate`, `scale`,
+     `translate`) faz o Chrome jogar numa camada propria, enquanto ela anda,
+     tudo o que e desenhado depois e pode encostar — e numa camada propria um
+     papel girado e rasterizado de outro jeito. O post-it do menu, o HUD e as
+     cartas vizinhas mudavam de cara no comeco e no fim de cada hover. Por isso
+     o que levanta anda por `top` (posicao relativa, sem camada) e o giro troca
+     de uma vez. */
+  position: relative;
+  top: 0;
+  transition: top var(--adesivo-levantar) ease, background var(--adesivo-sombra) ease, box-shadow var(--adesivo-sombra) ease;
 }
 
 .botao:hover,
 .botao:focus-visible,
 .adesivo:hover,
 .adesivo:focus-visible {
-  transform: translateY(-0.12em) rotate(-1deg);
+  top: -0.12em;
+  transform: rotate(-1deg);
   box-shadow: 0 0.28em 0 var(--tinta), 0 0.7em 1.1em var(--sombra);
   outline: none;
 }
@@ -331,8 +341,34 @@ body {
 
 .botao:active,
 .adesivo:active {
-  transform: translateY(0.08em);
+  top: 0.08em;
+  transform: none;
   box-shadow: 0 0.06em 0 var(--tinta), 0 0.2em 0.4em var(--sombra);
+}
+
+/* A margem invisivel (o bloqueio da revisao do checkpoint 6). Com o mouse
+   parado perto da borda de baixo, o adesivo levantado saia de baixo do
+   cursor, perdia o :hover, descia, ganhava de novo, sem parar: o Chrome refaz
+   o hit-test depois de cada layout, com o mouse parado (28 a 93 trocas por
+   segundo). Enquanto o mouse esta nele, este ::before sem nada desenhado o
+   alarga por fora, mais embaixo, para onde ele foge (o levantar e o canto que
+   o giro de -1 grau sobe); apertado, alarga para cima, que o :active o desce e
+   desentorta, e o clique que comeca na faixa de cima terminaria fora dele. O
+   inset conta da borda de dentro (a de 0,12em fica por dentro dele). O
+   folheto da loja nao levanta no :hover e o ::before dele e o percevejo: o
+   clique dele e o do .selecionada, abaixo. */
+.botao:hover::before,
+.botao:active::before,
+.adesivo:not(.loja-acao):hover::before,
+.adesivo:not(.loja-acao):active::before {
+  content: '';
+  position: absolute;
+  inset: -0.15em -0.25em -0.45em;
+}
+
+.botao:active::before,
+.adesivo:not(.loja-acao):active::before {
+  top: -0.6em;
 }
 
 .botao-destaque,
@@ -1068,9 +1104,12 @@ body {
   color: var(--tinta);
   border: 0;
   cursor: pointer;
+  /* Levanta por `top`, e o giro e a escala trocam de uma vez: transicao de
+     transform fazia piscar os papeis vizinhos (o pisca do checkpoint 6, ver
+     .adesivo). */
+  top: 0;
   transition:
-    transform var(--postit-levantar) ease-out,
-    rotate var(--postit-levantar) ease-out,
+    top var(--postit-levantar) ease-out,
     box-shadow var(--postit-levantar) ease-out;
 }
 
@@ -1110,7 +1149,8 @@ body {
 .carta .carta-opcao.selecionada {
   --postit-giro: 0deg;
   z-index: 1;
-  transform: translateY(-0.7em) scale(1.05);
+  top: -0.7em;
+  transform: scale(1.05);
   box-shadow:
     inset 0 -0.6em 0.7em -0.6em color-mix(in srgb, var(--tinta) 14%, transparent),
     0.25em 1em 1.3em var(--sombra);
@@ -1122,16 +1162,19 @@ body {
    especificidade que um :active solto: por isso o :active mora nela, em cada
    peca, um pouco abaixo do levantado. */
 .carta .carta-opcao.selecionada:active {
-  transform: translateY(-0.3em) scale(1.02);
+  top: -0.3em;
+  transform: scale(1.02);
 }
 
 .loja-item.selecionada:active {
-  transform: translateY(-0.15em) scale(1.01);
+  top: -0.15em;
+  transform: scale(1.01);
 }
 
 .loja-acao.selecionada:active,
 .loja-slot.selecionada:active {
-  transform: translateY(0.06em);
+  top: 0.06em;
+  transform: none;
 }
 
 /* O cursor da carta e da loja: uma volta de caneta em torno do que ele
@@ -1147,6 +1190,24 @@ body {
   border-radius: 1.7em 2.3em 1.9em 2.1em / 1.3em 1.6em 1.2em 1.5em;
   rotate: -1.6deg;
   pointer-events: none;
+}
+
+/* Apertado, a volta de caneta tambem recebe o mouse (o bloqueio da revisao
+   do checkpoint 6): o :active desce a peca, e o clique que comeca na faixa de
+   cima terminaria fora dela e nao valeria. A volta ja esta desenhada em
+   volta da peca; nada do que se ve muda. Cobre o folheto inteiro; no post-it
+   e no cartao a fita, o selo e a escala descem mais do que a volta sobra por
+   cima, e fica uma faixa menor (medida no handoff). O slot tem a volta justa
+   em cima (pendencia 123) e o ::before livre: a margem e ele. */
+.carta-opcao.selecionada:active::after,
+.loja-acao.selecionada:active::after {
+  pointer-events: auto;
+}
+
+.loja-slot.selecionada:active::before {
+  content: '';
+  position: absolute;
+  inset: -0.5em -0.3em;
 }
 
 /* O numero da tecla, escrito a lapis no canto (em tinta: e informacao). */
@@ -1378,7 +1439,8 @@ body {
 .loja-item.selecionada {
   --cartao-giro: 0deg;
   z-index: 1;
-  transform: translateY(-0.45em) scale(1.04);
+  top: -0.45em;
+  transform: scale(1.04);
   box-shadow: 0.2em 0.8em 1.1em var(--sombra);
   outline: none;
 }
@@ -1468,7 +1530,7 @@ body {
   border-radius: 0.2em;
   box-shadow: 0.08em 0.3em 0.45em var(--sombra);
   transition:
-    transform var(--postit-levantar) ease-out,
+    top var(--postit-levantar) ease-out,
     box-shadow var(--postit-levantar) ease-out;
 }
 
@@ -1481,7 +1543,8 @@ body {
 }
 
 .loja-acao.selecionada {
-  transform: translateY(-0.2em);
+  top: -0.2em;
+  transform: none;
   box-shadow: 0.15em 0.6em 0.8em var(--sombra);
 }
 
@@ -1499,6 +1562,7 @@ body {
 .loja-acao:hover:not(.selecionada),
 .loja-acao:focus-visible:not(.selecionada) {
   box-shadow: 0.08em 0.3em 0.45em var(--sombra);
+  top: 0;
   transform: none;
 }
 
@@ -1548,9 +1612,9 @@ body {
   box-shadow: 0.04em 0.12em 0.25em var(--sombra);
   rotate: -2deg;
   cursor: pointer;
+  top: 0;
   transition:
-    transform var(--postit-levantar) ease-out,
-    rotate var(--postit-levantar) ease-out,
+    top var(--postit-levantar) ease-out,
     box-shadow var(--postit-levantar) ease-out;
 }
 
@@ -1562,7 +1626,7 @@ body {
    caneta, vermelha. */
 .loja-slot.selecionada {
   z-index: 1;
-  transform: translateY(-0.15em);
+  top: -0.15em;
   rotate: 0deg;
   background: var(--marca-rosa);
   box-shadow: 0.1em 0.45em 0.7em var(--sombra);
@@ -1738,9 +1802,10 @@ body {
   rotate: 1.5deg;
   opacity: 0;
   visibility: hidden;
-  translate: 0 0.4em;
   pointer-events: none;
-  transition: opacity var(--tooltip) ease-out, translate var(--tooltip) ease-out, visibility 0s linear var(--tooltip);
+  /* So o fade: o `translate` que subia junto fazia a cartela de modificadores
+     e o resto do HUD piscarem (o pisca do checkpoint 6, ver .adesivo). */
+  transition: opacity var(--tooltip) ease-out, visibility 0s linear var(--tooltip);
 }
 
 .hud-tooltip::before {
@@ -1758,7 +1823,6 @@ body {
 .hud-chip:hover .hud-tooltip {
   opacity: 1;
   visibility: visible;
-  translate: 0 0;
   transition-delay: 0s;
 }
 
@@ -2305,7 +2369,10 @@ body {
   align-items: center;
   gap: 0.2em;
   width: 48em;
-  padding: 1.2em 2.8em 1.05em;
+  /* Checkpoint 6: mais justo em cima e embaixo (era 1,2em e 1,05em). Com o
+     nome inteiro da materia, cinco coringas e o recorde novo, o diploma saia
+     da cena (29,5em de altura). */
+  padding: 0.95em 2.8em 0.85em;
   text-align: center;
   background-color: var(--papel);
   background-image:
@@ -2383,7 +2450,7 @@ body {
   display: flex;
   align-items: center;
   gap: 1.6em;
-  margin: 0.1em 0;
+  margin: 0;
 }
 
 .colacao-caixa {
@@ -2396,7 +2463,7 @@ body {
 }
 
 .colacao-caixa .nota-valor {
-  font-size: 2em;
+  font-size: 1.8em;
 }
 
 /* Pendencia 121: o conceito geral fica com a borda dupla do componente
@@ -2450,13 +2517,15 @@ body {
   border-bottom: 0.06em dotted var(--lapis);
 }
 
+/* O nome inteiro (pendencia 126): o que nao cabe na coluna quebra em duas
+   linhas, como no historico escolar de verdade ("Probabilidade e
+   Estatistica" cortava em "Estati..."). Reduzir a letra para caber em uma
+   pediria 0,57em: ilegivel no projetor. */
 .colacao-materia {
   grid-column: 1;
   font-size: 0.78em;
   line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-wrap: balance;
   color: var(--tinta);
 }
 
@@ -2496,15 +2565,18 @@ body {
   color: var(--caneta-vermelha);
 }
 
-/* Os coringas da formatura, escritos a mao depois do rotulo impresso. */
+/* Os coringas da formatura, escritos a mao depois do rotulo impresso, na
+   mesma linha dele: com cinco coringas, o rotulo numa linha so dele empurrava
+   o diploma para fora da cena (checkpoint 6). */
 .diploma-coringas {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0.6em;
   max-width: 44em;
   margin: 0;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.diploma-coringas .colacao-rotulo {
+  margin-right: 0.6em;
 }
 
 .colacao-rotulo {

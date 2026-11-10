@@ -19,6 +19,15 @@
 //                                         fotografadas logo depois de preparar (fase 22)
 //   npm run fotos -- --jogar              ~3 min jogados pelo TECLADO, sem mexer no
 //                                         estado, com foto a cada troca de tela (fase 22)
+//   npm run fotos -- --jogar --imortal --sem-xp --turbo 6 --segundos 480
+//                                         a run inteira ate a colacao (checkpoint 6)
+//   npm run fotos -- --hover              nao fotografa: o mouse entra e sai de cada peca
+//                                         que reage a ele, em cada tela, e reprova se uma
+//                                         animacao de entrada recomecar (o pisca); depois
+//                                         para a 1 px da borda de baixo (reprova se o :hover
+//                                         trocar mais de uma vez: a peca vibra) e clica a
+//                                         1 px da de cima (reprova se o clique nao valer; no
+//                                         post-it e no cartao, so conta: BORDA_RESIDUO)
 //
 // Fase 22: toda foto sai com a conferencia da tela ao lado (window.__f.conferir):
 // o que sai da cena, o texto cortado pela caixa, o foco de teclado de cada
@@ -61,7 +70,16 @@ const PERF = args.includes('--perf');
 const ACELERADO = args.includes('--acelerado');
 const REDUZIDO = args.includes('--reduzido');
 const JOGAR = args.includes('--jogar');
+const HOVER = args.includes('--hover');
 const JOGAR_SEGUNDOS = Number(opcao('--segundos', '180'));
+// Checkpoint 6: a run inteira no Chrome em tempo de apresentacao. --imortal
+// segura o HP (chega a colacao); --turbo N roda N passos da simulacao por
+// quadro durante a prova (o resto do jogo, telas e teclas, anda como sempre).
+const IMORTAL = args.includes('--imortal');
+const TURBO = Math.max(1, Math.floor(Number(opcao('--turbo', '1'))) || 1);
+// --sem-xp: o XP fica em zero (nenhuma carta de nivel). Com o turbo, as cartas
+// viram quase toda a sessao e a run nao chega ao fim; elas ja aparecem sem isto.
+const SEM_XP = args.includes('--sem-xp');
 // O --perf: quadros medidos (depois do aquecimento) por linha da ablacao,
 // rodadas de cada linha, e segundos do laco real.
 const PERF_QUADROS = 150;
@@ -510,7 +528,114 @@ async function ajudantesDaPagina() {
     if (fx.movimento && fx.movimento.matches) partes.push(`canvas: movimento reduzido, tremor aplicado ${fx.tremorX},${fx.tremorY} (sorteado ${fx.tremor.toFixed(1)})`);
     return partes.join(' · ');
   };
-  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud, cabe, conferir, visivel, depois: null };
+  // Fase 22, consertos do checkpoint 6 (o pisca no hover): tudo o que comeca
+  // ou e cancelado (animacao e transicao de CSS) e toda classe que muda,
+  // enquanto o mouse entra e sai de cada peca que reage a ele.
+  const registro = [];
+  for (const tipo of ['animationstart', 'animationcancel', 'transitionrun', 'transitioncancel']) {
+    document.addEventListener(tipo, (ev) => {
+      const t = ev.target;
+      if (!t || !t.tagName || t.closest('.relatorio-barra')) return;
+      registro.push({ tipo, no: `${nomeDe(t)}${ev.pseudoElement || ''}`, nome: ev.animationName || ev.propertyName });
+    }, true);
+  }
+  new MutationObserver((lista) => {
+    for (const m of lista) {
+      if (m.target.closest && m.target.closest('.relatorio-barra')) continue;
+      registro.push({ tipo: 'classe', no: nomeDe(m.target), nome: `"${m.oldValue}" -> "${m.target.className}"` });
+    }
+  }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  // As pecas que reagem ao mouse: todo botao das camadas a vista, as
+  // figurinhas do HUD (o tooltip) e o botao do som.
+  const alvosDoHover = () => {
+    const nos = [];
+    for (const raiz of document.querySelectorAll('.camada:not(.oculto)')) {
+      if (!visivel(raiz)) continue;
+      for (const b of raiz.querySelectorAll('button, .hud-chip')) if (visivel(b) && !b.closest('.relatorio-barra')) nos.push(b);
+    }
+    const mudo = document.getElementById('botao-mudo');
+    if (mudo && visivel(mudo)) nos.push(mudo);
+    const centro = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    // Um ponto da cena onde o mouse nao acende nada (sem peca nenhuma embaixo).
+    const cena = document.querySelector('.cena').getBoundingClientRect();
+    let neutro = null;
+    for (const [fx, fy] of [[0.5, 0.04], [0.03, 0.5], [0.97, 0.5], [0.5, 0.97], [0.03, 0.03], [0.97, 0.97], [0.3, 0.3], [0.7, 0.7]]) {
+      const x = cena.left + cena.width * fx;
+      const y = cena.top + cena.height * fy;
+      const embaixo = document.elementFromPoint(x, y);
+      if (embaixo && !nos.some((n) => n.contains(embaixo))) {
+        neutro = { x, y };
+        break;
+      }
+    }
+    // Os adesivos da barra de relatorio (debug.relatorio, a vista no jogo
+    // entregue) so entram na conferencia da borda: o registro acima nao os ouve.
+    const extras = [];
+    for (const raiz of document.querySelectorAll('.camada:not(.oculto)')) {
+      if (!visivel(raiz)) continue;
+      for (const b of raiz.querySelectorAll('.relatorio-barra button')) if (visivel(b)) extras.push(b);
+    }
+    window.__f.alvos = [...nos, ...extras];
+    const lista = (l) => l.map((n) => ({ nome: nomeDe(n), ...centro(n.getBoundingClientRect()) }));
+    return { neutro, alvos: lista(nos), extras: lista(extras) };
+  };
+  // Rodada 2 dos consertos do checkpoint 6 (o bloqueio da revisao): o mouse
+  // PARADO perto da borda de uma peca que levanta no :hover. Ela sobe, sai de
+  // baixo do cursor, perde o :hover, desce, ganha de novo, sem parar: o Chrome
+  // refaz o hit-test depois de cada layout, com o mouse parado. `borda` acha
+  // pelo hit-test onde a peca acaba numa vertical (o que o mouse enxerga: o
+  // giro e o que ela tiver por fora da caixa); `vigiar` conta, a cada quadro,
+  // as trocas de :hover de uma peca; `armarClique` conta onde caem os cliques
+  // e os engole (a peca nao age).
+  const borda = (i, fx, lado) => {
+    const no = window.__f.alvos[i];
+    const r = no.getBoundingClientRect();
+    const x = r.left + r.width * fx;
+    const dentro = (y) => {
+      const n = document.elementFromPoint(x, y);
+      return !!n && no.contains(n);
+    };
+    if (lado === 'baixo') {
+      for (let y = r.bottom + 30; y > r.top; y -= 0.25) if (dentro(y)) return { x, y };
+    } else {
+      for (let y = r.top - 30; y < r.bottom; y += 0.25) if (dentro(y)) return { x, y };
+    }
+    return null;
+  };
+  const vigia = { no: null, ultimo: null, trocas: 0 };
+  const olhar = () => {
+    if (vigia.no) {
+      const h = vigia.no.matches(':hover');
+      if (vigia.ultimo !== null && h !== vigia.ultimo) vigia.trocas += 1;
+      vigia.ultimo = h;
+    }
+    requestAnimationFrame(olhar);
+  };
+  requestAnimationFrame(olhar);
+  const vigiar = (i) => {
+    const trocas = vigia.trocas;
+    vigia.no = i === null ? null : window.__f.alvos[i];
+    vigia.ultimo = vigia.no ? vigia.no.matches(':hover') : null;
+    vigia.trocas = 0;
+    return trocas;
+  };
+  const cliques = { no: null, dentro: 0, fora: 0 };
+  window.addEventListener('click', (ev) => {
+    if (!cliques.no) return;
+    if (cliques.no.contains(ev.target)) cliques.dentro += 1;
+    else cliques.fora += 1;
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+  }, true);
+  const armarClique = (i) => {
+    const antes = { dentro: cliques.dentro, fora: cliques.fora };
+    cliques.no = i === null ? null : window.__f.alvos[i];
+    cliques.dentro = 0;
+    cliques.fora = 0;
+    if (i === null && document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    return antes;
+  };
+  window.__f = { cena: 0, run, state, main, cards, player, enemies, boss, render, C, T, e, passo, avancar, fecharPeloTempo, golpe, garantirProva, garantirResultado, garantirTcc, recorteEm, horda, centralizar, doisQuadros, soArma, repetir, avisoDaBanca, hudCheio, fundoDoHud, cabe, conferir, visivel, registro, alvosDoHover, borda, vigiar, armarClique, alvos: [], depois: null };
   await document.fonts.ready;
   return true;
 }
@@ -1547,6 +1672,43 @@ const CENAS = [
       return `2o post-it: selecionada ${b.classList.contains('selecionada')}, :active ${b.matches(':active')}, transform ${getComputedStyle(b).transform}`;
     },
   },
+  // Checkpoint 6 (pendencia 126): o diploma mais cheio que o jogo monta. O
+  // nome inteiro de cada materia (o que nao cabe quebra em duas linhas), os
+  // coringas de nome mais comprido ate o teto e o recorde novo.
+  {
+    nome: 'conferencia-colacao-cheia',
+    espera: 1100,
+    preparar: async () => {
+      const { run, e, C, T, avancar, fecharPeloTempo, boss, enemies, main, passo } = window.__f;
+      const jokers = await import('/src/jokers.js');
+      run.iniciarRun(e);
+      let i = 0;
+      for (let p = 0; p < C.periodos.length; p += 1) {
+        for (let a = 0; a < C.periodos[p].avaliacoes.length; a += 1) {
+          run.comecarAvaliacao(e, p, a);
+          fecharPeloTempo(150 + 35 * i);
+          e.eventos.length = 0;
+          i += 1;
+        }
+      }
+      run.avancarRun(e);
+      run.comecarTcc(e);
+      for (let t = 0; t < 120 && e.tela !== T.COLACAO; t += 1) {
+        const corpo = boss.acharBanca(e);
+        if (corpo) enemies.aplicarDano(e, corpo, corpo.hpMax / 4);
+        avancar(1);
+      }
+      if (e.tela !== T.COLACAO) main.atualizar(e, passo);
+      e.run.coringas.length = 0;
+      for (const c of [...C.coringas].sort((a, b) => b.nome.length - a.nome.length).slice(0, C.loja.teto)) e.run.coringas.push(jokers.novaInstancia(c.id));
+      e.run.colacao.novoRecorde = true;
+    },
+    medir: () => {
+      const linhas = (no) => Math.round(no.getBoundingClientRect().height / parseFloat(getComputedStyle(no).lineHeight));
+      const materias = [...document.querySelectorAll('.colacao-materia')].map((m) => `${m.textContent}${linhas(m) > 1 ? ` (${linhas(m)} linhas)` : ''}`);
+      return `${window.__f.cabe('.diploma', '#botao-colacao')}; ${materias.join(', ')}; coringas em ${document.getElementById('colacao-coringas').getClientRects().length} linha(s)`;
+    },
+  },
 ];
 
 // Uma foto so na tela larga: a mesa em volta da cena e os objetos dela.
@@ -1619,13 +1781,164 @@ async function avaliar(enviar, expressao) {
   return r.result.value;
 }
 
+// --------------------------------------------------------------- --hover
+
+// Fase 22, consertos do checkpoint 6: o usuario viu "algumas coisas piscam,
+// principalmente quando coloco o mouse sobre elas e depois retiro". Em cada
+// tela, o mouse entra em cada peca que reage a ele (vindo de um ponto onde
+// nada acende, em passos, como a mao), espera, e sai. O registro diz o que
+// comecou, e reprova as duas formas de piscar: uma animacao de ENTRADA
+// recomecando (a peca some e volta) e uma transicao em transform, rotate,
+// scale ou translate. Esta foi a que o usuario viu: enquanto ela anda, o
+// Chrome sobe para outra camada tudo o que e desenhado depois e pode encostar,
+// e um papel girado numa camada propria e rasterizado de outro jeito (o
+// post-it do menu, o HUD, as cartas vizinhas mudavam de cara no comeco e no
+// fim de cada hover; ver o handoff dos consertos do checkpoint 6).
+const CENAS_HOVER = ['menu', 'anuncio', 'carta', 'pausa', 'resultado', 'loja', 'jubilado', 'tcc', 'colacao', 'hud-cartela', 'hud-pausa-tooltip', 'telas-loja-vendido-aviso-gasto', 'conferencia-loja-cheia-aviso-longo'];
+const ENTRADAS = ['entrar-tela', 'deslizar-carta', 'carimbar'];
+const CAMADA = ['transform', 'rotate', 'scale', 'translate'];
+const HOVER_PASSOS = 6;
+const HOVER_ESPERA = 500;
+// Rodada 2 do checkpoint 6: o mouse parado a 1 px da borda de baixo, no meio
+// e perto do canto direito (o giro de -1 grau do adesivo levanta esse canto),
+// por BORDA_PARADO ms; e o clique que comeca a 1 px da borda de cima (com a
+// peca levantada pelo :hover ou pela selecao), nos dois cantos de cima, com o
+// botao apertado por BORDA_APERTO ms (o :active desce a peca). Antes, a peca
+// e apontada uma vez, direto (sem passar por outra): nas que acendem pelo
+// estado (post-it, cartao, folheto, slot) ela fica a selecionada, e e assim
+// que o mouse a encontra. Uma que nao estava selecionada sobe ao ser apontada
+// pela borda e deixa o cursor embaixo dela UMA vez (duas trocas, e para): nao
+// e o vibrar, e e o mesmo no HEAD.
+// O clique na faixa de cima do post-it e do cartao (BORDA_RESIDUO) nao
+// reprova: a fita, o selo e a escala descem mais do que a margem que da para
+// pendurar neles sem desenhar nada (o ::before e o ::after ja sao a fita, o
+// percevejo e a volta de caneta). A saida diz se valeu.
+const BORDA_BAIXO = [0.5, 0.9];
+const BORDA_CIMA = [0.1, 0.9];
+const BORDA_PARADO = 1000;
+const BORDA_APERTO = 200;
+const BORDA_RESIDUO = '.carta-opcao';
+
+async function conferirBorda(enviar, i, neutro, centro) {
+  const mouse = (x, y, type = 'mouseMoved') => enviar('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? 'none' : 'left', clickCount: type === 'mouseMoved' ? 0 : 1 });
+  const partes = [];
+  const falhas = [];
+  await mouse(centro.x, centro.y);
+  await dormir(200);
+  const residuo = await avaliar(enviar, `window.__f.alvos[${i}].matches('${BORDA_RESIDUO}')`);
+  for (const fx of BORDA_BAIXO) {
+    await mouse(neutro.x, neutro.y);
+    await dormir(250);
+    const p = await avaliar(enviar, `window.__f.borda(${i}, ${fx}, 'baixo')`);
+    if (!p) {
+      partes.push(`baixo ${fx * 100}%: sem borda`);
+      continue;
+    }
+    // De fora (logo abaixo) para 1 px dentro, e parado.
+    await mouse(p.x, p.y + 12);
+    await dormir(60);
+    await avaliar(enviar, `window.__f.vigiar(${i})`);
+    await mouse(p.x, p.y - 1);
+    await dormir(BORDA_PARADO);
+    const trocas = await avaliar(enviar, 'window.__f.vigiar(null)');
+    partes.push(`baixo ${fx * 100}%: ${trocas} troca(s) de :hover`);
+    if (trocas > 1) falhas.push(`o mouse parado a 1 px da borda de baixo (x ${fx * 100}%): o :hover trocou ${trocas} vezes em ${BORDA_PARADO} ms (a peca vibra sozinha)`);
+  }
+  for (const fx of BORDA_CIMA) {
+    await mouse(neutro.x, neutro.y);
+    await dormir(150);
+    await mouse(centro.x, centro.y);
+    await dormir(300);
+    const p = await avaliar(enviar, `window.__f.borda(${i}, ${fx}, 'cima')`);
+    if (!p) {
+      partes.push(`cima ${fx * 100}%: sem borda`);
+      continue;
+    }
+    await mouse(p.x, p.y + 1);
+    await dormir(150);
+    await avaliar(enviar, `window.__f.armarClique(${i})`);
+    await mouse(p.x, p.y + 1, 'mousePressed');
+    await dormir(BORDA_APERTO);
+    await mouse(p.x, p.y + 1, 'mouseReleased');
+    await dormir(60);
+    const c = await avaliar(enviar, 'window.__f.armarClique(null)');
+    partes.push(`clique cima ${fx * 100}%: ${c.dentro === 1 ? 'vale' : `NAO VALE (${c.dentro} na peca, ${c.fora} fora${residuo ? '; residuo conhecido' : ''})`}`);
+    if (c.dentro !== 1 && !residuo) falhas.push(`o clique que comeca a 1 px da borda de cima (x ${fx * 100}%) nao vale: ${c.dentro} na peca, ${c.fora} fora (o :active desce a peca para longe do cursor)`);
+  }
+  return { resumo: partes.join(', '), falhas };
+}
+
+async function moverMouse(enviar, de, para) {
+  for (let i = 1; i <= HOVER_PASSOS; i += 1) {
+    const k = i / HOVER_PASSOS;
+    await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: de.x + (para.x - de.x) * k, y: de.y + (para.y - de.y) * k });
+    await dormir(16);
+  }
+}
+
+async function conferirHover(cdp, sessao, url, tamanho, cenas) {
+  const [largura, altura] = tamanho;
+  const enviar = (metodo, params) => cdp.enviar(metodo, params, sessao);
+  await enviar('Emulation.setDeviceMetricsOverride', { width: largura, height: altura, deviceScaleFactor: 1, mobile: false });
+  const carregou = cdp.esperarEvento('Page.loadEventFired', sessao);
+  await enviar('Page.navigate', { url });
+  await carregou;
+  for (let i = 0; i < 200; i += 1) {
+    if (await avaliar(enviar, '!!window.__estado')) break;
+    await dormir(50);
+  }
+  await avaliar(enviar, `(${ajudantesDaPagina})()`);
+  const linhas = [];
+  const falhas = [];
+  for (const cena of cenas) {
+    await avaliar(enviar, 'window.__f.cena += 1; if (window.__f.depois) { window.__f.depois(); window.__f.depois = null; }');
+    await avaliar(enviar, `(${cena.preparar})()`);
+    // Numa prova, o jogo anda durante o hover inteiro: HP e XP seguros (sem
+    // carta subindo nem jubilado no meio).
+    await avaliar(enviar, '(() => { const { e } = window.__f; window.__f.repetir(() => { e.player.hp = e.player.hpMax; e.player.xp = 0; }, 1, 1e9); })()');
+    await dormir(cena.espera + 600);
+    const { neutro, alvos, extras } = await avaliar(enviar, 'window.__f.alvosDoHover()');
+    const tela = await avaliar(enviar, 'window.__estado.tela');
+    if (!neutro) {
+      falhas.push(`${cena.nome}: nenhum ponto neutro`);
+      continue;
+    }
+    await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: neutro.x, y: neutro.y });
+    for (const [i, alvo] of alvos.entries()) {
+      await dormir(HOVER_ESPERA);
+      await avaliar(enviar, 'window.__f.registro.length = 0');
+      await moverMouse(enviar, neutro, alvo);
+      await dormir(HOVER_ESPERA);
+      const entrando = await avaliar(enviar, 'window.__f.registro.splice(0)');
+      await moverMouse(enviar, alvo, neutro);
+      await dormir(HOVER_ESPERA);
+      const saindo = await avaliar(enviar, 'window.__f.registro.splice(0)');
+      const resumo = (lista) => (lista.length ? [...new Set(lista.map((r) => `${r.tipo} ${r.no} ${r.nome}`))].join('; ') : 'nada');
+      const entrada = [...entrando, ...saindo].filter((r) => (r.tipo === 'animationstart' && ENTRADAS.includes(r.nome)) || (r.tipo === 'transitionrun' && CAMADA.includes(r.nome)));
+      if (entrada.length) falhas.push(`${cena.nome} ${largura}x${altura} ${alvo.nome}: ${resumo(entrada)}`);
+      const b = await conferirBorda(enviar, i, neutro, alvo);
+      for (const f of b.falhas) falhas.push(`${cena.nome} ${largura}x${altura} ${alvo.nome}: ${f}`);
+      linhas.push({ arquivo: `hover ${cena.nome} ${largura}x${altura} ${alvo.nome}`, tela: `${tela}; entrando: ${resumo(entrando)} | saindo: ${resumo(saindo)} | borda: ${b.resumo}` });
+      await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: neutro.x, y: neutro.y });
+    }
+    for (const [k, alvo] of extras.entries()) {
+      const b = await conferirBorda(enviar, alvos.length + k, neutro, alvo);
+      for (const f of b.falhas) falhas.push(`${cena.nome} ${largura}x${altura} ${alvo.nome} (relatorio): ${f}`);
+      linhas.push({ arquivo: `borda ${cena.nome} ${largura}x${altura} ${alvo.nome} (relatorio)`, tela: `${tela}; borda: ${b.resumo}` });
+      await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: neutro.x, y: neutro.y });
+    }
+  }
+  await enviar('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 0, y: 0 });
+  return { linhas, falhas };
+}
+
 // --------------------------------------------------------------- --jogar
 
 // Fase 22: a run jogada pelo teclado, como o jogador faz, sem tocar no
 // estado: Enter nas telas de seguir, WASD em circulo na prova, 1 na carta, a
 // loja pelas setas, um ESC no meio de uma prova. Cada troca de tela tira duas
 // fotos, na troca e 450 ms depois (a transicao de verdade e o repouso).
-const TECLAS = { Enter: [13, 'Enter'], Escape: [27, 'Escape'], ArrowRight: [39, 'ArrowRight'], Digit1: [49, '1'], KeyW: [87, 'w'], KeyA: [65, 'a'], KeyS: [83, 's'], KeyD: [68, 'd'] };
+const TECLAS = { KeyM: [77, 'm'], Enter: [13, 'Enter'], Escape: [27, 'Escape'], ArrowRight: [39, 'ArrowRight'], ArrowLeft: [37, 'ArrowLeft'], ArrowUp: [38, 'ArrowUp'], Digit1: [49, '1'], KeyW: [87, 'w'], KeyA: [65, 'a'], KeyS: [83, 's'], KeyD: [68, 'd'] };
 
 async function tecla(enviar, code, tipo) {
   const [codigo, key] = TECLAS[code];
@@ -1650,6 +1963,24 @@ async function jogarPeloTeclado(cdp, sessao, url) {
     await dormir(50);
   }
   await avaliar(enviar, 'document.fonts.ready.then(() => true)');
+  if (IMORTAL || SEM_XP || TURBO > 1) {
+    await avaliar(enviar, `(async () => {
+      const main = await import('/src/main.js');
+      const { CONTEUDO } = await import('/data/content.js');
+      const e = window.__estado;
+      const quadro = () => {
+        if (${IMORTAL}) e.player.hp = e.player.hpMax;
+        if (${SEM_XP}) e.player.xp = 0;
+        for (let i = 1; i < ${TURBO} && e.tela === 'avaliacao'; i += 1) {
+          main.atualizar(e, CONTEUDO.loop.passo);
+          if (${SEM_XP}) e.player.xp = 0;
+        }
+        requestAnimationFrame(quadro);
+      };
+      requestAnimationFrame(quadro);
+      return true;
+    })()`);
+  }
   const feitas = [];
   const inicio = Date.now();
   const relogio = () => ((Date.now() - inicio) / 1000).toFixed(1);
@@ -1667,6 +1998,7 @@ async function jogarPeloTeclado(cdp, sessao, url) {
   let acoes = 0;
   let andando = null;
   let pausou = false;
+  let mudou = false;
   let ultimaDaProva = Date.now();
   const soltar = async () => {
     if (andando) await tecla(enviar, andando, 'keyUp');
@@ -1693,7 +2025,18 @@ async function jogarPeloTeclado(cdp, sessao, url) {
         await tecla(enviar, d, 'keyDown');
         andando = d;
       }
-      if (!pausou && ha > 15000) {
+      if (!mudou && ha > 5000) {
+        // O mudo (M): liga e desliga, conferindo o botao e o que foi gravado.
+        mudou = true;
+        const ler = "import('/data/content.js').then(({ CONTEUDO }) => JSON.stringify({ classe: document.getElementById('botao-mudo').className, rotulo: document.getElementById('botao-mudo').getAttribute('aria-label'), gravado: localStorage.getItem(CONTEUDO.audio.chaveMudo) }))";
+        await tocarTecla(enviar, 'KeyM');
+        await dormir(150);
+        const ligado = await avaliar(enviar, ler);
+        await tocarTecla(enviar, 'KeyM');
+        await dormir(150);
+        const desligado = await avaliar(enviar, ler);
+        feitas.push({ arquivo: 'mudo (M)', tela: `apertado: ${ligado} · de novo: ${desligado}` });
+      } else if (!pausou && ha > 15000) {
         pausou = true;
         await soltar();
         await tocarTecla(enviar, 'Escape');
@@ -1713,7 +2056,13 @@ async function jogarPeloTeclado(cdp, sessao, url) {
       acoes += 1;
       if (acoes === 1) await tocarTecla(enviar, 'Digit1');
       else {
-        for (let i = 0; i < 8; i += 1) await tocarTecla(enviar, 'ArrowRight');
+        // Ate o cursor estar no "Seguir" (o botao diz; o estado so e lido):
+        // a vitrine tem tamanho variavel e o cursor da a volta.
+        for (let i = 0; i < 14; i += 1) {
+          const onde = await avaliar(enviar, "document.getElementById('botao-seguir').classList.contains('selecionada') ? 'seguir' : document.querySelector('.loja-slot.selecionada') ? 'slot' : 'vitrine'");
+          if (onde === 'seguir') break;
+          await tocarTecla(enviar, onde === 'slot' ? 'ArrowUp' : 'ArrowLeft');
+        }
         await tocarTecla(enviar, 'Enter');
       }
     } else if (tela !== 'avaliacao' && tela !== 'pausa' && tela !== 'carta' && tela !== 'loja' && vez) {
@@ -1723,6 +2072,9 @@ async function jogarPeloTeclado(cdp, sessao, url) {
     await dormir(100);
   }
   await soltar();
+  const audio = await avaliar(enviar, 'JSON.stringify((window.__audios || []).map((c) => c.state))');
+  const telas = await avaliar(enviar, 'window.__estado.tela');
+  feitas.push({ arquivo: 'audio', tela: `AudioContext criados: ${audio} (o 1o nasce do 1o gesto); tela no fim: ${telas}` });
   return feitas;
 }
 
@@ -1769,8 +2121,9 @@ async function principal() {
     return 1;
   }
   mkdirSync(SAIDA, { recursive: true });
-  const cenas = PERF || JOGAR ? [] : SO.length === 0 ? CENAS : CENAS.filter((c) => SO.some((s) => c.nome.includes(s)));
-  const comMesa = !PERF && !JOGAR && (SO.length === 0 || SO.some((s) => MESA.nome.includes(s)));
+  const base = HOVER ? CENAS.filter((c) => CENAS_HOVER.includes(c.nome)) : CENAS;
+  const cenas = PERF || JOGAR ? [] : SO.length === 0 ? base : base.filter((c) => SO.some((s) => c.nome.includes(s)));
+  const comMesa = !PERF && !JOGAR && !HOVER && (SO.length === 0 || SO.some((s) => MESA.nome.includes(s)));
   if (PERF) {
     // Chrome sem janela de outra execucao deixa a maquina lenta: o numero nao
     // valeria. So avisa (pode ser de outro programa); quem mede decide.
@@ -1804,7 +2157,9 @@ async function principal() {
   );
   const saiu = new Promise((ok) => chrome.once('exit', ok));
   const erros = [];
+  const avisos = [];
   const feitas = [];
+  const piscas = [];
   let cdp = null;
   let codigo = 0;
   try {
@@ -1815,9 +2170,16 @@ async function principal() {
       if (m.sessionId !== sessionId) return;
       if (m.method === 'Runtime.exceptionThrown') erros.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
       if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') erros.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
+      if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'warning') avisos.push(m.params.args.map((a) => a.value ?? a.description).join(' '));
+      // O que o navegador mesmo escreve no console (rede, CSS, violacoes).
+      if (m.method === 'Log.entryAdded' && (m.params.entry.level === 'error' || m.params.entry.level === 'warning')) avisos.push(`[${m.params.entry.source}] ${m.params.entry.text}${m.params.entry.url ? ` (${m.params.entry.url})` : ''}`);
     });
     await cdp.enviar('Page.enable', {}, sessionId);
     await cdp.enviar('Runtime.enable', {}, sessionId);
+    await cdp.enviar('Log.enable', {}, sessionId);
+    // Checkpoint 6: cada AudioContext que a pagina cria (o jogo so pode criar
+    // depois de um gesto), para o --jogar dizer em que estado ficaram.
+    await cdp.enviar('Page.addScriptToEvaluateOnNewDocument', { source: `(() => { const A = window.AudioContext; if (!A) return; window.__audios = []; window.AudioContext = class extends A { constructor(...a) { super(...a); window.__audios.push(this); } }; })()` }, sessionId);
     // A pagina "com foco": sem isto um blur do headless pausaria a prova.
     await cdp.enviar('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
     // Fase 22: o prefers-reduced-motion emulado (vale para o CSS e para o
@@ -1825,6 +2187,13 @@ async function principal() {
     if (REDUZIDO) await cdp.enviar('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] }, sessionId);
     if (PERF) imprimirDesempenho(await medir(cdp, sessionId, servidor.url));
     else if (JOGAR) feitas.push(...(await jogarPeloTeclado(cdp, sessionId, servidor.url)));
+    else if (HOVER) {
+      for (const tamanho of TAMANHOS) {
+        const { linhas, falhas } = await conferirHover(cdp, sessionId, servidor.url, tamanho, cenas);
+        feitas.push(...linhas);
+        piscas.push(...falhas);
+      }
+    }
     else for (const tamanho of TAMANHOS) feitas.push(...(await fotografar(cdp, sessionId, servidor.url, tamanho, cenas)));
     if (comMesa) {
       feitas.push(...(await fotografar(cdp, sessionId, servidor.url, MESA.tamanho, [MESA])));
@@ -1866,9 +2235,20 @@ async function principal() {
   }
 
   for (const f of feitas) console.log(`${f.arquivo}  (${f.tela})`);
-  if (!PERF) console.log(`fotos: ${feitas.filter((f) => f.arquivo.endsWith('.png')).length} em ${SAIDA}`);
+  if (HOVER) {
+    console.log(`fotos --hover: ${feitas.length} pecas apontadas e soltas`);
+    if (piscas.length > 0) {
+      console.error(`fotos --hover: ${piscas.length} falha(s) com o mouse (entrada recomecando, transicao de transform/rotate/scale/translate, peca vibrando com o mouse parado na borda ou clique na borda de cima que nao vale):`);
+      for (const p of piscas) console.error(`  ${p}`);
+      codigo = 1;
+    }
+  } else if (!PERF) console.log(`fotos: ${feitas.filter((f) => f.arquivo.endsWith('.png')).length} em ${SAIDA}`);
   if (orfaos === null) console.warn('fotos: nao deu para listar os processos e conferir orfaos');
   else console.log(`fotos: Chrome fechado pelo protocolo, ${orfaos.length} processo(s) orfao(s)`);
+  if (avisos.length > 0) {
+    console.warn(`fotos: ${avisos.length} aviso(s) no console da pagina:`);
+    for (const a of [...new Set(avisos)]) console.warn(`  ${a}`);
+  }
   if (erros.length > 0) {
     console.error(`fotos: ${erros.length} erro(s) no console da pagina:`);
     for (const e of [...new Set(erros)]) console.error(`  ${e}`);
