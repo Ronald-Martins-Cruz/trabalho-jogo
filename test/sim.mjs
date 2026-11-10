@@ -136,7 +136,7 @@ function copiarResultado(reg, estado) {
   reg.ph = r.parcelas.hp;
   reg.pi = r.parcelas.ileso;
   reg.kills = r.kills;
-  reg.hp = r.hpFracao;
+  reg.hp = r.hpMax > 0 ? r.hp / r.hpMax : 0; // absoluto: hpFracao virou o HP preservado (pos-entrega)
   reg.ileso = r.ileso;
   reg.nivel = estado.player.nivel;
   reg.danoTomado = r.danoTomado;

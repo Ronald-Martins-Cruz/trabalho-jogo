@@ -225,6 +225,7 @@ export function desenhar(estado, ctx, fx = efeitosDe(ctx)) {
     const av = estado.run.avaliacao;
     const banca = av.banca;
     desenharOrbes(ctx, fx, estado.xpOrbs, av.arena, v);
+    desenharLanches(ctx, fx, estado.lanches, v);
     // O aviso da Banca e marca no chao: por baixo de todo mundo, menos dos
     // orbes (que ja sao chao tambem).
     if (banca) desenharAvisosDaBanca(ctx, fx, banca, v);
@@ -1437,6 +1438,30 @@ function desenharOrbes(ctx, fx, orbes, arena, v) {
   }
 }
 
+// Os biscoitos da prova (pos-entrega, lanches.js): chao, como o orbe, e com o
+// mesmo perfil dele (o brilho chama o olho para a cura). Nos ultimos
+// `piscar` segundos piscam, para o jogador saber que vao sumir. O pisca sai da
+// vida restante, que e estado: desenhar nao muda nada.
+function desenharLanches(ctx, fx, lanches, v) {
+  if (!lanches || lanches.length === 0) return;
+  const cfg = CONTEUDO.lanches.arena;
+  const tamanho = cfg.raio * v.emojiOrbeFator;
+  const o = OPCOES;
+  o.perfil = fx.perfis.orbe;
+  o.espelhada = null;
+  o.flash = 0;
+  o.vx = 0;
+  o.vy = 0;
+  for (let i = 0; i < lanches.length; i += 1) {
+    const lanche = lanches[i];
+    if (lanche.vida < cfg.piscar && Math.floor(lanche.vida / cfg.piscaIntervalo) % 2 === 0) continue;
+    // A fase do balanco nunca sai do nasc absoluto da pool (ele atravessa as
+    // runs, e o reinicio limpo do dom.mjs compara o desenho): o indice basta.
+    o.nasc = i;
+    desenharFigurinha(ctx, fx, cfg.emoji, lanche.x, lanche.y, tamanho, o);
+  }
+}
+
 function desenharJogador(ctx, fx, player, v) {
   // Jubilado: o jogador virou faisca (consumirEventos), nao tem o que desenhar.
   if (!player.vivo) return;
@@ -1747,7 +1772,7 @@ export const CONTROLE_TOFU = 'A';
 
 // Todo emoji que o canvas desenha. O resto (cartas, loja, HUD) e texto do DOM.
 export function emojisDoCanvas(c = CONTEUDO) {
-  const lista = [c.jogador.emoji, c.xpOrbe.emoji, c.banca.emoji, c.banca.pergunta.emoji];
+  const lista = [c.jogador.emoji, c.xpOrbe.emoji, c.banca.emoji, c.banca.pergunta.emoji, c.lanches.arena.emoji];
   for (const a of c.armas) lista.push(a.emoji);
   for (const i of c.inimigos) lista.push(i.emoji);
   return lista;

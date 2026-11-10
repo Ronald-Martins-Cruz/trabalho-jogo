@@ -13,7 +13,7 @@ import {
   TELAS,
 } from './state.js';
 import { liberarPoolsDoEstado } from './pool.js';
-import { aoIniciarAvaliacao, novaInstancia } from './jokers.js';
+import { aoFecharAvaliacao, aoIniciarAvaliacao, novaInstancia } from './jokers.js';
 import { equiparArma } from './weapons.js';
 import { receberDano } from './player.js';
 import { iniciarBanca, novaBanca } from './boss.js';
@@ -149,7 +149,14 @@ export function fecharAvaliacao(estado, motivo) {
   r.nivel = player.nivel;
   r.hp = Math.max(0, player.hp);
   r.hpMax = player.hpMax;
-  r.hpFracao = player.hpMax > 0 ? r.hp / player.hpMax : 0;
+  // Pos-entrega: a vida atravessa a run, entao a parcela de HP da nota mede o
+  // que o jogador PRESERVOU nesta avaliacao (final / o que tinha ao entrar), e
+  // nao final / maximo. Com o maximo, quem entra ferido tiraria nota menor,
+  // ganharia menos credito e nao compraria o lanche: uma espiral sem saida.
+  // Avaliacao aberta sem coringas (iniciarAvaliacao direto, nos testes) nao
+  // tem hpInicial: vale o maximo, como sempre valeu.
+  r.hpInicial = av.hpInicial > 0 ? Math.min(av.hpInicial, player.hpMax) : player.hpMax;
+  r.hpFracao = r.hpInicial > 0 ? Math.min(1, r.hp / r.hpInicial) : 0;
   r.duracao = av.duracao;
   // Sem cronometro (o TCC), o tempo e o da luta inteira.
   r.tempo = av.duracao > 0 ? Math.min(av.decorrido, av.duracao) : av.decorrido;
@@ -165,7 +172,7 @@ export function fecharAvaliacao(estado, motivo) {
   r.ileso = aprovado && av.danoTomado <= 0;
 
   if (comNota) {
-    const p = parcelasDaNota({ kills: r.kills, hpRestante: r.hp, hpMax: r.hpMax, ileso: r.ileso }, r.parcelas);
+    const p = parcelasDaNota({ kills: r.kills, hpRestante: r.hp, hpMax: r.hpInicial, ileso: r.ileso }, r.parcelas);
     r.nota = Math.max(0, Math.min(CONTEUDO.nota.maxima, arredondarNota(p.kills + p.hp + p.ileso)));
     const faixa = faixaDaNota(r.nota);
     r.conceito = faixa.conceito;
@@ -183,11 +190,20 @@ export function fecharAvaliacao(estado, motivo) {
     r.creditos = 0;
   }
 
+  // Pos-entrega: os itens que agem no fim (Cofrinho e Bolsa pagam, o Bandejao
+  // cura). So com boletim: jubilado e TCC nao tem loja depois. O hook roda
+  // ANTES de somar o boletim: o Cofrinho rende sobre o que estava guardado.
+  r.creditosBonus = comNota ? aoFecharAvaliacao(estado) : 0;
+  r.creditos += r.creditosBonus;
+
   estado.run.nota = r.nota;
   estado.run.conceito = comNota ? r.conceito : null;
   estado.run.jubilado = !aprovado;
   estado.run.creditos += r.creditos;
   r.creditosTotal = estado.run.creditos;
+  // O HP que a proxima avaliacao herda (so o lanche devolve o que se perdeu),
+  // com o que o maximo desta escondeu de volta (jokers.js, aplicarAtributos).
+  if (aprovado) estado.run.vida = Math.max(0, player.hp) + av.hpCortado;
 
   // Fase 11: fanfarra de aprovacao e som grave de jubilacao saem daqui.
   emitir(estado, 'resultado', {

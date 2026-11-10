@@ -46,6 +46,7 @@ export function novoEstado(seed = 1) {
     // render (fx.particulas, fase 12). A chave `particles`, sempre vazia, saiu
     // na fase 17 (pendencia 91); arena.limites.particles e o teto daquela pool.
     perguntas: [], // projeteis da Banca (fase 10, src/boss.js)
+    lanches: [], // os biscoitos que caem na prova (pos-entrega, src/lanches.js)
 
     // Fila de eventos consumida por audio.js e pelo render (juice). A fisica
     // so empilha, nunca chama audio direto.
@@ -147,10 +148,14 @@ export function novaLoja() {
   for (let i = 0; i < maximo; i += 1) itens.push({ id: '', preco: 0, vendido: false });
   return {
     itens,
+    // Pos-entrega: a cantina. Sempre ha um lanche (id de CONTEUDO.lanches.loja),
+    // sorteado na abertura e a cada rerrolagem. `compras` nesta visita encarece
+    // o seguinte; `preco` e o da proxima compra, ja com desconto.
+    lanche: { id: '', preco: 0, compras: 0 },
     quantidade: 0, // itens validos nesta visita (3, ou 4 com B/A)
     rerolls: 0, // rerolls pagos nesta visita: o preco sobe com eles
     gratis: 0, // rerolls gratis que ainda restam nesta visita (conceito A)
-    linha: 0, // cursor: 0 = vitrine (itens, rerolar, seguir), 1 = coringas do jogador
+    linha: 0, // cursor: 0 = vitrine (itens, lanche, rerolar, seguir), 1 = coringas do jogador
     selecionada: 0,
     abertaEm: 0, // estado.tempo da abertura (loja.atrasoEntrada)
     aviso: '', // chave de CONTEUDO.textos.loja.avisos, ou ''
@@ -168,6 +173,12 @@ export function novaRun() {
     // Ids de coringa "1x por run" que ja dispararam. A loja nao os oferece de
     // novo, nem depois de vendidos.
     coringasGastos: [],
+    // Pos-entrega: o HP do jogador ENTRE avaliacoes, absoluto; -1 = cheio (a
+    // run ainda nao perdeu nada). A vida nao enche mais sozinha: cada
+    // avaliacao nasce com isto, cortado no maximo de agora (jokers.js,
+    // hpDaRun). Quem mexe: run.js (fim da avaliacao) e shop.js (lanche, e o
+    // maximo que sobe ou desce com a compra e a venda de um item).
+    vida: -1,
     nota: 0,
     conceito: null,
     jubilado: false,
@@ -230,14 +241,16 @@ export function novoResultado() {
     nivel: 1,
     hp: 0,
     hpMax: 0,
-    hpFracao: 0,
+    hpInicial: 0, // o HP com que a avaliacao comecou (a vida atravessa a run)
+    hpFracao: 0, // hp / hpInicial: o HP preservado, que a nota paga
     tempo: 0, // segundos sobrevividos
     duracao: 0,
     nota: 0,
     conceito: '',
     // De onde cada ponto da nota veio. E o que a tela decompoe para o jogador.
     parcelas: { kills: 0, hp: 0, ileso: 0 },
-    creditos: 0, // ganhos nesta avaliacao
+    creditos: 0, // ganhos nesta avaliacao (boletim + itens)
+    creditosBonus: 0, // a parte de `creditos` que os itens pagaram (Cofrinho, Bolsa)
     creditosTotal: 0, // o que a run tem depois de somar
     // Fase 10: o que a tela de jubilado diz que faltava.
     restantes: 0, // avaliacoes da run depois desta (o TCC nao conta)
@@ -296,6 +309,13 @@ export function avaliacaoDosDados(dados, nomePeriodo, modificadores = SEM_MODIFI
     regras,
     arena: arenaDaRegra(regras.arena),
     relogioPerdaHp: 0, // segundos desde a ultima perda de HP (regras.perdaHp)
+    // Pos-entrega: o HP com que o jogador entrou (jokers.js, aplicarAtributos;
+    // e a base da parcela de HP da nota) e os biscoitos da prova (lanches.js).
+    hpInicial: 0,
+    hpCortado: 0, // HP da run que o maximo desta avaliacao escondeu (volta no fim)
+    lanchesSoltos: 0, // biscoitos que ja cairam nesta avaliacao
+    mortesParaLanche: 0, // mortes desde o ultimo biscoito
+    lancheEm: 0, // av.decorrido do ultimo biscoito
     // Fase 09: quais tipos de inimigo podem nascer nesta avaliacao — nome de
     // uma entrada em CONTEUDO.spawn.composicoes, lido por enemies.js.
     composicaoSpawn: dados.composicaoSpawn,

@@ -116,7 +116,7 @@
            vez por ui.js; cada cartela some quando está vazia. -->
       <div class="hud-rodape">
         <div id="hud-grupo-coringas" class="hud-grupo">
-          <span class="hud-rotulo">Coringas</span>
+          <span class="hud-rotulo">Mochila</span>
           <div id="hud-coringas" class="hud-chips"></div>
         </div>
         <div id="hud-grupo-modificadores" class="hud-grupo hud-grupo-mods">
@@ -211,7 +211,7 @@
         </div>
         <div id="colacao-boletins" class="colacao-boletins"></div>
         <p class="diploma-coringas">
-          <span class="colacao-rotulo">Coringas na formatura</span>
+          <span class="colacao-rotulo">Mochila na formatura</span>
           <span id="colacao-coringas" class="colacao-coringas"></span>
         </p>
         <p id="colacao-recorde" class="colacao-recorde"></p>
@@ -344,15 +344,32 @@
         <span id="loja-creditos" class="creditos loja-creditos">◉ 0</span>
         <div id="loja-itens" class="carta-opcoes loja-itens"></div>
         <div class="loja-acoes">
+          <!-- A cantina (pós-entrega): a loja sempre tem um lanche, e é só
+               ele que devolve o HP perdido. O HP do jogador fica aqui, ao
+               lado de quem cura. Os textos saem de content.js (ui.js). -->
+          <div class="loja-cantina">
+            <p class="loja-cantina-topo">
+              <span class="loja-cantina-rotulo">Cantina</span>
+              <span id="loja-vida" class="loja-vida">❤️ 100/100</span>
+            </p>
+            <button id="loja-lanche" class="adesivo loja-acao loja-lanche" type="button">
+              <span id="loja-lanche-emoji" class="loja-lanche-emoji"></span>
+              <span class="loja-lanche-texto">
+                <span id="loja-lanche-nome" class="loja-lanche-nome"></span>
+                <span id="loja-lanche-cura" class="loja-lanche-cura"></span>
+              </span>
+              <span id="loja-lanche-preco" class="loja-preco loja-lanche-preco"></span>
+            </button>
+          </div>
           <button id="botao-rerolar" class="adesivo loja-acao" type="button">Rerrolar</button>
           <button id="botao-seguir" class="adesivo adesivo-destaque loja-acao" type="button">Seguir →</button>
         </div>
         <div class="loja-cartela">
-          <p class="loja-rotulo">Seus coringas <span id="loja-contagem">0/5</span> · clique para vender</p>
+          <p class="loja-rotulo">Sua mochila <span id="loja-contagem">0/5</span> · clique para vender</p>
           <div id="loja-coringas" class="loja-coringas"></div>
         </div>
         <!-- As teclas de compra saem de quantos itens a loja tem (ui.js). -->
-        <p class="dica postit postit-verde loja-dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · ← → e Enter · ↑ ↓ vão aos seus coringas · R rerrola</p>
+        <p class="dica postit postit-verde loja-dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · L, o lanche · ← → e Enter · ↑ ↓ vão à mochila · R rerrola</p>
       </div>
     </div>
 

@@ -3,7 +3,7 @@ import { emitir, irParaTela, TELAS } from './state.js';
 import { obterScratch } from './pool.js';
 import { dadosDaArma, equiparArma, subirNivelArma } from './weapons.js';
 import { curar, xpParaSubir } from './player.js';
-import { modificarAtributo } from './jokers.js';
+import { curaDeLanche, modificarAtributo } from './jokers.js';
 
 // XP vira nivel, nivel vira carta. Este arquivo e simulacao pura: nao sabe o
 // que e um botao nem um clique. A tela de carta congela o jogo escrevendo
@@ -160,7 +160,7 @@ function sortearOpcoes(estado) {
     }
     const escolhido = sortearCandidato(estado, candidatos);
     if (escolhido < 0) {
-      preencherConsolo(opcoes[i]);
+      preencherConsolo(opcoes[i], estado);
       continue;
     }
     preencherArma(opcoes[i], estado, candidatos.tipos[escolhido], candidatos.ids[escolhido]);
@@ -242,7 +242,9 @@ function preencherArma(opcao, estado, tipo, id) {
   opcao.valor = 0;
 }
 
-function preencherConsolo(opcao) {
+// A carta de consolo e um lanche: a 🍱 Lancheira vale nela (curaDeLanche), e o
+// valor sai ja pronto no sorteio, para a carta mostrar o que vai curar.
+function preencherConsolo(opcao, estado) {
   const consolo = CONTEUDO.cartas.consolo;
   opcao.tipo = consolo.tipo;
   opcao.id = consolo.id;
@@ -251,7 +253,7 @@ function preencherConsolo(opcao) {
   opcao.emoji = consolo.emoji;
   opcao.nivelAtual = 0;
   opcao.nivelProximo = 0;
-  opcao.valor = consolo.valor;
+  opcao.valor = curaDeLanche(estado, consolo.valor);
 }
 
 // Slot fora da quantidade desta carta: tipo '' e o que ui.js esconde e o que

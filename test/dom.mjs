@@ -183,6 +183,10 @@ function* escolherCarta(nav, modo, contador) {
 function* prova(nav, segundos, opcoes = {}) {
   const e = nav.estado;
   yield* andar(nav, segundos, opcoes);
+  // Pos-entrega: o ultimo quadro do andar pode abrir uma carta (o sorteio da
+  // cantina mudou a sequencia do rng). Ela e escolhida antes de adiantar o
+  // cronometro, senao a prova ficava parada no meio, com a carta por cima.
+  while (e.tela === TELAS.CARTA) yield* escolherCarta(nav, opcoes.cartas || 'teclado', opcoes.contador || { cartas: 0 });
   const av = e.run.avaliacao;
   if (e.tela === TELAS.AVALIACAO && !av.banca) av.decorrido = Math.max(av.decorrido, av.duracao - QUADRO_MS / 1000);
   for (let i = 0; i < 400 && e.tela !== TELAS.RESULTADO && e.tela !== TELAS.JUBILADO; i += 1) {
@@ -367,7 +371,7 @@ function checarFiacao() {
 
 // ------------------------------------------------------- 2. teclado por tela
 
-const TECLAS_TESTADAS = ['Escape', 'KeyM', 'Digit1', 'Digit2', 'Digit3', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'NumpadEnter', 'Space'];
+const TECLAS_TESTADAS = ['Escape', 'KeyM', 'Digit1', 'Digit2', 'Digit3', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'NumpadEnter', 'Space', 'KeyL'];
 const SEGUIR = new Set(['Enter', 'NumpadEnter', 'Space']);
 
 // Para onde cada tecla leva cada tela (o que nao esta aqui: fica na mesma).

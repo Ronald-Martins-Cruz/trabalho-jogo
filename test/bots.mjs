@@ -38,7 +38,7 @@
 import { CONTEUDO } from '../data/content.js';
 import { criarRng } from '../src/rng.js';
 import { ESTADOS_BANCA } from '../src/boss.js';
-import { comprarItem } from '../src/shop.js';
+import { comprarItem, comprarLanche, valorDeVenda, venderCoringa, vidaNaLoja } from '../src/shop.js';
 
 const IMPULSO_MINIMO = 0.05; // abaixo disto o bot solta o direcional em vez de tremer
 const TIPO_CURA = 'cura';
@@ -248,15 +248,75 @@ function cartaPorOrdem(estado, ordem, curaAbaixo) {
   return melhor;
 }
 
+// Pos-entrega: a vida nao enche mais entre avaliacoes, e o lanche da cantina
+// e a unica cura da loja. Cada bot come ANTES de comprar item, um lanche atras
+// do outro (cada um mais caro), enquanto o HP de agora (vidaNaLoja) estiver
+// abaixo de `abaixo` do maximo e o credito der. Devolve o total pago.
+export function comerSeFerido(estado, abaixo) {
+  let pago = 0;
+  for (let i = 0; i < 20; i += 1) {
+    const vida = vidaNaLoja(estado);
+    if (!(vida.hpMax > 0) || vida.hp / vida.hpMax >= abaixo) break;
+    const preco = estado.loja.lanche.preco;
+    if (!comprarLanche(estado)) break;
+    pago += preco;
+  }
+  return pago;
+}
+
+// O que comerSeFerido pagou entra no gasto da visita (o sim soma a economia).
+function comEGasta(estado, abaixo, compra) {
+  const lanche = comerSeFerido(estado, abaixo);
+  const r = compra();
+  r.gasto += lanche;
+  r.lanche = lanche > 0;
+  return r;
+}
+
 // Compra pela ordem de preferencia do bot, enquanto couber no credito e no
-// teto. Sem reroll, sem venda, sem guardar dinheiro: politica simples e
-// declarada, nao otima.
+// teto. Sem reroll e sem guardar dinheiro: politica simples e declarada, nao
+// otima.
+//
+// Pos-entrega: com 15 itens, a mochila enche de barato no 1o periodo e, sem
+// vender, o bot nunca chegava ao item que mais queria (o passivo comprava o
+// Atestado em toda run na v2.0 e em nenhuma depois). Agora, cheio, ele troca:
+// vende o pior da mochila (pela ordem dele) se a vitrine tem um melhor que o
+// credito + a venda pagam. Uma troca por visita, como um humano cauteloso.
 function comprarPorOrdem(estado, ordem) {
   const loja = estado.loja;
   const indices = [];
   for (let i = 0; i < loja.quantidade; i += 1) if (loja.itens[i].id !== '' && !loja.itens[i].vendido) indices.push(i);
   indices.sort((x, y) => indiceDe(ordem, loja.itens[x].id) - indiceDe(ordem, loja.itens[y].id));
-  return comprarNaOrdem(estado, indices);
+  const r = comprarNaOrdem(estado, indices);
+  trocarPeloMelhor(estado, ordem, indices, r);
+  return r;
+}
+
+function trocarPeloMelhor(estado, ordem, indices, r) {
+  const mao = estado.run.coringas;
+  if (mao.length < CONTEUDO.loja.teto) return;
+  let pior = -1;
+  for (let k = 0; k < mao.length; k += 1) {
+    if (pior < 0 || indiceDe(ordem, mao[k].id) > indiceDe(ordem, mao[pior].id)) pior = k;
+  }
+  const loja = estado.loja;
+  for (const i of indices) {
+    const item = loja.itens[i];
+    if (item.vendido || indiceDe(ordem, item.id) >= indiceDe(ordem, mao[pior].id)) continue;
+    if (estado.run.creditos + valorDeVenda(mao[pior].id) < item.preco) continue;
+    const valor = valorDeVenda(mao[pior].id);
+    // Vender a Carteirinha encarece a vitrine: o preco que vale e o de depois.
+    const dadosPior = CONTEUDO.coringas.find((c) => c.id === mao[pior].id);
+    const fator = dadosPior && dadosPior.params.atributo === 'precoLoja' ? 1 / dadosPior.params.fator : 1;
+    if (estado.run.creditos + valor < item.preco * fator) continue;
+    if (!venderCoringa(estado, pior)) return;
+    const preco = item.preco;
+    if (comprarItem(estado, i)) {
+      r.comprados.push(item.id);
+      r.gasto += preco - valor;
+    }
+    return;
+  }
 }
 
 function comprarNaOrdem(estado, indices) {
@@ -285,12 +345,19 @@ const ARMAS_PASSIVO = ['cafe', 'marcatexto', 'resumo', 'caneta'];
 // numeros da fase 13: Cafe 247, Resumo 239, Caneta 212, Marca-texto 114 — a
 // mesma ordem de quando a politica foi escrita).
 const ARMAS_AGRESSIVO = ['cafe', 'resumo', 'caneta', 'marcatexto'];
-const LOJA_PASSIVO = ['atestado', 'energetico', 'caderno', 'wifi', 'vespera', 'whatsapp'];
-const LOJA_AGRESSIVO = ['whatsapp', 'vespera', 'caderno', 'energetico', 'wifi', 'atestado'];
+// Pos-entrega: os itens novos entram na ordem de cada estilo (o que nao esta
+// na lista fica por ultimo, na ordem da vitrine).
+const LOJA_PASSIVO = ['atestado', 'garrafa', 'bandejao', 'energetico', 'caderno', 'sono', 'wifi', 'lancheira', 'vespera', 'whatsapp'];
+const LOJA_AGRESSIVO = ['whatsapp', 'cola', 'vespera', 'sono', 'caderno', 'energetico', 'wifi', 'atestado'];
+// Os limiares de HP em que cada bot come na cantina.
+const COME_PASSIVO = 0.9;
+const COME_AGRESSIVO = 0.65;
+const COME_ALEATORIO = 0.75;
+export const COME_DESVIO = 0.7; // o mesmo do comprarOQueDer do smoke
 
 const passivo = {
   nome: 'passivo',
-  descricao: 'foge de quem chega perto, desvia de pergunta e investida, orbe so sem ninguem perto; carta: cura <60% HP, senao Cafe>Marca-texto>Resumo>Caneta (alcance primeiro); loja: Atestado>Energetico>Caderno>Wi-Fi>Vespera>WhatsApp',
+  descricao: 'foge de quem chega perto, desvia de pergunta e investida, orbe so sem ninguem perto; carta: cura <60% HP, senao Cafe>Marca-texto>Resumo>Caneta (alcance primeiro); loja: come <90% HP, depois Atestado>Garrafa>Bandejao>Energetico>Caderno>Sono>Wi-Fi>Lancheira>Vespera>WhatsApp',
   novaMemoria: () => ({ f: { x: 0, y: 0 } }),
   mover(estado, mem) {
     const f = mem.f;
@@ -305,12 +372,12 @@ const passivo = {
     soltarDirecao(estado, f);
   },
   carta: (estado) => cartaPorOrdem(estado, ARMAS_PASSIVO, 0.6),
-  comprar: (estado) => comprarPorOrdem(estado, LOJA_PASSIVO),
+  comprar: (estado) => comEGasta(estado, COME_PASSIVO, () => comprarPorOrdem(estado, LOJA_PASSIVO)),
 };
 
 const agressivo = {
   nome: 'agressivo',
-  descricao: 'ronda o bando a ~100px catando orbe, foge so do contato; carta: Cafe>Resumo>Caneta>Marca-texto, cura so sem arma na mesa; loja: WhatsApp>Vespera>Caderno>Energetico>Wi-Fi>Atestado',
+  descricao: 'ronda o bando a ~100px catando orbe, foge so do contato; carta: Cafe>Resumo>Caneta>Marca-texto, cura so sem arma na mesa; loja: come <65% HP, depois WhatsApp>Cola>Vespera>Sono>Caderno>Energetico>Wi-Fi>Atestado',
   novaMemoria: () => ({ f: { x: 0, y: 0 } }),
   mover(estado, mem) {
     const f = mem.f;
@@ -326,7 +393,7 @@ const agressivo = {
     soltarDirecao(estado, f);
   },
   carta: (estado) => cartaPorOrdem(estado, ARMAS_AGRESSIVO, -1),
-  comprar: (estado) => comprarPorOrdem(estado, LOJA_AGRESSIVO),
+  comprar: (estado) => comEGasta(estado, COME_AGRESSIVO, () => comprarPorOrdem(estado, LOJA_AGRESSIVO)),
 };
 
 const ALEATORIO_TROCA_MIN = 0.3; // s ate sortear outra direcao
@@ -373,7 +440,7 @@ const aleatorio = {
       indices[i] = indices[j];
       indices[j] = t;
     }
-    return comprarNaOrdem(estado, indices);
+    return comEGasta(estado, COME_ALEATORIO, () => comprarNaOrdem(estado, indices));
   },
 };
 
@@ -381,7 +448,7 @@ const aleatorio = {
 // 0.8, centro do canvas), e comprarOQueDer. Se o smoke mudar o bot, mude aqui.
 const desvio = {
   nome: 'desvio',
-  descricao: 'botDesvio do smoke (foge num raio de 150px, volta ao meio), sempre a 1a carta, compra o mais caro que couber',
+  descricao: 'botDesvio do smoke (foge num raio de 150px, volta ao meio), sempre a 1a carta, come <70% HP e compra o mais caro que couber',
   novaMemoria: () => ({}),
   mover(estado) {
     const p = estado.player;
@@ -411,7 +478,7 @@ const desvio = {
     const indices = [];
     for (let i = 0; i < loja.quantidade; i += 1) if (loja.itens[i].id !== '') indices.push(i);
     indices.sort((x, y) => loja.itens[y].preco - loja.itens[x].preco);
-    return comprarNaOrdem(estado, indices);
+    return comEGasta(estado, COME_DESVIO, () => comprarNaOrdem(estado, indices));
   },
 };
 

@@ -689,9 +689,10 @@ function secaoSobreOJogo() {
       'uma sequência de **avaliações** com cronômetro; sobreviver até zerar aprova, e HP a zero **jubila**, o que ' +
       'encerra a partida inteira. Os inimigos nascem fora das bordas e perseguem o jogador. Quem morre solta XP, e ' +
       'cada nível abre uma carta com opções: arma nova ou +1 nível numa arma que já tem (com tudo no máximo, vira ' +
-      'cura). As armas zeram a cada avaliação.',
-    `A nota não aprova nem reprova, só decide os créditos da loja: **nota = mortos × ${n.pesoKill} + (HP restante ÷ ` +
-      `HP máx.) × ${n.pesoHp} + ${n.bonusIleso} se não levou dano**, com cada parcela arredondada a ${n.casasDecimais} ` +
+      'cura). As armas zeram a cada avaliação. **A vida não enche entre avaliações**: o HP perdido numa continua ' +
+      'perdido na seguinte, e só lanche cura (biscoitos pequenos na prova, a cantina da loja).',
+    `A nota não aprova nem reprova, só decide os créditos da loja: **nota = mortos × ${n.pesoKill} + (HP final ÷ ` +
+      `HP com que entrou na avaliação) × ${n.pesoHp} + ${n.bonusIleso} se não levou dano**, com cada parcela arredondada a ${n.casasDecimais} ` +
       `casa(s) e teto ${n.maxima}. Conceitos: ${faixas}; base de ${n.creditosBase} créditos.`,
     'Todo número de balanceamento mora em `data/content.js`. O resumo está em **Configuração usada**, e a ' +
       'configuração completa em `configuracao.valores`, no JSON.',

@@ -1206,7 +1206,8 @@ body {
 }
 
 .loja-acao.selecionada:active,
-.loja-slot.selecionada:active {
+.loja-slot.selecionada:active,
+.loja-lanche.selecionada:active {
   top: 0.06em;
   transform: none;
 }
@@ -1215,7 +1216,8 @@ body {
    aponta, como quem circula a resposta. So existe em .selecionada (estado). */
 .carta-opcao.selecionada::after,
 .loja-acao.selecionada::after,
-.loja-slot.selecionada::after {
+.loja-slot.selecionada::after,
+.loja-lanche.selecionada::after {
   content: '';
   position: absolute;
   inset: -0.5em -0.45em;
@@ -1234,7 +1236,8 @@ body {
    cima, e fica uma faixa menor (medida no handoff). O slot tem a volta justa
    em cima (pendencia 123) e o ::before livre: a margem e ele. */
 .carta-opcao.selecionada:active::after,
-.loja-acao.selecionada:active::after {
+.loja-acao.selecionada:active::after,
+.loja-lanche.selecionada:active::after {
   pointer-events: auto;
 }
 
@@ -1372,7 +1375,8 @@ body {
 /* O percevejo: os cartoes, o titulo e os folhetos sao pregados. */
 .mural-titulo::before,
 .loja-item::before,
-.loja-acao::before {
+.loja-acao::before,
+.loja-cantina::before {
   content: '📌';
   position: absolute;
   top: -0.6em;
@@ -1553,7 +1557,7 @@ body {
   grid-area: acoes;
   display: flex;
   flex-direction: column;
-  gap: 1.3em;
+  gap: 0.85em; /* era 1.3em; a cantina (pos-entrega) entrou na coluna */
 }
 
 .loja-acao {
@@ -1598,6 +1602,110 @@ body {
   box-shadow: 0.08em 0.3em 0.45em var(--sombra);
   top: 0;
   transform: none;
+}
+
+/* A cantina (pos-entrega): a ficha do lanche pregada em cima dos folhetos,
+   com o HP do jogador no cabecalho laranja. A loja SEMPRE tem um lanche, e e
+   so ele que devolve o HP perdido. O lanche e uma peca do cursor como os
+   itens (posicaoLanche): levanta e ganha a volta de caneta, sem :hover. */
+.loja-cantina {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--papel);
+  border-radius: 0.15em;
+  box-shadow: 0.08em 0.3em 0.45em var(--sombra);
+  rotate: -1deg;
+}
+
+.loja-cantina-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8em;
+  margin: 0;
+  padding: 0.4em 0.7em 0.15em;
+  background-color: var(--marca-laranja);
+  border-radius: 0.15em 0.15em 0 0;
+}
+
+.loja-cantina-rotulo {
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tinta);
+}
+
+.loja-vida {
+  font-size: 0.85em;
+  font-weight: 700;
+  color: var(--tinta);
+}
+
+/* O lanche e um adesivo colado na ficha (um folheto da loja: .adesivo
+   .loja-acao, com o cursor e o :hover desligado deles), so que baixo e sem
+   percevejo, que ja e da ficha. */
+.loja-lanche {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.55em;
+  margin: 0.35em 0.5em 0.45em;
+  padding: 0.25em 0.55em 0.3em;
+  font-size: 1em;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  border-radius: 0.5em;
+  rotate: 0.8deg;
+}
+
+.loja-lanche.loja-acao::before {
+  content: none;
+}
+
+.loja-lanche.selecionada {
+  z-index: 1;
+}
+
+.loja-lanche-emoji {
+  font-size: 1.6em;
+  line-height: 1;
+}
+
+.loja-lanche-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05em;
+}
+
+.loja-lanche-nome {
+  font-size: 0.85em;
+  font-weight: 700;
+}
+
+.loja-lanche-cura {
+  font-size: 0.75em;
+  font-weight: 700;
+  color: var(--caneta-verde);
+}
+
+.loja-lanche-preco {
+  margin-top: 0;
+}
+
+/* Sem credito, a etiqueta apagada como a do item. */
+.loja-lanche.sem-credito .loja-preco {
+  background-color: var(--papel-sombra);
+  border-style: dashed;
+  border-color: var(--caneta-vermelha);
+}
+
+/* HP cheio ou sem credito: da para apontar, mas a loja recusa. */
+.loja-lanche.inativo > .loja-lanche-emoji,
+.loja-lanche.inativo > .loja-lanche-texto {
+  opacity: 0.55;
 }
 
 /* Os coringas do jogador: a cartela de figurinhas, como a do HUD. */

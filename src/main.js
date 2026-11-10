@@ -4,6 +4,7 @@ import { desenhar } from './render.js';
 import { criarAudio } from './audio.js';
 import { criarUi } from './ui.js';
 import { atualizarPlayer, atualizarOrbes } from './player.js';
+import { atualizarLanches } from './lanches.js';
 import { atualizarInimigos } from './enemies.js';
 import { atualizarArmas } from './weapons.js';
 import { atualizarBanca, bancaVencida } from './boss.js';
@@ -27,11 +28,13 @@ import {
   abrirLoja,
   apontarLoja,
   comprarItem,
+  comprarLanche,
   confirmarLoja,
   entradaLiberada,
   LINHA_CORINGAS,
   LINHA_VITRINE,
   moverSelecaoLoja,
+  posicaoLanche,
   posicaoRerolar,
   posicaoSeguir,
   rerolar,
@@ -116,6 +119,8 @@ function atualizarAvaliacao(estado, dt) {
   const xpAntes = estado.player.xp;
   atualizarOrbes(estado, dt);
   if (estado.player.xp > xpAntes) emitir(estado, 'xp-coletado', estado.player.xp - xpAntes);
+  // Os biscoitos (pos-entrega): os que cairam das mortes deste quadro ja valem.
+  atualizarLanches(estado, dt);
 
   // Depois das armas: a Banca caiu neste tick? Perguntado antes da morte do
   // jogador so para o espelho de HP dela estar em dia no boletim de quem
@@ -328,6 +333,8 @@ export function iniciar() {
     apontarCoringa: (i) => apontarLoja(estado, LINHA_CORINGAS, i),
     rerolar: () => entradaLiberada(estado) && rerolar(estado),
     seguir: () => entradaLiberada(estado) && seguirDaLoja(estado),
+    lanche: () => entradaLiberada(estado) && comprarLanche(estado),
+    apontarLanche: () => apontarLoja(estado, LINHA_VITRINE, posicaoLanche(estado.loja)),
     apontarRerolar: () => apontarLoja(estado, LINHA_VITRINE, posicaoRerolar(estado.loja)),
     apontarSeguir: () => apontarLoja(estado, LINHA_VITRINE, posicaoSeguir(estado.loja)),
   });
@@ -643,8 +650,8 @@ export function sairDoResultado(estado) {
 
 // Teclado da loja. Setas/WASD movem o cursor (cima/baixo troca entre a
 // vitrine e os seus coringas), Enter/Espaco fazem o que o cursor aponta, 1-9 compram
-// direto e R rerrola. As teclas que agem esperam o atraso de abertura
-// (entradaLiberada): o Enter repetido do boletim nao compra nada.
+// direto, L compra o lanche e R rerrola. As teclas que agem esperam o atraso
+// de abertura (entradaLiberada): o Enter repetido do boletim nao compra nada.
 function teclaDaLoja(estado, code) {
   if (code === 'ArrowLeft' || code === 'KeyA') return moverSelecaoLoja(estado, -1);
   if (code === 'ArrowRight' || code === 'KeyD') return moverSelecaoLoja(estado, 1);
@@ -653,10 +660,11 @@ function teclaDaLoja(estado, code) {
     return true;
   }
   const confirma = code === 'Enter' || code === 'NumpadEnter' || code === 'Space';
-  const gasta = confirma || code === 'KeyR' || /^(Digit|Numpad)[1-9]$/.test(code);
+  const gasta = confirma || code === 'KeyR' || code === 'KeyL' || /^(Digit|Numpad)[1-9]$/.test(code);
   if (!gasta) return false;
   if (!entradaLiberada(estado)) return true; // engole a tecla: nem compra, nem cai no resto
   if (code === 'KeyR') return rerolar(estado) || true;
+  if (code === 'KeyL') return comprarLanche(estado) || true;
   if (confirma) return confirmarLoja(estado) || true;
   return comprarItem(estado, Number(code.slice(-1)) - 1) || true;
 }

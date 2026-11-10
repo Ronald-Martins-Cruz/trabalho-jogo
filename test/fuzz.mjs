@@ -54,6 +54,7 @@ import { apontarCarta, cartaLiberada, escolherCarta, moverSelecaoCarta } from '.
 import {
   apontarLoja,
   comprarItem,
+  comprarLanche,
   confirmarLoja,
   entradaLiberada,
   moverSelecaoLoja,
@@ -372,6 +373,7 @@ function agir(estado, rng, run) {
       else if (liberada && x < 0.62) rerolar(estado);
       else if (liberada && x < 0.68) confirmarLoja(estado);
       else if (liberada && x < 0.74) seguirDaLoja(estado);
+      else if (liberada && x < 0.8) comprarLanche(estado); // pos-entrega: a cantina, de HP cheio ou nao
       break;
     }
     case TELAS.ANUNCIO:

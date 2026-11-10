@@ -1264,6 +1264,31 @@ const CENAS = [
       window.__f.centralizar();
     },
   },
+  // Pos-entrega: biscoitos no chao da prova (lanches.js), um piscando no fim
+  // da vida, e o jogador ferido (o HP veio da avaliacao anterior).
+  {
+    nome: 'hud-biscoitos',
+    espera: 300,
+    preparar: async () => {
+      const { e, hudCheio, centralizar } = window.__f;
+      const lanches = await import('/src/lanches.js');
+      const { CONTEUDO } = await import('/data/content.js');
+      hudCheio();
+      centralizar();
+      e.player.hp = Math.round(e.player.hpMax * 0.55);
+      const av = e.run.avaliacao;
+      const cfg = CONTEUDO.lanches.arena;
+      const pontos = [[-140, -60], [120, 90], [200, -110]];
+      for (const [dx, dy] of pontos) {
+        av.mortesParaLanche = cfg.aCadaMortes - 1;
+        av.lancheEm = av.decorrido - cfg.intervaloMinimo;
+        av.lanchesSoltos = 0;
+        lanches.contarMorteParaLanche(e, e.player.x + dx, e.player.y + dy);
+      }
+      e.lanches[2].vida = cfg.piscar - 0.5;
+    },
+    medir: () => `${window.__f.e.lanches.length} biscoito(s) no chao, HP ${Math.round(window.__f.e.player.hp)}/${window.__f.e.player.hpMax}`,
+  },
   {
     // O golpe: a barra ja caiu (140 ms) e o fantasma claro ainda nao saiu
     // do lugar (espera 300 ms para escorrer).
@@ -1527,6 +1552,23 @@ const CENAS = [
       e.loja.selecionada = 1;
     },
     medir: () => `${window.__f.cabe('.mural')}; aviso "${document.getElementById('loja-aviso').textContent}"; ${document.querySelectorAll('.loja-item.vendido').length} vendido(s), ${document.querySelectorAll('.loja-item.sem-credito').length} sem credito, ${document.querySelectorAll('.loja-slot.gasto').length} gasto(s)`,
+  },
+  // Pos-entrega: a cantina com o jogador ferido. O lanche aceso, com o
+  // cursor nele, e o HP da run no cabecalho.
+  {
+    nome: 'telas-loja-cantina-ferido',
+    espera: 1200,
+    preparar: async () => {
+      const { e, main, garantirResultado } = window.__f;
+      const shop = await import('/src/shop.js');
+      garantirResultado();
+      e.run.vida = 55;
+      main.sairDoResultado(e);
+      e.run.creditos = 200;
+      e.loja.linha = 0;
+      e.loja.selecionada = shop.posicaoLanche(e.loja);
+    },
+    medir: () => `${window.__f.cabe('.mural')}; cantina "${document.getElementById('loja-vida').textContent}" · ${document.getElementById('loja-lanche-nome').textContent} ${document.getElementById('loja-lanche-cura').textContent} ${document.getElementById('loja-lanche-preco').textContent}`,
   },
   {
     nome: 'telas-carta-cursor-na-terceira',

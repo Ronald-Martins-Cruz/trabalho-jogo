@@ -1,6 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { emitir, irParaTela, TELAS } from './state.js';
-import { dadosDoCoringa, modificarAtributo, novaInstancia } from './jokers.js';
+import { curaDeLanche, dadosDoCoringa, hpDaRun, maximoDaRun, modificarAtributo, novaInstancia } from './jokers.js';
 import { avancarRun } from './run.js';
 
 // A loja entre avaliacoes (design §5). Simulacao pura, como cards.js: a UI
@@ -10,9 +10,14 @@ import { avancarRun } from './run.js';
 // clique/tecla, como sairDoResultado.
 //
 // O cursor e (linha, selecionada):
-//   linha 0, a vitrine: 0..quantidade-1 sao os itens, `quantidade` e o botao
-//            de rerolar e `quantidade + 1` o de seguir;
+//   linha 0, a vitrine: 0..quantidade-1 sao os itens, `quantidade` e o lanche
+//            da cantina, `quantidade + 1` o botao de rerolar e
+//            `quantidade + 2` o de seguir;
 //   linha 1, os coringas do jogador (para vender).
+//
+// Pos-entrega: a cantina. A loja SEMPRE tem um lanche (CONTEUDO.lanches.loja),
+// sorteado na abertura e a cada rerrolagem, que cura o HP que a run perdeu
+// (run.vida): a vida nao enche mais sozinha entre avaliacoes.
 // Mouse e teclado escrevem no MESMO cursor (apontarLoja): destaque pintado
 // direto na classe CSS seria desfeito pelo sincronizar do quadro seguinte, e
 // o Enter compraria o item do cursor, nao o apontado (pendencia 26).
@@ -26,6 +31,7 @@ export const AVISOS = {
   CHEIO: 'cheio',
   VENDIDO: 'vendido',
   SEM_NOVIDADE: 'semNovidade',
+  HP_CHEIO: 'hpCheio',
 };
 
 // ------------------------------------------------------------------ numeros
@@ -55,21 +61,39 @@ export function precoReroll(loja, cfg = CONTEUDO.loja) {
   return cfg.rerollBase + cfg.rerollIncremento * loja.rerolls;
 }
 
+// A venda devolve uma fracao do preco CHEIO (sem o desconto da Carteirinha):
+// comprar com desconto e vender nao vira lucro, porque a fracao e menor que o
+// desconto deixa sobrar.
 export function valorDeVenda(id, cfg = CONTEUDO.loja) {
   const dados = dadosDoCoringa(id);
   return dados ? Math.floor(dados.preco * cfg.fracaoVenda) : 0;
 }
 
-export function posicaoRerolar(loja) {
+// O preco de vitrine de um item ou lanche: o de content.js vezes o fator
+// 'precoLoja' (base 1; a 🎟️ Carteirinha baixa). Inteiro, nunca menos de 1.
+export function precoNaLoja(estado, base) {
+  return Math.max(1, Math.round(base * modificarAtributo(estado, 'precoLoja', 1)));
+}
+
+export function dadosDoLanche(id, lista = CONTEUDO.lanches.loja) {
+  for (let i = 0; i < lista.length; i += 1) if (lista[i].id === id) return lista[i];
+  return null;
+}
+
+export function posicaoLanche(loja) {
   return loja.quantidade;
 }
 
-export function posicaoSeguir(loja) {
+export function posicaoRerolar(loja) {
   return loja.quantidade + 1;
 }
 
+export function posicaoSeguir(loja) {
+  return loja.quantidade + 2;
+}
+
 function tamanhoDaLinha(estado, linha) {
-  return linha === LINHA_VITRINE ? estado.loja.quantidade + 2 : estado.run.coringas.length;
+  return linha === LINHA_VITRINE ? estado.loja.quantidade + 3 : estado.run.coringas.length;
 }
 
 // ------------------------------------------------------------------ abrir
@@ -82,12 +106,15 @@ export function abrirLoja(estado) {
   const itens = modificarAtributo(estado, 'itensLoja', itensDaLoja(estado.run.conceito));
   loja.quantidade = Math.max(0, Math.min(loja.itens.length, itens));
   loja.rerolls = 0;
-  loja.gratis = rerollsGratisDaLoja(estado.run.conceito);
+  // O 🗳️ Amigo no C.A. soma aqui, ao que o conceito ja da.
+  loja.gratis = Math.max(0, modificarAtributo(estado, 'rerollsGratis', rerollsGratisDaLoja(estado.run.conceito)));
   loja.linha = LINHA_VITRINE;
   loja.selecionada = 0;
   loja.aviso = '';
   loja.abertaEm = estado.tempo;
   sortearItens(estado);
+  loja.lanche.compras = 0;
+  sortearLanche(estado);
   irParaTela(estado, TELAS.LOJA);
   emitir(estado, 'loja-aberta', { quantidade: loja.quantidade, creditos: estado.run.creditos });
 }
@@ -118,8 +145,63 @@ function sortearItens(estado) {
     candidatos[k] = candidatos[candidatos.length - 1];
     candidatos.length -= 1;
     item.id = dados.id;
-    item.preco = dados.preco;
+    item.preco = precoNaLoja(estado, dados.preco);
   }
+}
+
+// A cantina: um lanche sorteado entre todos, sempre (o validador garante que
+// a lista nao e vazia). Novo a cada abertura e a cada rerrolagem. As compras
+// da visita (lanche.compras) NAO zeram no reroll, so na abertura: senao um
+// reroll de ◉ 10 (ou gratis) sairia mais barato que o encarecimento.
+function sortearLanche(estado) {
+  const lista = CONTEUDO.lanches.loja;
+  const dados = lista[estado.rng.int(0, lista.length - 1)];
+  const lanche = estado.loja.lanche;
+  lanche.id = dados.id;
+  lanche.preco = precoDoLanche(estado, dados, lanche.compras);
+}
+
+// O preco da proxima compra: cada compra na mesma visita encarece o lanche em
+// lanches.encarecePorCompra do preco de tabela, e o desconto vale por cima.
+function precoDoLanche(estado, dados, compras) {
+  return precoNaLoja(estado, dados.preco * (1 + CONTEUDO.lanches.encarecePorCompra * compras));
+}
+
+// Comprar ou vender a 🎟️ Carteirinha muda o preco do que ainda esta a venda.
+function reprecificar(estado) {
+  const loja = estado.loja;
+  for (let i = 0; i < loja.quantidade; i += 1) {
+    const item = loja.itens[i];
+    const dados = item.id ? dadosDoCoringa(item.id) : null;
+    if (dados && !item.vendido) item.preco = precoNaLoja(estado, dados.preco);
+  }
+  const lanche = dadosDoLanche(loja.lanche.id);
+  if (lanche) loja.lanche.preco = precoDoLanche(estado, lanche, loja.lanche.compras);
+}
+
+// O HP que o jogador tem agora, na loja, e o maximo (com os itens da mochila).
+// A UI pergunta todo quadro: passa o proprio objeto em `saida`.
+export function vidaNaLoja(estado, saida = { hp: 0, hpMax: 0 }) {
+  saida.hpMax = maximoDaRun(estado);
+  saida.hp = hpDaRun(estado, saida.hpMax);
+  return saida;
+}
+
+// Comprar ou vender um item de HP maximo (🥤 Garrafa d'Agua) mexe na vida de
+// agora: o maximo que sobe chega cheio (o HP sobe junto), o que desce so corta
+// o que passar do novo teto. Chamado com o maximo de ANTES da troca. A run
+// que nunca perdeu nada (-1) continua cheia.
+function acertarVida(estado, hpMaxAntes) {
+  const run = estado.run;
+  if (!(run.vida >= 0)) return;
+  const hpMax = maximoDaRun(estado);
+  run.vida = Math.min(hpMax, Math.max(0, run.vida) + Math.max(0, hpMax - hpMaxAntes));
+}
+
+// Quanto o lanche da cantina cura (com a 🍱 Lancheira), para a etiqueta.
+export function curaDoLancheDaLoja(estado) {
+  const dados = dadosDoLanche(estado.loja.lanche.id);
+  return dados ? curaDeLanche(estado, dados.cura) : 0;
 }
 
 function possui(estado, id) {
@@ -167,11 +249,39 @@ export function comprarItem(estado, indice) {
   if (estado.run.coringas.length >= CONTEUDO.loja.teto) return recusar(estado, AVISOS.CHEIO);
   if (estado.run.creditos < item.preco) return recusar(estado, AVISOS.SEM_CREDITOS);
 
+  const hpMaxAntes = maximoDaRun(estado);
   estado.run.creditos -= item.preco;
   estado.run.coringas.push(novaInstancia(item.id));
   item.vendido = true;
   loja.aviso = '';
+  acertarVida(estado, hpMaxAntes);
+  reprecificar(estado);
   emitir(estado, 'coringa-comprado', { id: item.id, preco: item.preco });
+  return true;
+}
+
+// O lanche da cantina: cura o HP da run (run.vida), o mesmo que a loja
+// mostra. Compra-se de novo enquanto houver o que curar, cada vez mais caro.
+// Com a vida cheia a loja recusa — pagar por nada seria roubo, como o reroll
+// sem novidade.
+export function comprarLanche(estado) {
+  if (estado.tela !== TELAS.LOJA) return false;
+  const loja = estado.loja;
+  const lanche = loja.lanche;
+  const dados = dadosDoLanche(lanche.id);
+  if (!dados) return false;
+  const hpMax = maximoDaRun(estado);
+  const antes = hpDaRun(estado, hpMax);
+  if (antes >= hpMax) return recusar(estado, AVISOS.HP_CHEIO);
+  if (estado.run.creditos < lanche.preco) return recusar(estado, AVISOS.SEM_CREDITOS);
+
+  const preco = lanche.preco;
+  estado.run.creditos -= preco;
+  estado.run.vida = Math.min(hpMax, antes + curaDeLanche(estado, dados.cura));
+  lanche.compras += 1;
+  lanche.preco = precoDoLanche(estado, dados, lanche.compras);
+  loja.aviso = '';
+  emitir(estado, 'lanche-comprado', { id: lanche.id, preco, cura: estado.run.vida - antes });
   return true;
 }
 
@@ -181,10 +291,13 @@ export function venderCoringa(estado, indice) {
   if (!Number.isInteger(indice) || indice < 0 || indice >= lista.length) return false;
   const inst = lista[indice];
   const valor = valorDeVenda(inst.id);
+  const hpMaxAntes = maximoDaRun(estado);
   lista.splice(indice, 1);
   estado.run.creditos += valor;
   const loja = estado.loja;
   loja.aviso = '';
+  acertarVida(estado, hpMaxAntes);
+  reprecificar(estado);
   // O cursor nao pode ficar apontando para um slot que deixou de existir.
   if (loja.linha === LINHA_CORINGAS) {
     if (lista.length === 0) {
@@ -209,6 +322,7 @@ export function rerolar(estado) {
   else loja.rerolls += 1;
   loja.aviso = '';
   sortearItens(estado);
+  sortearLanche(estado);
   emitir(estado, 'loja-reroll', { preco });
   return true;
 }
@@ -261,6 +375,7 @@ export function confirmarLoja(estado) {
   if (estado.tela !== TELAS.LOJA) return false;
   const loja = estado.loja;
   if (loja.linha === LINHA_CORINGAS) return venderCoringa(estado, loja.selecionada);
+  if (loja.selecionada === posicaoLanche(loja)) return comprarLanche(estado);
   if (loja.selecionada === posicaoRerolar(loja)) return rerolar(estado);
   if (loja.selecionada === posicaoSeguir(loja)) return seguirDaLoja(estado);
   return comprarItem(estado, loja.selecionada);

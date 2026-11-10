@@ -3,6 +3,7 @@ import { emitir } from './state.js';
 import { limitarNaArena, receberDano, soltarOrbeXp } from './player.js';
 import { obterPool, obterScratch } from './pool.js';
 import { aoMatarInimigo } from './jokers.js';
+import { contarMorteParaLanche } from './lanches.js';
 
 // Spawn, IA e morte dos inimigos. Nenhum objeto nasce aqui dentro do update:
 // tudo sai da pool de src/pool.js, aberta com o teto de
@@ -674,6 +675,8 @@ export function aplicarDano(estado, inimigo, dano) {
   // maxPassosPorFrame ticks — um consumidor dentro do update veria o mesmo
   // 'inimigo-morto' varias vezes e cada morte viraria varios orbes.
   soltarOrbeXp(estado, inimigo.x, inimigo.y, inimigo.xp);
+  // Pos-entrega: de tantas em tantas mortes, um biscoito (lanches.js).
+  contarMorteParaLanche(estado, inimigo.x, inimigo.y);
   // Hook de coringa, ainda com o inimigo inteiro (tipo, posicao) antes de ele
   // voltar para a pool.
   aoMatarInimigo(estado, inimigo);

@@ -99,13 +99,22 @@ import {
   trocarLinhaLoja,
   valorDeVenda,
   venderCoringa,
+  comprarLanche,
+  curaDoLancheDaLoja,
+  posicaoLanche,
+  precoNaLoja,
+  vidaNaLoja,
 } from '../src/shop.js';
+import { COME_DESVIO, comerSeFerido } from './bots.mjs';
+import { curaDeLanche } from '../src/jokers.js';
+import { contarMorteParaLanche, poolLanches, atualizarLanches } from '../src/lanches.js';
 // ui.js nao toca no DOM no topo do modulo (criarUi recebe o `document`), entao
 // os formatadores puros da tela de resultado podem ser testados aqui — e a
 // primeira cobertura automatica que ui.js tem.
 import {
   armasDoBoletim,
   decomposicaoDaNota,
+  textoDosCreditos,
   emojisDosCoringas,
   formatarNota,
   formatarTempo,
@@ -3334,7 +3343,8 @@ function coringaComEfeito(efeito) {
 function checarCoringasDoConteudo() {
   const problemas = verificarCoringasDoConteudo();
   if (problemas.length > 0) falhar(0, `coringas de content.js: ${problemas.join(' | ')}`);
-  if (HOOKS.length !== 6) falhar(0, `a lista fechada de hooks tem ${HOOKS.length} entradas, o contrato define 6`);
+  // Pos-entrega (loja nova): +aoFecharAvaliacao, para Cofrinho, Bolsa e Bandejao.
+  if (HOOKS.length !== 7) falhar(0, `a lista fechada de hooks tem ${HOOKS.length} entradas, o contrato define 7`);
 }
 
 // Tarefa 2: o Atestado e o coringa que mais exercita o sistema — golpe fatal,
@@ -3720,6 +3730,294 @@ function checarLoja() {
   }
   if (comecarTcc(estado)) falhar(0, 'comecarTcc agiu fora da tela do TCC');
   if (estado.run.periodoIndex !== ultimoP || estado.run.avaliacaoIndex !== ultimoA) falhar(0, 'TCC: a defesa mexeu na posicao da run');
+}
+
+// ------------------------------------------- pos-entrega: loja nova e vida
+// A vida atravessa a run (so lanche cura), a cantina sempre tem um lanche, o
+// biscoito da prova e pequeno, os 9 itens novos fazem o que dizem e a palavra
+// "coringa" nao aparece na tela. Os itens sao achados pelo EFEITO, como em
+// coringaComEfeito.
+
+function itemPorEfeito(efeito, filtro = () => true) {
+  const dados = CONTEUDO.coringas.find((c) => c.efeito === efeito && filtro(c));
+  if (!dados) falhar(0, `pos-entrega: nenhum item usa o efeito "${efeito}"`);
+  return dados;
+}
+
+// Fecha a avaliacao corrente pelo caminho do jogo (o cronometro zera num tick).
+function fecharPeloCronometro(estado, onde) {
+  const av = estado.run.avaliacao;
+  av.decorrido = av.duracao;
+  atualizar(estado, PASSO);
+  if (estado.tela !== TELAS.RESULTADO) falhar(0, `${onde}: o cronometro zerado levou a "${estado.tela}"`);
+}
+
+function runComMochila(semente, ids) {
+  const estado = novoEstado(semente);
+  iniciarRun(estado);
+  for (const id of ids) estado.run.coringas.push(novaInstancia(id));
+  if (!comecarProxima(estado)) falhar(0, 'pos-entrega: comecarProxima recusou o anuncio');
+  return estado;
+}
+
+function checarVidaQueAtravessaARun() {
+  const estado = runComMochila(SEMENTE + 1300, []);
+  const p = estado.player;
+  const hpMax = p.hpMax;
+  if (p.hp !== hpMax || estado.run.avaliacao.hpInicial !== hpMax) falhar(0, 'vida: a 1a avaliacao da run nao comecou cheia');
+  receberDano(estado, 30, true);
+  fecharPeloCronometro(estado, 'vida');
+  if (estado.run.vida !== hpMax - 30) falhar(0, `vida: a run guardou ${estado.run.vida} de HP, esperava ${hpMax - 30}`);
+  const r1 = estado.run.resultado;
+  if (Math.abs(r1.hpFracao - 0.7) > EPSILON) falhar(0, `vida: perdeu 30 de ${hpMax} e a nota leu ${r1.hpFracao} de HP preservado`);
+
+  // A loja: o HP de agora, e a cantina sempre aberta.
+  sairDoResultado(estado);
+  if (estado.tela !== TELAS.LOJA) falhar(0, `vida: o boletim foi para "${estado.tela}"`);
+  const loja = estado.loja;
+  if (vidaNaLoja(estado).hp !== hpMax - 30) falhar(0, `vida: a loja mostra ${vidaNaLoja(estado).hp} de HP, esperava ${hpMax - 30}`);
+  // Sem comer: a avaliacao seguinte nasce com o mesmo HP (nao enche sozinha).
+  seguirDaLoja(estado);
+  comecarProxima(estado);
+  if (estado.player.hp !== hpMax - 30 || estado.run.avaliacao.hpInicial !== hpMax - 30) {
+    falhar(0, `vida: a 2a avaliacao comecou com ${estado.player.hp} de HP, esperava ${hpMax - 30} (a vida encheu sozinha?)`);
+  }
+  // Entrou ferido e nao levou dano: a parcela de HP paga o preservado inteiro.
+  fecharPeloCronometro(estado, 'vida 2');
+  const r2 = estado.run.resultado;
+  if (Math.abs(r2.hpFracao - 1) > EPSILON || !r2.ileso) falhar(0, `vida: entrou com ${hpMax - 30}, saiu igual e a nota leu ${r2.hpFracao} (ileso ${r2.ileso})`);
+  if (!decomposicaoDaNota(r2).includes(`100% ${CONTEUDO.textos.resultado.hp}`)) falhar(0, `vida: o boletim nao diz o HP preservado: "${decomposicaoDaNota(r2)}"`);
+
+  // A cantina: recusas, a compra, o carimbo, o reroll que traz outro lanche.
+  sairDoResultado(estado);
+  for (let i = 0; i < Math.ceil(CONTEUDO.loja.atrasoEntrada / PASSO) + 1; i += 1) atualizar(estado, PASSO);
+  if (!dadosDoLancheDaVitrine(estado)) falhar(0, 'cantina: a loja abriu sem lanche');
+  estado.run.creditos = 0;
+  if (comprarLanche(estado) || loja.aviso !== AVISOS.SEM_CREDITOS) falhar(0, 'cantina: comeu sem credito');
+  estado.run.creditos = 1000;
+  // Pelo cursor, como o teclado e o mouse: o lanche e uma peca da vitrine.
+  if (!apontarLoja(estado, LINHA_VITRINE, posicaoLanche(loja))) falhar(0, 'cantina: o cursor nao aponta o lanche');
+  const cura = curaDoLancheDaLoja(estado);
+  const preco = loja.lanche.preco;
+  if (!confirmarLoja(estado)) falhar(0, 'cantina: Enter no lanche nao comprou');
+  if (estado.run.creditos !== 1000 - preco) falhar(0, 'cantina: o lanche nao cobrou o preco');
+  if (estado.run.vida !== Math.min(hpMax, hpMax - 30 + cura)) falhar(0, `cantina: a vida foi a ${estado.run.vida}, o lanche diz +${cura}`);
+  // O segundo na mesma visita sai mais caro, e o reroll traz outro lanche sem
+  // zerar o encarecimento (senao o reroll de ◉ 10 sairia mais barato).
+  const tabela = dadosDoLancheDaVitrine(estado).preco;
+  const segundo = precoNaLoja(estado, tabela * (1 + CONTEUDO.lanches.encarecePorCompra));
+  if (loja.lanche.compras !== 1 || loja.lanche.preco !== segundo || segundo <= preco) falhar(0, `cantina: o 2o lanche custa ${loja.lanche.preco}, esperava ${segundo}`);
+  if (!rerolar(estado) || loja.lanche.compras !== 1 || !dadosDoLancheDaVitrine(estado)) falhar(0, 'cantina: o reroll nao trouxe outro lanche, ou zerou as compras');
+  const novo = dadosDoLancheDaVitrine(estado).preco;
+  if (loja.lanche.preco !== precoNaLoja(estado, novo * (1 + CONTEUDO.lanches.encarecePorCompra))) falhar(0, 'cantina: o reroll devolveu o lanche ao preco de tabela');
+  estado.run.vida = hpMax;
+  if (comprarLanche(estado) || loja.aviso !== AVISOS.HP_CHEIO) falhar(0, 'cantina: vendeu lanche para quem esta de HP cheio');
+  // Nenhuma loja sem lanche, em varias sementes e rerolls.
+  let vistos = 0;
+  for (let s = 0; s < 6; s += 1) {
+    const e = lojaAberta(SEMENTE + 1310 + s, 1000);
+    for (let k = 0; k < 4; k += 1) {
+      if (!dadosDoLancheDaVitrine(e)) falhar(0, `cantina: semente ${SEMENTE + 1310 + s}, reroll ${k}: sem lanche`);
+      vistos += 1;
+      rerolar(e);
+    }
+  }
+  return `vida e cantina: 30 de dano atravessam a loja (${hpMax - 30}/${hpMax} na 2a avaliacao), quem entra ferido e sai ileso tem 100% do HP preservado, o lanche cura ${cura} por ◉ ${preco} e o 2o sai a ◉ ${segundo}, recusado de HP cheio; ${vistos} vitrines, todas com lanche`;
+}
+
+function dadosDoLancheDaVitrine(estado) {
+  return CONTEUDO.lanches.loja.find((l) => l.id === estado.loja.lanche.id) || null;
+}
+
+function checarItensNovos() {
+  const partes = [];
+  // 🐷 Cofrinho e 💼 Bolsa: pagam no fim, sobre o que estava guardado.
+  const juros = itemPorEfeito('juros');
+  const bolsa = itemPorEfeito('bolsa');
+  const e1 = runComMochila(SEMENTE + 1320, [juros.id, bolsa.id]);
+  e1.run.creditos = 120;
+  fecharPeloCronometro(e1, 'cofrinho');
+  const r = e1.run.resultado;
+  const esperado = Math.min(juros.params.teto, Math.floor(120 * juros.params.fracao)) + bolsa.params.valor;
+  if (r.creditosBonus !== esperado) falhar(0, `cofrinho/bolsa: pagaram ${r.creditosBonus}, esperava ${esperado}`);
+  if (e1.run.creditos !== 120 + r.creditos || r.creditos !== creditosDaFaixa(faixaDaNota(r.nota)) + esperado) falhar(0, 'cofrinho/bolsa: o bonus nao entrou nos creditos');
+  if (!textoDosCreditos(r).includes(String(esperado))) falhar(0, `cofrinho/bolsa: o boletim nao mostra o bonus: "${textoDosCreditos(r)}"`);
+  partes.push(`🐷+💼 ◉ ${esperado} sobre ◉ 120`);
+
+  // 🍲 Bandejao: cura no fim, antes de a run guardar o HP perdido.
+  const bandejao = itemPorEfeito('curaNoFim');
+  const e2 = runComMochila(SEMENTE + 1321, [bandejao.id]);
+  receberDano(e2, 40, true);
+  fecharPeloCronometro(e2, 'bandejao');
+  const hpBandejao = e2.player.hpMax - 40 + bandejao.params.hp;
+  if (e2.run.vida !== hpBandejao) falhar(0, `bandejao: a run guardou ${e2.run.vida} de HP, esperava ${hpBandejao}`);
+  partes.push(`🍲 -40 +${bandejao.params.hp} -> ${e2.run.vida}`);
+
+  // 🥤 Garrafa: o maximo sobe e o HP perdido continua o mesmo.
+  const garrafa = itemPorEfeito('atributo', (c) => c.params.atributo === 'hpMax');
+  const e3 = runComMochila(SEMENTE + 1322, [garrafa.id]);
+  const hpMax = Math.round(CONTEUDO.jogador.hpMax * garrafa.params.fator);
+  if (e3.player.hpMax !== hpMax || e3.player.hp !== hpMax) falhar(0, `garrafa: ${e3.player.hp}/${e3.player.hpMax}, esperava ${hpMax} cheio`);
+  partes.push(`🥤 ${hpMax} HP`);
+
+  // 🍱 Lancheira: todo lanche cura mais (a porta e uma so).
+  const lancheira = itemPorEfeito('atributo', (c) => c.params.atributo === 'curaLanche');
+  const e4 = runComMochila(SEMENTE + 1323, [lancheira.id]);
+  const cura = CONTEUDO.lanches.arena.cura;
+  if (curaDeLanche(e4, cura) !== Math.round(cura * lancheira.params.fator)) falhar(0, `lancheira: o biscoito cura ${curaDeLanche(e4, cura)}`);
+  partes.push(`🍱 biscoito ${cura} -> ${curaDeLanche(e4, cura)}`);
+
+  // 😴 Sono em Dia e 🍀 Cola na Regua. A Cola ve o dano ja multiplicado,
+  // mesmo vindo antes na mochila, e nunca derruba A Banca.
+  const sono = itemPorEfeito('danoComHpAlto');
+  const cola = itemPorEfeito('executar');
+  const e5 = runComMochila(SEMENTE + 1324, [cola.id, sono.id]);
+  const alvo = spawnInimigo(e5, CONTEUDO.inimigos[0].id);
+  alvo.hpMax = 100;
+  alvo.hp = 100;
+  const limiar = cola.params.fracao * 100;
+  const base = Math.floor((100 - limiar / 2) / sono.params.fator); // multiplicado, deixa limiar/2
+  if (aoCalcularDano(e5, base, alvo) !== 100) falhar(0, `cola: ${base} x${sono.params.fator} deixaria ${100 - base * sono.params.fator} de 100 e nao derrubou`);
+  if (Math.abs(aoCalcularDano(e5, 10, alvo) - 10 * sono.params.fator) > EPSILON) falhar(0, 'sono: com o HP cheio, o dano nao subiu');
+  e5.player.hp = e5.player.hpMax * sono.params.fracao - 1;
+  if (aoCalcularDano(e5, 10, alvo) !== 10) falhar(0, 'sono: com o HP baixo, o dano continuou alto');
+  alvo.chefe = true;
+  if (aoCalcularDano(e5, 85, alvo) !== 85) falhar(0, 'cola: derrubou A Banca');
+  alvo.chefe = false;
+  partes.push(`😴 x${sono.params.fator} so com HP alto, 🍀 depois dos multiplicadores e nunca na Banca`);
+
+  // 🎟️ Carteirinha e 🗳️ Amigo no C.A.: na loja.
+  const carteirinha = itemPorEfeito('atributo', (c) => c.params.atributo === 'precoLoja');
+  const amigo = itemPorEfeito('atributoSoma', (c) => c.params.atributo === 'rerollsGratis');
+  const e6 = lojaAberta(SEMENTE + 1325, 10000);
+  const semDesconto = precoNaLoja(e6, 100);
+  e6.run.coringas.push(novaInstancia(carteirinha.id), novaInstancia(amigo.id));
+  abrirLoja(e6); // de novo, agora com os dois na mochila
+  if (precoNaLoja(e6, 100) !== Math.round(100 * carteirinha.params.fator) || semDesconto !== 100) falhar(0, 'carteirinha: o desconto nao vale');
+  for (let i = 0; i < e6.loja.quantidade; i += 1) {
+    const item = e6.loja.itens[i];
+    const dados = CONTEUDO.coringas.find((c) => c.id === item.id);
+    if (dados && item.preco !== precoNaLoja(e6, dados.preco)) falhar(0, `carteirinha: ${item.id} a ${item.preco}, sem o desconto`);
+  }
+  const lanche = dadosDoLancheDaVitrine(e6);
+  if (e6.loja.lanche.preco !== precoNaLoja(e6, lanche.preco)) falhar(0, 'carteirinha: o lanche nao tem desconto');
+  if (e6.loja.gratis !== rerollsGratisDaLoja(e6.run.conceito) + amigo.params.soma) falhar(0, `amigo no C.A.: ${e6.loja.gratis} rerolls gratis`);
+  // Vender a Carteirinha devolve o preco cheio a vitrine.
+  venderCoringa(e6, e6.run.coringas.findIndex((c) => c.id === carteirinha.id));
+  if (e6.loja.lanche.preco !== lanche.preco) falhar(0, 'carteirinha: vendida, o lanche continuou com desconto');
+  partes.push(`🎟️ ◉ 100 -> ${Math.round(100 * carteirinha.params.fator)}, 🗳️ +${amigo.params.soma} reroll`);
+
+  // A revisao pos-entrega: o maximo que desce com a venda nao deixa divida
+  // de HP (o lanche cura o que a tela mostra), e o que sobe com a compra
+  // chega cheio.
+  const e7 = lojaAberta(SEMENTE + 1326, 10000);
+  e7.run.coringas.push(novaInstancia(garrafa.id));
+  e7.run.vida = 1;
+  venderCoringa(e7, e7.run.coringas.length - 1);
+  const v7 = vidaNaLoja(e7);
+  if (v7.hp !== 1 || v7.hpMax !== CONTEUDO.jogador.hpMax) falhar(0, `garrafa vendida: a loja mostra ${v7.hp}/${v7.hpMax}`);
+  const cura7 = curaDoLancheDaLoja(e7);
+  if (!comprarLanche(e7) || vidaNaLoja(e7).hp !== 1 + cura7) falhar(0, `garrafa vendida: o lanche de +${cura7} levou a vida a ${vidaNaLoja(e7).hp}, nao a ${1 + cura7}`);
+  const i7 = e7.loja.itens.findIndex((it, k) => k < e7.loja.quantidade && !it.vendido && it.id);
+  e7.loja.itens[i7].id = garrafa.id;
+  const antes7 = vidaNaLoja(e7).hp;
+  comprarItem(e7, i7);
+  if (vidaNaLoja(e7).hp !== antes7 + (hpMax - CONTEUDO.jogador.hpMax)) falhar(0, `garrafa comprada: a vida foi de ${antes7} a ${vidaNaLoja(e7).hp}, sem os pontos novos`);
+  partes.push('🥤 vendida sem divida de HP, comprada com os pontos novos cheios');
+
+  // Prova sem Consulta: a mochila fechada nao paga nem cura no fim, e quem
+  // entrou cheio com a Garrafa nao perde os pontos que ela escondeu.
+  const semConsulta = CONTEUDO.modificadores.find((m) => m.fatores && m.fatores.coringas === 0);
+  const e8 = novoEstado(SEMENTE + 1327);
+  iniciarRun(e8);
+  for (const id of [bolsa.id, bandejao.id, garrafa.id]) e8.run.coringas.push(novaInstancia(id));
+  comecarAvaliacao(e8, 0, 0, [semConsulta.id]);
+  if (e8.player.hp !== CONTEUDO.jogador.hpMax || e8.run.avaliacao.hpCortado !== hpMax - CONTEUDO.jogador.hpMax) {
+    falhar(0, `sem consulta: entrou com ${e8.player.hp}/${e8.player.hpMax} e ${e8.run.avaliacao.hpCortado} escondidos`);
+  }
+  receberDano(e8, 10, true);
+  fecharPeloCronometro(e8, 'sem consulta');
+  if (e8.run.resultado.creditosBonus !== 0) falhar(0, `sem consulta: a mochila fechada pagou ◉ ${e8.run.resultado.creditosBonus}`);
+  if (e8.run.vida !== hpMax - 10) falhar(0, `sem consulta: saiu com ${e8.run.vida} de HP na run, esperava ${hpMax - 10} (sem o Bandejao, com a Garrafa de volta)`);
+  partes.push(`🚫 sem consulta: nada paga nem cura, ${hpMax}/${hpMax} entra ${CONTEUDO.jogador.hpMax}/${CONTEUDO.jogador.hpMax} e sai ${e8.run.vida}/${hpMax} com 10 de dano`);
+  return `itens novos: ${partes.join(' · ')}`;
+}
+
+// O biscoito da prova: a cada N mortes, com intervalo e teto; so e comido com
+// HP faltando; some sozinho.
+function checarBiscoito() {
+  const cfg = CONTEUDO.lanches.arena;
+  const estado = runComMochila(SEMENTE + 1330, []);
+  const av = estado.run.avaliacao;
+  const p = estado.player;
+  const pool = poolLanches(estado);
+  const matar = (n) => {
+    for (let i = 0; i < n; i += 1) contarMorteParaLanche(estado, p.x, p.y);
+  };
+  matar(cfg.aCadaMortes - 1);
+  if (estado.lanches.length !== 0) falhar(0, `biscoito: caiu antes de ${cfg.aCadaMortes} mortes`);
+  matar(1);
+  if (estado.lanches.length !== 1) falhar(0, `biscoito: ${cfg.aCadaMortes} mortes e ${estado.lanches.length} biscoitos`);
+  matar(cfg.aCadaMortes);
+  if (cfg.intervaloMinimo > 0 && estado.lanches.length !== 1) falhar(0, 'biscoito: o segundo caiu antes do intervalo minimo');
+  for (let k = 0; k < cfg.maxPorAvaliacao * 3; k += 1) {
+    av.decorrido += cfg.intervaloMinimo;
+    matar(cfg.aCadaMortes);
+  }
+  if (av.lanchesSoltos !== cfg.maxPorAvaliacao) falhar(0, `biscoito: ${av.lanchesSoltos} numa avaliacao, o teto e ${cfg.maxPorAvaliacao}`);
+  // HP cheio: o jogador passa por cima e ele fica.
+  const antes = estado.lanches.length;
+  atualizarLanches(estado, PASSO);
+  if (estado.lanches.length !== antes) falhar(0, 'biscoito: comido com o HP cheio');
+  // Ferido em cima de todos: come ate encher e para. Com cura+2 de dano, o
+  // 1o cura `cura`, o 2o os 2 que faltam e o resto fica no chao.
+  receberDano(estado, cfg.cura + 2, true);
+  const hpAntes = p.hp;
+  atualizarLanches(estado, PASSO);
+  if (p.hp !== p.hpMax || p.hp - hpAntes !== cfg.cura + 2 || estado.lanches.length !== antes - 2) {
+    falhar(0, `biscoito: ${cfg.cura + 2} de dano em cima de ${antes}, curou ${p.hp - hpAntes} e sobraram ${estado.lanches.length}`);
+  }
+  // Some sozinho depois da duracao.
+  receberDano(estado, 0, true);
+  p.x = 0;
+  p.y = 0;
+  for (let i = 0; i < Math.ceil(cfg.duracao / PASSO) + 1; i += 1) atualizarLanches(estado, PASSO);
+  if (estado.lanches.length !== 0) falhar(0, `biscoito: ${estado.lanches.length} ainda no chao depois de ${cfg.duracao}s`);
+  const erro = pool.verificar();
+  if (erro) falhar(0, `biscoito: pool ${erro}`);
+  // O lanche da prova e pequeno: menor que o menor da cantina (o validador
+  // tambem exige; aqui e a regra do pedido).
+  const menorDaLoja = Math.min(...CONTEUDO.lanches.loja.map((l) => l.cura));
+  if (!(cfg.cura < menorDaLoja && CONTEUDO.cartas.consolo.valor < menorDaLoja)) falhar(0, 'lanches: o da prova cura tanto quanto o da cantina');
+  return `biscoito: 1 a cada ${cfg.aCadaMortes} mortes, ${cfg.intervaloMinimo}s entre um e outro, ${cfg.maxPorAvaliacao} por avaliacao, so com HP faltando (+${cfg.cura}), some em ${cfg.duracao}s; cantina cura de ${menorDaLoja} para cima`;
+}
+
+// "Coringa" e analogia com o Balatro: o jogador nunca le a palavra.
+function checarPalavraCoringaForaDaTela() {
+  const achados = [];
+  const visitar = (valor, caminho) => {
+    if (typeof valor === 'string') {
+      if (/coringa/i.test(valor)) achados.push(`${caminho}: "${valor}"`);
+    } else if (valor && typeof valor === 'object') {
+      for (const [k, v] of Object.entries(valor)) visitar(v, `${caminho}.${k}`);
+    }
+  };
+  visitar(CONTEUDO.textos, 'textos');
+  for (const lista of ['coringas', 'modificadores', 'armas', 'inimigos']) {
+    for (const item of CONTEUDO[lista]) {
+      visitar(item.nome, `${lista}.${item.id}.nome`);
+      visitar(item.descricao, `${lista}.${item.id}.descricao`);
+    }
+  }
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  for (const m of html.matchAll(/>([^<]*)</g)) if (/coringa/i.test(m[1])) achados.push(`index.html: "${m[1].trim()}"`);
+  for (const m of html.matchAll(/(?:title|aria-label|alt)="([^"]*)"/g)) if (/coringa/i.test(m[1])) achados.push(`index.html: "${m[1]}"`);
+  if (achados.length > 0) falhar(0, `a palavra "coringa" aparece para o jogador: ${achados.slice(0, 4).join(' | ')}`);
+  return 'textos: nenhum "coringa" na tela (content.js e index.html)';
+}
+
+function checarPosEntrega() {
+  return [checarVidaQueAtravessaARun(), checarItensNovos(), checarBiscoito(), checarPalavraCoringaForaDaTela()];
 }
 
 // Reroll gratis do conceito A (design §4) e a recusa de um reroll que nao
@@ -4894,9 +5192,9 @@ function eventosDe(tipo, n) {
 
 function checarAudio() {
   const A = CONTEUDO.audio;
-  const NOMES = ['xp', 'nivel', 'dano', 'morte', 'aprovado', 'jubilado', 'colacao', 'aviso'];
+  const NOMES = ['xp', 'nivel', 'dano', 'morte', 'aprovado', 'jubilado', 'colacao', 'aviso', 'lanche'];
 
-  // Conteudo: os 8 sons do contrato existem, e o validador pega um evento que
+  // Conteudo: os 9 sons (o lanche e pos-entrega) do contrato existem, e o validador pega um evento que
   // aponta para um som que nao existe, um som que satura e um volume alto.
   for (const nome of NOMES) if (!A.sons[nome]) falhar(0, `audio: falta o som "${nome}" em content.js`);
   const semSom = structuredClone(CONTEUDO);
@@ -4917,11 +5215,11 @@ function checarAudio() {
     if (!new RegExp(`emitir\\([^)]*'${tipo}'`).test(fontes)) falhar(0, `audio: nenhum emitir() em src/ emite "${tipo}", o som nunca tocaria`);
   }
 
-  // Mapa: cada evento toca o som certo, e os 8 sons saem distintos.
+  // Mapa: cada evento toca o som certo, e os 9 sons saem distintos.
   const todos = Object.keys(A.eventos).map((tipo) => ({ tipo, dados: null, t: 0 }));
   const planoTodos = planejarSons(todos, criarLimitador(), 10);
   if (planoTodos.length !== NOMES.length || !NOMES.every((n) => planoTodos.includes(n))) {
-    falhar(0, `audio: os eventos do contrato tocaram [${planoTodos}], esperava os 8 sons`);
+    falhar(0, `audio: os eventos do contrato tocaram [${planoTodos}], esperava os ${NOMES.length} sons`);
   }
   if (planejarSons([{ tipo: 'tela', dados: 'menu', t: 0 }, { tipo: 'arma-disparo', dados: null, t: 0 }], criarLimitador(), 10).length !== 0) {
     falhar(0, 'audio: evento sem som mapeado tocou');
@@ -5109,7 +5407,7 @@ function checarAudio() {
   }
   if (!(com.tocados.morte < com.kills)) falhar(0, `audio: ${com.tocados.morte} estalos para ${com.kills} mortos — o limitador nao limitou nada`);
 
-  return `8 sons · partida de 60s identica com e sem audio (${com.kills} mortos -> ${com.tocados.morte} estalos, ${com.tocados.xp} blips de xp, ${com.tocados.dano} danos, ${com.tocados.nivel} niveis)`;
+  return `9 sons · partida de 60s identica com e sem audio (${com.kills} mortos -> ${com.tocados.morte} estalos, ${com.tocados.xp} blips de xp, ${com.tocados.dano} danos, ${com.tocados.nivel} niveis)`;
 }
 
 // Pendencia 73: jogador e Banca caem no mesmo tick. A decisao de design e que a
@@ -6011,13 +6309,15 @@ function checarJuice() {
 
 // Compra o que der: o mais caro que couber primeiro, ate acabar o credito ou
 // a vaga. Sem reroll e sem venda — e um jogador simples, nao um otimo.
+// Pos-entrega: antes, come na cantina se o HP esta abaixo de 70% (a vida nao
+// enche mais sozinha). O mesmo limiar do bot desvio de test/bots.mjs.
 function comprarOQueDer(estado) {
   const loja = estado.loja;
   const ordem = [];
   for (let i = 0; i < loja.quantidade; i += 1) if (loja.itens[i].id !== '') ordem.push(i);
   ordem.sort((x, y) => loja.itens[y].preco - loja.itens[x].preco);
   const comprados = [];
-  let gasto = 0;
+  let gasto = comerSeFerido(estado, COME_DESVIO);
   for (const i of ordem) {
     const item = loja.itens[i];
     if (item.preco > estado.run.creditos || estado.run.coringas.length >= CONTEUDO.loja.teto) continue;
@@ -6119,7 +6419,7 @@ function correrRunInteira(semente, { estrutural }) {
         nota: r.nota,
         conceito: r.conceito,
         kills: r.kills,
-        hp: r.hpFracao,
+        hp: r.hpMax > 0 ? r.hp / r.hpMax : 0, // HP absoluto no fim (hpFracao virou o preservado)
         nivel: estado.player.nivel,
         ganhos: r.creditos,
         gasto: 0,
@@ -6183,7 +6483,7 @@ function correrRunInteira(semente, { estrutural }) {
       nota: 0,
       conceito: '',
       kills: rTcc.kills,
-      hp: rTcc.hpFracao,
+      hp: rTcc.hpMax > 0 ? rTcc.hp / rTcc.hpMax : 0,
       nivel: estado.player.nivel,
       ganhos: 0,
       gasto: 0,
@@ -8518,6 +8818,7 @@ const PAPEIS_DAS_TELAS_B = [
   ['loja-creditos', '.loja-creditos', 'background'],
   ['loja-aviso', '.loja-aviso', 'background-color'],
   ['loja-cartela', '.loja-cartela', 'background-color'],
+  ['loja-cantina', '.loja-cantina', 'background-color'], // pos-entrega: a ficha da cantina
 ];
 const TELAS_DA_FASE_20 = ['carta', 'loja', 'tcc', 'colacao'];
 const FILEIRAS_MONTADAS = ['carta-opcoes', 'loja-itens'];
@@ -8827,6 +9128,8 @@ checarEfeitosDosCoringas();
 checarCoringaNovoSoPorConteudo();
 checarLoja();
 checarRerollGratisESemNovidade();
+// Pos-entrega: a vida que atravessa a run, a cantina, o biscoito e os itens novos.
+const posEntrega = checarPosEntrega();
 checarSorteioDeModificadores();
 checarAnuncioECarta();
 checarProvaFinalSoDado();
@@ -9131,6 +9434,8 @@ console.log(
     `\n  HUD de caderno (fase 18):${fase18}` +
     `\n  telas A (fase 19):${fase19}` +
     `\n  telas B (fase 20):${fase20}` +
+    `\n  pos-entrega (loja nova, vida que nao enche sozinha):` +
+    posEntrega.map((l) => `\n    ${l}`).join('') +
     `\n  modificadores (cada um forcado, contra a mesma semente sem ele):` +
     modificadores.map((l) => `\n    ${l}`).join('') +
     `\n  run inteira, estrutural (HP segurado, relatorio ligado): ${runEstrutural.linhas.length - 1} avaliacoes + ` +

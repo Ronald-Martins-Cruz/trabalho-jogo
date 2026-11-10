@@ -1,6 +1,6 @@
 import { CONTEUDO } from '../data/content.js';
 import { emitir } from './state.js';
-import { xpParaSubir } from './player.js';
+import { curar, xpParaSubir } from './player.js';
 
 // Coringas. A regra que este arquivo existe para estabelecer: NENHUM
 // `if (temCoringa('x'))` fora daqui. O resto do jogo so conhece a lista
@@ -11,9 +11,12 @@ import { xpParaSubir } from './player.js';
 //   aoMatarInimigo(estado, inimigo)              enemies.js aplicarDano()
 //   aoGanharXp(estado, valor) -> valor           player.js  atualizarOrbes()
 //   aoReceberDanoFatal(estado, dano) -> hp       player.js  receberDano()
+//   aoFecharAvaliacao(estado) -> creditos        run.js     fecharAvaliacao()
 //   modificarAtributo(estado, nome, v) -> v      um lugar POR ATRIBUTO:
 //     velocidade, raioColeta, hpMax              jokers.js  aplicarAtributos()
-//     itensLoja                                  shop.js    abrirLoja()
+//     itensLoja, rerollsGratis                   shop.js    abrirLoja()
+//     precoLoja                                  shop.js    precoNaLoja()
+//     curaLanche                                 jokers.js  curaDeLanche()
 //     opcoesCarta                                cards.js   sortearOpcoes()
 //
 // Um coringa em content.js nao e codigo: e um `efeito` (nome de uma entrada
@@ -34,8 +37,14 @@ export const HOOKS = [
   'aoMatarInimigo',
   'aoGanharXp',
   'aoReceberDanoFatal',
+  'aoFecharAvaliacao',
   'modificarAtributo',
 ];
+
+// Chaves de um efeito que nao sao hook. `ultimo`: o aoCalcularDano dele roda
+// depois do de todos os outros (a 🍀 Cola na Regua decide com o dano ja
+// multiplicado, qualquer que seja a ordem da mochila).
+const CHAVES_DE_EFEITO = ['parametros', 'validar', 'ultimo'];
 
 // Atributos do jogador que modificarAtributo pode mexer. Cada um e copiado de
 // CONTEUDO.jogador para estado.player no inicio da avaliacao, ja modificado,
@@ -46,11 +55,19 @@ export const ATRIBUTOS = ['velocidade', 'raioColeta', 'hpMax'];
 // modificarAtributo(estado, nome, base) na hora de usar, com o estado daquele
 // instante (a Xerox, por exemplo, so vale enquanto cartas.escolhidas === 0).
 // O ponto de uso limita o resultado aos slots que existem.
-export const ATRIBUTOS_NO_USO = ['itensLoja', 'opcoesCarta'];
+// Pos-entrega: precoLoja (fator sobre o preco de item e lanche da loja, base
+// 1), curaLanche (HP de cada lanche) e rerollsGratis (por visita a loja).
+export const ATRIBUTOS_NO_USO = ['itensLoja', 'opcoesCarta', 'precoLoja', 'curaLanche', 'rerollsGratis'];
 
 // Contagens e HP saem arredondados: HP x1,15 daria 114,99999999999999 no HUD,
 // e "3,75 itens na loja" nao existe.
-const ATRIBUTOS_INTEIROS = ['hpMax', 'itensLoja', 'opcoesCarta'];
+const ATRIBUTOS_INTEIROS = ['hpMax', 'itensLoja', 'opcoesCarta', 'curaLanche', 'rerollsGratis'];
+
+function validarAtributo(params) {
+  return ATRIBUTOS.includes(params.atributo) || ATRIBUTOS_NO_USO.includes(params.atributo)
+    ? null
+    : `atributo "${params.atributo}" nao e um de ${ATRIBUTOS.concat(ATRIBUTOS_NO_USO).join(', ')}`;
+}
 
 // Cada efeito: { parametros: [...], validar?, <hook>(estado, inst, params, ...) }.
 // `parametros` e o que o check exige em `params` de todo coringa que use o
@@ -60,12 +77,72 @@ const EFEITOS = {
   // 🔋 Energetico, 📶 Wi-Fi.
   atributo: {
     parametros: ['atributo', 'fator'],
-    validar: (params) =>
-      ATRIBUTOS.includes(params.atributo) || ATRIBUTOS_NO_USO.includes(params.atributo)
-        ? null
-        : `atributo "${params.atributo}" nao e um de ${ATRIBUTOS.concat(ATRIBUTOS_NO_USO).join(', ')}`,
+    validar: validarAtributo,
     modificarAtributo(estado, inst, params, nome, valor) {
       return nome === params.atributo ? valor * params.fator : valor;
+    },
+  },
+
+  // 🗳️ Amigo no C.A. Soma em vez de multiplicar: "+1 rerrolagem gratis" vale
+  // tambem para quem tirou C e tem zero.
+  atributoSoma: {
+    parametros: ['atributo', 'soma'],
+    validar: validarAtributo,
+    modificarAtributo(estado, inst, params, nome, valor) {
+      return nome === params.atributo ? valor + params.soma : valor;
+    },
+  },
+
+  // 🐷 Cofrinho. Rende sobre o que estava GUARDADO antes do boletim desta
+  // avaliacao pagar (run.js chama o hook antes de somar), arredondado para
+  // baixo e com teto: guardar e jogada valida, mas nao vira maquina de dinheiro.
+  juros: {
+    parametros: ['fracao', 'teto'],
+    aoFecharAvaliacao(estado, inst, params) {
+      return Math.min(params.teto, Math.floor(Math.max(0, estado.run.creditos) * params.fracao));
+    },
+  },
+
+  // 💼 Bolsa de Iniciacao Cientifica.
+  bolsa: {
+    parametros: ['valor'],
+    aoFecharAvaliacao(estado, inst, params) {
+      return params.valor;
+    },
+  },
+
+  // 🍲 Bandejao do RU. Cura o jogador da avaliacao que acabou de fechar: o HP
+  // que sobra nele e o que run.js guarda para a proxima (run.vida).
+  curaNoFim: {
+    parametros: ['hp'],
+    aoFecharAvaliacao(estado, inst, params) {
+      curar(estado, params.hp);
+      return 0;
+    },
+  },
+
+  // 😴 Sono em Dia. Le o HP do instante do golpe: tomou dano, perdeu o bonus.
+  danoComHpAlto: {
+    parametros: ['fracao', 'fator'],
+    aoCalcularDano(estado, inst, params, dano) {
+      const p = estado.player;
+      return p.hpMax > 0 && p.hp >= params.fracao * p.hpMax ? dano * params.fator : dano;
+    },
+  },
+
+  // 🍀 Cola na Regua. Sem sorteio: o golpe que deixaria o inimigo abaixo de
+  // `fracao` do HP mata (devolve o HP exato que faltava, como pede a nota do
+  // aoCalcularDano la embaixo). Por limiar, e nao por chance a cada golpe,
+  // porque o Marca-texto golpeia todo tick e uma chance por golpe viraria
+  // certeza. A Banca (alvo.chefe) nunca.
+  executar: {
+    parametros: ['fracao'],
+    validar: (params) => (params.fracao > 0 && params.fracao < 1 ? null : `params.fracao = ${params.fracao}, precisa estar entre 0 e 1`),
+    ultimo: true,
+    aoCalcularDano(estado, inst, params, dano, alvo) {
+      if (!alvo || alvo.chefe || !(alvo.hpMax > 0)) return dano;
+      const resto = alvo.hp - dano;
+      return resto > 0 && resto < params.fracao * alvo.hpMax ? Math.max(dano, alvo.hp) : dano;
     },
   },
 
@@ -178,9 +255,10 @@ const NENHUM = [];
 // Consulta). Enquanto uma avaliacao com a regra desligada esta de pe, todo
 // hook ve a mao vazia; os coringas continuam na run e voltam na loja
 // seguinte (av.concluida), onde itensLoja ainda pergunta por eles.
-function coringasEmJogo(estado) {
+// `voltaNaLoja` false: so a regra (o fim da avaliacao, aoFecharAvaliacao).
+function coringasEmJogo(estado, voltaNaLoja = true) {
   const av = estado.run.avaliacao;
-  return av.regras.coringas > 0 || av.concluida ? estado.run.coringas : NENHUM;
+  return av.regras.coringas > 0 || (voltaNaLoja && av.concluida) ? estado.run.coringas : NENHUM;
 }
 
 // Para o HUD esmaecer a mao: a UI pergunta aqui em vez de ler a regra, e a
@@ -201,19 +279,45 @@ export function aoIniciarAvaliacao(estado) {
 }
 
 // Unico lugar em que um atributo do JOGADOR e calculado (os de ATRIBUTOS_NO_USO
-// sao perguntados por quem os usa). O player acabou de nascer (novoPlayer),
-// entao HP cheio aqui e o HP cheio modificado.
+// sao perguntados por quem os usa). O player acabou de nascer (novoPlayer).
+//
+// Pos-entrega: a vida nao enche mais entre avaliacoes. O que atravessa a run
+// e o HP absoluto (run.vida), e a avaliacao nasce com ele cortado no maximo
+// DELA. Na Prova sem Consulta a Garrafa d'Agua desliga: quem tinha 125/125
+// entra com 100/100, e os 25 escondidos (av.hpCortado) voltam no fim
+// (run.js) — o modificador nao tira nem da vida.
 function aplicarAtributos(estado) {
   const player = estado.player;
   for (let i = 0; i < ATRIBUTOS.length; i += 1) {
     const nome = ATRIBUTOS[i];
     player[nome] = modificarAtributo(estado, nome, CONTEUDO.jogador[nome]);
   }
-  player.hp = player.hpMax;
+  const vida = hpDaRun(estado, maximoDaRun(estado));
+  player.hp = Math.max(1, Math.min(player.hpMax, vida));
+  estado.run.avaliacao.hpCortado = Math.max(0, vida - player.hp);
+  estado.run.avaliacao.hpInicial = player.hp;
+}
+
+// O HP do jogador entre avaliacoes (a loja mostra, a avaliacao seguinte nasce
+// com ele): run.vida, ou cheio enquanto a run nao perdeu nada (-1). Nunca
+// passa do maximo, e nunca nasce morto.
+export function hpDaRun(estado, hpMax = maximoDaRun(estado)) {
+  const vida = estado.run.vida;
+  if (!(vida >= 0)) return hpMax;
+  return Math.max(1, Math.min(hpMax, vida));
+}
+
+// O HP maximo da mochila inteira, ligada ou nao pela regra da avaliacao: e o
+// teto da vida entre avaliacoes (a loja mostra este).
+export function maximoDaRun(estado) {
+  return atributoCom(estado.run.coringas, estado, 'hpMax', CONTEUDO.jogador.hpMax);
 }
 
 export function modificarAtributo(estado, nome, valor) {
-  const lista = coringasEmJogo(estado);
+  return atributoCom(coringasEmJogo(estado), estado, nome, valor);
+}
+
+function atributoCom(lista, estado, nome, valor) {
   let v = valor;
   for (let i = 0; i < lista.length; i += 1) {
     const inst = lista[i];
@@ -228,14 +332,21 @@ export function modificarAtributo(estado, nome, valor) {
 // efeito que precise matar na hora (a Cola na Regua da expansao) devolve
 // Math.max(dano, alvo.hp) — o HP exato que falta, e nao um numero enorme que
 // sairia no evento arma-acerto e no relatorio como dano.
+//
+// Duas passadas: os efeitos `ultimo` (Cola na Regua) veem o dano depois de
+// todos os multiplicadores, qualquer que seja a ordem da mochila.
 export function aoCalcularDano(estado, dano, alvo) {
   const lista = coringasEmJogo(estado);
   let d = dano;
-  for (let i = 0; i < lista.length; i += 1) {
-    const inst = lista[i];
-    const dados = dadosDoCoringa(inst.id);
-    const efeito = efeitoDe(dados);
-    if (efeito && efeito.aoCalcularDano) d = efeito.aoCalcularDano(estado, inst, dados.params, d, alvo);
+  for (let passada = 0; passada < 2; passada += 1) {
+    const querUltimo = passada === 1;
+    for (let i = 0; i < lista.length; i += 1) {
+      const inst = lista[i];
+      const dados = dadosDoCoringa(inst.id);
+      const efeito = efeitoDe(dados);
+      if (!efeito || !efeito.aoCalcularDano || (efeito.ultimo === true) !== querUltimo) continue;
+      d = efeito.aoCalcularDano(estado, inst, dados.params, d, alvo);
+    }
   }
   return d;
 }
@@ -260,6 +371,32 @@ export function aoGanharXp(estado, valor) {
     if (efeito && efeito.aoGanharXp) v = efeito.aoGanharXp(estado, inst, dados.params, v);
   }
   return v;
+}
+
+// Fim de uma avaliacao aprovada com boletim (run.js, fecharAvaliacao). Devolve
+// os creditos que os itens pagam alem do boletim (Cofrinho, Bolsa); os de cura
+// agem no jogador ainda de pe.
+//
+// Aqui a avaliacao ja esta concluida, mas o fim ainda e DESTA avaliacao: na
+// Prova sem Consulta ("seus itens nao funcionam nesta avaliacao") nada paga
+// nem cura. Por isso pergunta sem o "voltam quando conclui".
+export function aoFecharAvaliacao(estado) {
+  const lista = coringasEmJogo(estado, false);
+  let extra = 0;
+  for (let i = 0; i < lista.length; i += 1) {
+    const inst = lista[i];
+    const dados = dadosDoCoringa(inst.id);
+    const efeito = efeitoDe(dados);
+    if (efeito && efeito.aoFecharAvaliacao) extra += efeito.aoFecharAvaliacao(estado, inst, dados.params);
+  }
+  return Math.max(0, Math.round(extra));
+}
+
+// O HP que um lanche (o biscoito da prova, a carta de consolo, o da cantina)
+// cura de verdade: a unica pergunta por 'curaLanche', para a Lancheira valer
+// igual nos tres. Nunca menos de 1.
+export function curaDeLanche(estado, cura) {
+  return Math.max(1, modificarAtributo(estado, 'curaLanche', cura));
 }
 
 // Devolve o HP com que o jogador sobrevive ao golpe fatal, ou 0 se nenhum
@@ -288,7 +425,7 @@ export function verificarCoringasDoConteudo(conteudo = CONTEUDO) {
   const vistos = new Set(); // fora-do-loop: check, smoke e iniciar() verificam o conteudo uma vez
   for (const nomeEfeito of Object.keys(EFEITOS)) {
     for (const chave of Object.keys(EFEITOS[nomeEfeito])) {
-      if (chave !== 'parametros' && chave !== 'validar' && !HOOKS.includes(chave)) {
+      if (!CHAVES_DE_EFEITO.includes(chave) && !HOOKS.includes(chave)) {
         problemas.push(`efeito "${nomeEfeito}" em jokers.js implementa "${chave}", que nao e hook (${HOOKS.join(', ')})`);
       }
     }

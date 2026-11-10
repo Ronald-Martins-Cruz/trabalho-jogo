@@ -27,7 +27,8 @@ ponto, você é **jubilado** e começa do zero. Uma graduação inteira leva uns
 
 - **WASD** ou **setas** para andar. As armas atacam sozinhas; sobreviva até o cronômetro zerar.
 - Inimigos mortos deixam 💡 de XP. Ao subir de nível, escolha uma de três cartas (**1 · 2 · 3** ou setas e **Enter**): uma arma nova ou uma arma melhor.
-- A nota da avaliação (mortes e HP que sobrou) vira créditos. Na loja, **1 · 2 · 3** compram coringas e **R** rerrola; para seguir, leve o cursor com as setas até **Seguir →** e aperte **Enter**, ou clique nele (o Enter faz o que o cursor aponta, e a loja abre no 1º coringa).
+- A nota da avaliação (mortes e o HP que você preservou nela) vira créditos. Na loja, **1 · 2 · 3** compram itens para a mochila e **R** rerrola; para seguir, leve o cursor com as setas até **Seguir →** e aperte **Enter**, ou clique nele (o Enter faz o que o cursor aponta, e a loja abre no 1º item).
+- **A vida não enche sozinha entre as provas.** O que você perde numa avaliação continua perdido na seguinte. Na prova caem 🍪 biscoitos (cura pequena); a cura de verdade é a **cantina** da loja, que sempre tem um lanche (**L** compra; dá para comer de novo, cada vez mais caro).
 - **Esc** pausa, **M** liga e desliga o som. Cartas, loja e botões também aceitam o mouse.
 - Objetivo: passar pelos 3 períodos e vencer A Banca no TCC para colar grau.
 
@@ -54,6 +55,10 @@ O que é próprio deste trabalho:
 - **A nota como economia.** Sobreviver já aprova; jogar bem (matar muito,
   perder pouco HP) dá conceito melhor, que paga mais créditos e abre mais
   itens na loja. Dois estilos (caçar ou se preservar) chegam a notas parecidas.
+  E o crédito disputa com a vida: como o HP não enche sozinho, cada visita à
+  loja é escolher entre um item novo e o lanche da cantina. Há itens só de
+  economia (🐷 Cofrinho rende juros, 💼 Bolsa de IC paga por prova, 🎟️
+  Carteirinha dá desconto).
 - **Avaliações com modificadores** que mudam as regras da prova: Aula das 7h,
   Sala Lotada (a arena encolhe), Prova sem Consulta (os coringas param),
   Professor Rígido, Sexta às 18h, Controle de Frequência.

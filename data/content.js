@@ -81,6 +81,9 @@ export const CONTEUDO = {
       // inimigo. Pico medido na luta inteira (8 sementes, fase 2 com 2 salvas
       // de 11): 22 vivas ao mesmo tempo. 96 e ~4x isso.
       perguntas: 96,
+      // Pos-entrega: os biscoitos que caem na prova (lanches.arena). Nunca
+      // passam de lanches.arena.maxPorAvaliacao vivos; o dobro e folga.
+      lanches: 8,
       // Fila de eventos para audio/juice; emitir() descarta o mais antigo. O
       // navegador so a esvazia uma vez por QUADRO, e um quadro lento tem ate
       // loop.maxPassosPorFrame ticks. Fase 14: com os bots do sim, o pior
@@ -753,14 +756,54 @@ export const CONTEUDO = {
     // abre no 1º tick da avaliacao: sem isto, o Enter repetido ou o clique
     // duplo no "Começar" do anuncio escolhia uma carta as cegas.
     atrasoEntrada: 0.35,
+    // Pos-entrega (loja nova): a vida nao enche mais entre avaliacoes, so com
+    // lanche. Os lanches da prova (este e o biscoito de `lanches.arena`) sao
+    // pequenos de proposito; quem cura de verdade e a cantina da loja. Era 25.
     consolo: {
       id: 'lanche',
-      nome: 'Lanche da Cantina',
-      descricao: 'Sem mais o que aprender agora. Recupera HP.',
+      nome: 'Lanchinho',
+      descricao: 'Sem mais o que aprender agora. Recupera um pouco de HP.',
       emoji: '🥪',
       tipo: 'cura', // nome de um efeito registrado em cards.js
-      valor: 25, // HP recuperado
+      valor: 10, // HP recuperado (antes de modificarAtributo 'curaLanche')
     },
+  },
+
+  // Lanches (pos-entrega). A vida atravessa a run: o HP que o jogador perde
+  // numa avaliacao continua perdido na seguinte (run.hpPerdido, run.js), e so
+  // lanche (e item de cura) devolve. Toda cura de lanche passa por
+  // modificarAtributo(estado, 'curaLanche', cura), a porta da 🍱 Lancheira.
+  //
+  //   arena  o biscoito que cai na prova: a cada `aCadaMortes` mortes, com
+  //          pelo menos `intervaloMinimo` segundos entre um e outro e no maximo
+  //          `maxPorAvaliacao` por avaliacao. Some depois de `duracao`
+  //          segundos (pisca nos ultimos `piscar`). Pequeno: quem cura e a loja.
+  //   loja   a cantina: a loja SEMPRE tem um destes, sorteado a cada visita e
+  //          a cada rerrolagem. Compra-se quantas vezes quiser enquanto houver
+  //          HP para curar, mas cada compra na mesma visita encarece o lanche
+  //          em `encarecePorCompra` do preco de tabela (45, 67, 90...): com a
+  //          mochila cheia o credito que sobra vira vida, a juros.
+  lanches: {
+    encarecePorCompra: 0.5,
+    arena: {
+      id: 'biscoito',
+      nome: 'Biscoito',
+      emoji: '🍪',
+      cura: 5,
+      aCadaMortes: 35,
+      intervaloMinimo: 10,
+      maxPorAvaliacao: 5,
+      duracao: 15,
+      piscar: 3,
+      piscaIntervalo: 0.16, // s entre aceso e apagado nesse fim
+      raio: 10, // px de colisao com o jogador
+    },
+    loja: [
+      { id: 'paoDeQueijo', nome: 'Pão de Queijo', emoji: '🧀', descricao: 'Quentinho, da cantina.', cura: 20, preco: 15 },
+      { id: 'coxinha', nome: 'Coxinha', emoji: '🥟', descricao: 'O clássico do intervalo.', cura: 30, preco: 22 },
+      { id: 'pratoFeito', nome: 'Prato Feito', emoji: '🍛', descricao: 'Arroz, feijão, bife e salada.', cura: 45, preco: 34 },
+      { id: 'acai', nome: 'Açaí na Tigela', emoji: '🍧', descricao: 'Com granola e banana.', cura: 60, preco: 45 },
+    ],
   },
 
   // Regras gerais de arma — nao confundir com `armas` logo abaixo, que e a
@@ -971,6 +1014,22 @@ export const CONTEUDO = {
   //   danoPorMorte   { porMorte }          +porMorte de dano por morte, na avaliacao
   //   sobreviverFatal{ hp }                1x por run, o golpe fatal deixa `hp`
   //   multiplicarXp  { fator }             multiplica o XP de cada orbe
+  //   atributoSoma   { atributo, soma }    soma a um atributo (rerollsGratis...)
+  //   juros          { fracao, teto }      fim de avaliacao: +fracao dos creditos
+  //                                         guardados, ate `teto`
+  //   bolsa          { valor }             fim de avaliacao: +valor creditos
+  //   curaNoFim      { hp }                fim de avaliacao: recupera `hp`
+  //   danoComHpAlto  { fracao, fator }     com HP >= fracao do maximo, dano x fator
+  //   executar       { fracao }            inimigo que ficaria abaixo de `fracao`
+  //                                         do HP cai na hora (nunca A Banca)
+  //
+  // No jogo a palavra "coringa" nao aparece (e so a analogia com o Balatro):
+  // para o jogador sao os itens da mochila.
+  //
+  // Pos-entrega (loja nova, 10/11): +9 itens. Quatro de economia (🐷 💼 🎟️
+  // 🗳️), tres que conversam com a vida que nao enche mais sozinha (🍱 🍲
+  // 🥤) e dois de dano que dependem dela (😴 🍀). Precos de primeiro corte,
+  // medidos so pelo `npm run sim`.
   //
   // Precos (a loja paga em creditos por conceito: F 25 · D 50 · C 65 · B 80 ·
   // A 100). Guardar dinheiro precisa ser jogada valida, entao os `caro`
@@ -1049,6 +1108,99 @@ export const CONTEUDO = {
       raridade: 'caro',
       efeito: 'sobreviverFatal',
       params: { hp: 1 },
+    },
+    // ----- pos-entrega: economia
+    {
+      id: 'cofrinho',
+      nome: 'Cofrinho',
+      emoji: '🐷',
+      descricao: 'Ao fim de cada avaliação, rende 10% dos créditos guardados (até ◉ 15).',
+      preco: 40,
+      raridade: 'barato',
+      efeito: 'juros',
+      params: { fracao: 0.1, teto: 15 },
+    },
+    {
+      id: 'bolsa',
+      nome: 'Bolsa de Iniciação Científica',
+      emoji: '💼',
+      descricao: '+◉ 20 ao fim de cada avaliação aprovada.',
+      preco: 80,
+      raridade: 'medio',
+      efeito: 'bolsa',
+      params: { valor: 20 },
+    },
+    {
+      id: 'carteirinha',
+      nome: 'Carteirinha de Estudante',
+      emoji: '🎟️',
+      descricao: 'Desconto de estudante: itens e lanches da loja custam 25% menos.',
+      preco: 70,
+      raridade: 'medio',
+      efeito: 'atributo',
+      params: { atributo: 'precoLoja', fator: 0.75 },
+    },
+    {
+      id: 'amigoCa',
+      nome: 'Amigo no C.A.',
+      emoji: '🗳️',
+      descricao: '+1 rerrolagem grátis em toda loja.',
+      preco: 35,
+      raridade: 'barato',
+      efeito: 'atributoSoma',
+      params: { atributo: 'rerollsGratis', soma: 1 },
+    },
+    // ----- pos-entrega: vida
+    {
+      id: 'lancheira',
+      nome: 'Lancheira',
+      emoji: '🍱',
+      descricao: 'Todo lanche cura 50% a mais, o da loja e o da prova.',
+      preco: 40,
+      raridade: 'barato',
+      efeito: 'atributo',
+      params: { atributo: 'curaLanche', fator: 1.5 },
+    },
+    {
+      id: 'bandejao',
+      nome: 'Bandejão do RU',
+      emoji: '🍲',
+      descricao: 'Recupera 12 HP ao fim de cada avaliação aprovada.',
+      preco: 90,
+      raridade: 'medio',
+      efeito: 'curaNoFim',
+      params: { hp: 12 },
+    },
+    {
+      id: 'garrafa',
+      nome: "Garrafa d'Água",
+      emoji: '🥤',
+      descricao: '+25% de HP máximo.',
+      preco: 50,
+      raridade: 'barato',
+      efeito: 'atributo',
+      params: { atributo: 'hpMax', fator: 1.25 },
+    },
+    // ----- pos-entrega: dano
+    {
+      id: 'sono',
+      nome: 'Sono em Dia',
+      emoji: '😴',
+      descricao: 'Com 80% do HP ou mais, dano ×1,3.',
+      preco: 120,
+      raridade: 'medio',
+      efeito: 'danoComHpAlto',
+      params: { fracao: 0.8, fator: 1.3 },
+    },
+    {
+      id: 'cola',
+      nome: 'Cola na Régua',
+      emoji: '🍀',
+      descricao: 'Inimigo que ficar com menos de 20% do HP cai na hora (A Banca não).',
+      preco: 220,
+      raridade: 'caro',
+      efeito: 'executar',
+      params: { fracao: 0.2 },
     },
   ],
 
@@ -1338,7 +1490,7 @@ export const CONTEUDO = {
       id: 'semConsulta',
       nome: 'Prova sem Consulta',
       emoji: '🚫',
-      descricao: 'Seus coringas ficam desativados nesta avaliação.',
+      descricao: 'Mochila fechada: seus itens não funcionam nesta avaliação.',
       fatores: { coringas: 0 },
     },
     {
@@ -1787,8 +1939,21 @@ export const CONTEUDO = {
       jubilado: 'jubilado',
       colacao: 'colacao',
       'banca-telegrafo': 'aviso',
+      // Pos-entrega: o biscoito da prova e o lanche da cantina.
+      'lanche-coletado': 'lanche',
+      'lanche-comprado': 'lanche',
     },
     sons: {
+      // 🍪 uma mordida e uma nota doce: o lanche, na prova e na cantina
+      lanche: {
+        maxPorQuadro: 1,
+        intervaloMin: 0.1,
+        prioritario: true,
+        camadas: [
+          { onda: 'square', freq: 520, freqFim: 380, inicio: 0, duracao: 0.05, ataque: 0.003, volume: 0.2 },
+          { onda: 'triangle', freq: 784, freqFim: 1046.5, inicio: 0.06, duracao: 0.16, ataque: 0.008, volume: 0.32 },
+        ],
+      },
       // 🔹 blip agudo curto
       xp: {
         maxPorQuadro: 1,
@@ -1936,7 +2101,7 @@ export const CONTEUDO = {
       tcc: 'TCC aprovado pela Banca em {tempo}',
       media: 'Média {media}',
       conceito: 'Conceito geral {conceito}',
-      semCoringa: 'Formou-se sem nenhum coringa.',
+      semCoringa: 'Formou-se com a mochila vazia.',
       novoRecorde: 'Novo recorde! Melhor conceito geral: {conceito} ({media}) · formaturas: {formaturas}',
       recorde: 'Recorde: {conceito} ({media}) · formaturas: {formaturas}',
     },
@@ -1966,11 +2131,15 @@ export const CONTEUDO = {
       // A dica de teclado da loja: as teclas saem de quantos itens ela tem
       // NESTA visita (3, ou 4 com B/A) — pendencia 57.
       dicaCompra: '{teclas} compram',
+      // Pos-entrega: a cantina da loja (o lanche de sempre) e o HP do jogador.
+      vidaNaLoja: '❤️ {hp}/{hpMax}',
+      curaLanche: '+{cura} HP',
       avisos: {
         semCreditos: 'Créditos insuficientes.',
-        cheio: 'Você já tem o máximo de coringas. Venda um primeiro.',
+        cheio: 'Sua mochila está cheia. Venda um item primeiro.',
         vendido: 'Esse item já foi comprado.',
-        semNovidade: 'Não há outros coringas para sortear.',
+        semNovidade: 'Não há outros itens para sortear.',
+        hpCheio: 'Você está de barriga cheia: o HP já está no máximo.',
       },
     },
     // Rotulos que a carta monta com numeros vindos do estado. O texto fixo da
@@ -1990,7 +2159,12 @@ export const CONTEUDO = {
     resultado: {
       conceito: 'Conceito',
       mortos: 'mortos',
-      hp: 'de HP',
+      // Pos-entrega: a parcela de HP da nota mede o HP que o jogador
+      // preservou NESTA avaliacao (final / o que tinha ao comecar), porque a
+      // vida agora atravessa a run.
+      hp: 'do HP preservado',
+      // "◉ 80 créditos · ◉ 20 da mochila": o que os itens de economia pagaram.
+      bonus: 'da mochila',
       ileso: 'sem levar dano',
       feriu: 'levou dano', // aparece com +0,0: o bonus perdido ensina que ele existe
       separador: ' · ',
@@ -2997,6 +3171,55 @@ export function validarConteudo(conteudo = CONTEUDO) {
     exigeNumero(l.atrasoEntrada, 'loja.atrasoEntrada', { min: 0, max: 2 });
   }
 
+  // Lanches (pos-entrega). A cantina nunca pode ficar vazia (a loja SEMPRE
+  // tem um lanche), e o biscoito da prova tem que caber na pool dele.
+  if (exigeObjeto(conteudo.lanches, 'lanches')) {
+    const la = conteudo.lanches;
+    exigeNumero(la.encarecePorCompra, 'lanches.encarecePorCompra', { min: 0, max: 10 });
+    if (exigeObjeto(la.arena, 'lanches.arena')) {
+      const a = la.arena;
+      for (const campo of ['id', 'nome', 'emoji']) exigeTexto(a[campo], `lanches.arena.${campo}`);
+      exigeNumero(a.cura, 'lanches.arena.cura', { min: 1 });
+      exigeNumero(a.aCadaMortes, 'lanches.arena.aCadaMortes', { min: 1 });
+      exigeNumero(a.intervaloMinimo, 'lanches.arena.intervaloMinimo', { min: 0 });
+      exigeNumero(a.duracao, 'lanches.arena.duracao', { min: 1 });
+      exigeNumero(a.piscar, 'lanches.arena.piscar', { min: 0, max: a.duracao });
+      exigeNumero(a.piscaIntervalo, 'lanches.arena.piscaIntervalo', { min: 0.02, max: 1 });
+      exigeNumero(a.raio, 'lanches.arena.raio', { min: 1 });
+      if (exigeNumero(a.maxPorAvaliacao, 'lanches.arena.maxPorAvaliacao', { min: 0 }) && !Number.isInteger(a.maxPorAvaliacao)) {
+        erros.push('lanches.arena.maxPorAvaliacao: precisa ser inteiro');
+      }
+      const teto = conteudo.arena && conteudo.arena.limites ? conteudo.arena.limites.lanches : undefined;
+      if (typeof teto !== 'number' || teto < a.maxPorAvaliacao) {
+        erros.push(`arena.limites.lanches: ${teto} nao cabe os ${a.maxPorAvaliacao} biscoitos de uma avaliacao`);
+      }
+    }
+    if (!Array.isArray(la.loja) || la.loja.length === 0) {
+      erros.push('lanches.loja: a cantina precisa de pelo menos um lanche (a loja sempre tem um)');
+    } else {
+      const ids = new Set();
+      la.loja.forEach((lanche, i) => {
+        const c = `lanches.loja[${i}]`;
+        if (!exigeObjeto(lanche, c)) return;
+        for (const campo of ['id', 'nome', 'emoji', 'descricao']) exigeTexto(lanche[campo], `${c}.${campo}`);
+        if (ids.has(lanche.id)) erros.push(`${c}: id "${lanche.id}" repetido`);
+        ids.add(lanche.id);
+        exigeNumero(lanche.cura, `${c}.cura`, { min: 1 });
+        if (exigeNumero(lanche.preco, `${c}.preco`, { min: 1 }) && !Number.isInteger(lanche.preco)) {
+          erros.push(`${c}.preco: ${lanche.preco} precisa ser inteiro`);
+        }
+        // "Os lanches da prova sao pequenos": o menor da cantina cura mais que
+        // o biscoito e que a carta de consolo.
+        const pequenos = [la.arena && la.arena.cura, conteudo.cartas && conteudo.cartas.consolo && conteudo.cartas.consolo.valor];
+        for (const p of pequenos) {
+          if (typeof p === 'number' && typeof lanche.cura === 'number' && lanche.cura <= p) {
+            erros.push(`${c}.cura: ${lanche.cura} nao passa de ${p}, um lanche da prova — a cantina tem que curar mais`);
+          }
+        }
+      });
+    }
+  }
+
   // Debug: so chaves booleanas. Um "false" em string ligaria a chave por ser
   // truthy, e a fase 15 acharia que desligou.
   if (exigeObjeto(conteudo.debug, 'debug')) {
@@ -3642,7 +3865,7 @@ export function validarConteudo(conteudo = CONTEUDO) {
   if (exigeObjeto(conteudo.textos, 'textos')) {
     if (exigeObjeto(conteudo.textos.resultado, 'textos.resultado')) {
       const campos = [
-        'conceito', 'mortos', 'hp', 'ileso', 'feriu',
+        'conceito', 'mortos', 'hp', 'ileso', 'feriu', 'bonus',
         'separador', 'creditos', 'simboloCredito', 'sobreviveu', 'de',
         'nivelJogador', 'nivelArma',
       ];
@@ -3654,11 +3877,11 @@ export function validarConteudo(conteudo = CONTEUDO) {
     }
     if (exigeObjeto(conteudo.textos.loja, 'textos.loja')) {
       const t = conteudo.textos.loja;
-      for (const campo of ['rerolar', 'gratis', 'seguir', 'vendido', 'vazio', 'vender', 'gasto', 'semCoringa', 'dicaCompra']) {
+      for (const campo of ['rerolar', 'gratis', 'seguir', 'vendido', 'vazio', 'vender', 'gasto', 'semCoringa', 'dicaCompra', 'vidaNaLoja', 'curaLanche']) {
         if (typeof t[campo] !== 'string' || t[campo] === '') erros.push(`textos.loja.${campo}: ausente ou vazio`);
       }
       if (exigeObjeto(t.avisos, 'textos.loja.avisos')) {
-        for (const campo of ['semCreditos', 'cheio', 'vendido', 'semNovidade']) {
+        for (const campo of ['semCreditos', 'cheio', 'vendido', 'semNovidade', 'hpCheio']) {
           if (typeof t.avisos[campo] !== 'string' || t.avisos[campo] === '') {
             erros.push(`textos.loja.avisos.${campo}: ausente ou vazio`);
           }

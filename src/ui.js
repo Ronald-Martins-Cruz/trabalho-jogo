@@ -3,12 +3,16 @@ import { maxItensLoja, TELAS } from './state.js';
 import { coringasDesligados, dadosDoCoringa } from './jokers.js';
 import { ESTADOS_BANCA } from './boss.js';
 import {
+  curaDoLancheDaLoja,
+  dadosDoLanche,
   LINHA_VITRINE,
+  posicaoLanche,
   posicaoRerolar,
   posicaoSeguir,
   precoReroll,
   rerolarTrazNovidade,
   valorDeVenda,
+  vidaNaLoja,
 } from './shop.js';
 
 // Camadas de UI em DOM por cima do canvas. Le o estado e escreve no DOM,
@@ -58,6 +62,13 @@ export function criarUi(doc) {
     lojaAviso: doc.getElementById('loja-aviso'),
     botaoRerolar: doc.getElementById('botao-rerolar'),
     botaoSeguir: doc.getElementById('botao-seguir'),
+    // Pos-entrega: a cantina da loja e o HP do jogador.
+    lojaVida: doc.getElementById('loja-vida'),
+    lojaLanche: doc.getElementById('loja-lanche'),
+    lojaLancheEmoji: doc.getElementById('loja-lanche-emoji'),
+    lojaLancheNome: doc.getElementById('loja-lanche-nome'),
+    lojaLancheCura: doc.getElementById('loja-lanche-cura'),
+    lojaLanchePreco: doc.getElementById('loja-lanche-preco'),
     hudModificadores: doc.getElementById('hud-modificadores'),
     anuncio: doc.getElementById('anuncio'),
     anuncioNovoPeriodo: doc.getElementById('anuncio-novo-periodo'),
@@ -413,6 +424,9 @@ export function criarUi(doc) {
     // Rerrolar em sequencia rapida e de proposito; o "Seguir" troca de tela.
     ligarAcao(el.botaoRerolar, acoes.rerolar, acoes.apontarRerolar, false);
     ligarAcao(el.botaoSeguir, acoes.seguir, acoes.apontarSeguir, true);
+    // Cada lanche e uma compra de proposito: o 2o clique de um clique duplo
+    // nao come o segundo (mais caro).
+    if (acoes.lanche) ligarAcao(el.lojaLanche, acoes.lanche, acoes.apontarLanche, true);
   }
 
   // Pendencia 90, a parte da loja: cada texto com numero (os creditos, a
@@ -421,7 +435,22 @@ export function criarUi(doc) {
   // quadro so le o estado e confere as classes. A vitrine compara os tres
   // numeros que a definem, sem montar chave. `null` e o valor que nenhum
   // estado tem: o 1o quadro sempre escreve.
-  const lojaMostrada = { creditos: null, coringas: null, quantidade: null, reroll: null, abertaEm: null, rerolls: null, gratis: null };
+  const lojaMostrada = {
+    creditos: null,
+    coringas: null,
+    quantidade: null,
+    reroll: null,
+    abertaEm: null,
+    rerolls: null,
+    gratis: null,
+    // A cantina: o HP mostrado e o lanche (id, preco, cura).
+    hp: null,
+    hpMax: null,
+    lanche: null,
+    lanchePreco: null,
+    lancheCura: null,
+  };
+  const vidaMostrada = { hp: 0, hpMax: 0 };
 
   function sincronizarLoja(estado) {
     const loja = estado.loja;
@@ -477,6 +506,7 @@ export function criarUi(doc) {
     classe(el.botaoRerolar, 'inativo', !rerolarTrazNovidade(estado));
     texto(el.botaoSeguir, t.seguir);
     classe(el.botaoSeguir, 'selecionada', naVitrine && loja.selecionada === posicaoSeguir(loja));
+    sincronizarCantina(estado, t, naVitrine);
 
     for (let i = 0; i < slotsCoringa.length; i += 1) {
       const no = slotsCoringa[i];
@@ -490,6 +520,38 @@ export function criarUi(doc) {
       }
       classe(no.botao, 'selecionada', !naVitrine && loja.selecionada === i);
     }
+  }
+
+  // A cantina (pos-entrega): o HP de agora e o lanche da visita. Como o resto
+  // da loja, so escreve quando um numero muda.
+  function sincronizarCantina(estado, t, naVitrine) {
+    const loja = estado.loja;
+    const m = lojaMostrada;
+    const vida = vidaNaLoja(estado, vidaMostrada);
+    const hp = Math.ceil(vida.hp);
+    if (hp !== m.hp || vida.hpMax !== m.hpMax) {
+      m.hp = hp;
+      m.hpMax = vida.hpMax;
+      texto(el.lojaVida, preencher(t.vidaNaLoja, { hp, hpMax: vida.hpMax }));
+    }
+    const lanche = loja.lanche;
+    const cura = curaDoLancheDaLoja(estado);
+    if (lanche.id !== m.lanche || lanche.preco !== m.lanchePreco || cura !== m.lancheCura) {
+      m.lanche = lanche.id;
+      m.lanchePreco = lanche.preco;
+      m.lancheCura = cura;
+      const dados = dadosDoLanche(lanche.id);
+      texto(el.lojaLancheEmoji, dados ? dados.emoji : '');
+      texto(el.lojaLancheNome, dados ? dados.nome : t.vazio);
+      texto(el.lojaLancheCura, dados ? preencher(t.curaLanche, { cura }) : '');
+      texto(el.lojaLanchePreco, dados ? `${CONTEUDO.textos.resultado.simboloCredito} ${lanche.preco}` : '');
+      if (el.lojaLanche && dados) el.lojaLanche.title = dados.descricao;
+    }
+    // Sem o que curar ou sem credito: o lanche fica apagado (a loja recusa).
+    const semCredito = estado.run.creditos < lanche.preco;
+    classe(el.lojaLanche, 'sem-credito', semCredito);
+    classe(el.lojaLanche, 'inativo', semCredito || vida.hp >= vida.hpMax);
+    classe(el.lojaLanche, 'selecionada', naVitrine && loja.selecionada === posicaoLanche(loja));
   }
 
   // O cartao de um item, quando o item, o preco ou o vendido mudam. Vendido,
@@ -764,7 +826,7 @@ export function criarUi(doc) {
     texto(el.resultadoNota, formatarNota(r.nota));
     texto(el.resultadoConceito, `${t.conceito} ${r.conceito}`);
     texto(el.resultadoDecomposicao, decomposicaoDaNota(r));
-    texto(el.resultadoCreditos, `${t.simboloCredito} ${r.creditos} ${t.creditos}`);
+    texto(el.resultadoCreditos, textoDosCreditos(r, t));
     sincronizarArmas(el.resultadoArmas, estado);
   }
 
@@ -968,6 +1030,14 @@ export function decomposicaoDaNota(resultado, textos = CONTEUDO.textos.resultado
     `${resultado.ileso ? textos.ileso : textos.feriu} (+${formatarNota(p.ileso)})`,
   ];
   return partes.join(textos.separador);
+}
+
+// "◉ 80 créditos", ou "◉ 100 créditos · ◉ 20 da mochila" quando os itens de
+// economia (Cofrinho, Bolsa) pagaram parte: o jogador ve de onde veio.
+export function textoDosCreditos(resultado, textos = CONTEUDO.textos.resultado) {
+  const total = `${textos.simboloCredito} ${resultado.creditos} ${textos.creditos}`;
+  if (!(resultado.creditosBonus > 0)) return total;
+  return `${total}${textos.separador}${textos.simboloCredito} ${resultado.creditosBonus} ${textos.bonus}`;
 }
 
 // "47 mortos · sobreviveu 0:42 de 1:00". Sem nota: jubilado nao tem boletim,
