@@ -4,9 +4,9 @@
 > da entrega, ao lado deste README) **com dois cliques, no Chrome ou no Edge.** É o
 > jogo inteiro num arquivo só e roda direto do disco, sem instalar nada.
 
-![A arena: uma página de caderno com as figurinhas dos inimigos em volta do jogador](docs/prints/1-arena.jpg)
+![A arena: uma página de caderno com as figurinhas dos inimigos em volta do jogador](prints/1-arena.jpg)
 
-![A carta de nível: três post-its para escolher](docs/prints/2-carta.jpg)
+![A carta de nível: três post-its para escolher](prints/2-carta.jpg)
 
 ## O que é
 
@@ -32,7 +32,7 @@ ponto, você é **jubilado** e começa do zero. Uma graduação inteira leva uns
 - **Esc** pausa, **M** liga e desliga o som. Cartas, loja e botões também aceitam o mouse.
 - Objetivo: passar pelos 3 períodos e vencer A Banca no TCC para colar grau.
 
-![A loja do Centro Acadêmico, num mural de cortiça](docs/prints/3-loja.jpg)
+![A loja do Centro Acadêmico, num mural de cortiça](prints/3-loja.jpg)
 
 ## Por que não é cópia de nenhum jogo
 
@@ -71,7 +71,7 @@ O que é próprio deste trabalho:
   armas riscam a página como caneta, lápis e marca-texto; as telas são folhas
   de prova, post-its, carimbos e o mural do Centro Acadêmico.
 
-![O TCC: A Banca, numa folha timbrada](docs/prints/4-banca.jpg)
+![O TCC: A Banca, numa folha timbrada](prints/4-banca.jpg)
 
 ## Decisões técnicas
 
@@ -113,6 +113,5 @@ macOS, Android e ChromeOS já têm; no Linux, instale `fonts-noto-color-emoji`
 ## Créditos e licença
 
 Feito por **Ronald Martins Cruz** como Trabalho #2 de Jogos Digitais (2026),
-com desenvolvimento conduzido por agentes de IA fase a fase; o design, o plano
-e o registro de cada fase estão em [`docs/`](docs/). Os emoji são os da fonte
-do sistema de quem joga. Código sob a [licença MIT](LICENSE).
+com desenvolvimento conduzido por agentes de IA fase a fase. Os emoji são os da
+fonte do sistema de quem joga. Código sob a [licença MIT](LICENSE).

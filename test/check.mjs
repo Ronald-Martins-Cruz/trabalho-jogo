@@ -1,5 +1,5 @@
 // npm run check — sintaxe de todo .js do projeto, regras estruturais do
-// CLAUDE.md e integridade de data/content.js.
+// projeto e integridade de data/content.js.
 // Sai com codigo != 0 dizendo qual arquivo e qual linha falhou.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -159,9 +159,9 @@ try {
 
 // ------------------------------------------------ 5. nenhum asset binario
 
-// A unica excecao (fase 23, decisao 9 da v2): os prints do README, em
-// docs/prints/ e so ali, poucos e pequenos. O jogo nunca os carrega.
-const PASTA_PRINTS = 'docs/prints/';
+// A unica excecao (fase 23): os prints do README, em prints/ e so ali, poucos
+// e pequenos. O jogo nunca os carrega.
+const PASTA_PRINTS = 'prints/';
 const PRINT = ['.png', '.jpg', '.jpeg', '.webp'];
 const MAX_PRINTS = 4;
 const MAX_BYTES_PRINT = 300 * 1024;

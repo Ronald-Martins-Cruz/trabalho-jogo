@@ -14,8 +14,7 @@
 //   npm run sim -- --detalhe=1               + uma linha por run (e --comparar completo)
 //
 // Opcoes: --runs --semente --bots --marginal --marginal-bot --workers --tcc-max
-// --detalhe --salvar --comparar --relatorio (ver lerArgs). A linha de base da
-// fase 13 esta em docs/plano/handoffs/13-linha-de-base.json.
+// --detalhe --salvar --comparar --relatorio (ver lerArgs).
 //
 // Sementes PAREADAS: a run i joga o bot i % B com a semente base + floor(i/B).
 // Cada semente e jogada por todos os bots, entao a diferenca entre dois bots

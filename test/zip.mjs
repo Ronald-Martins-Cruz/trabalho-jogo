@@ -54,13 +54,14 @@ export const ARQUIVO_SEM_SERVIDOR = 'jogar-sem-servidor.html';
 // ------------------------------------------------------- o que vai no zip
 
 // O repositorio, menos o que nao e do trabalho: o git, as configuracoes de
-// editor e do agente, o todo.md do usuario (decisao do coordenador na fase
-// 23) e lixo de sistema. Imagem so dos prints do README (check.mjs secao 5).
-const PASTAS_FORA = new Set(['.git', 'node_modules', '.claude', '.vscode', '.idea']);
-const ARQUIVOS_FORA = new Set(['todo.md']);
+// editor e do agente, o material de desenvolvimento que fica so na maquina
+// (docs/, CLAUDE.md), o todo.md do usuario e lixo de sistema. Imagem so dos
+// prints do README (check.mjs secao 5).
+const PASTAS_FORA = new Set(['.git', 'node_modules', '.claude', 'docs', '.vscode', '.idea']);
+const ARQUIVOS_FORA = new Set(['todo.md', 'CLAUDE.md']);
 const LIXO = (nome) => nome === '.DS_Store' || nome === 'Thumbs.db' || nome.endsWith('.log') || nome.endsWith('.zip');
 const IMAGENS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
-const PASTA_PRINTS = 'docs/prints/';
+const PASTA_PRINTS = 'prints/';
 
 export function arquivosDoZip(raiz = RAIZ) {
   const achados = [];
@@ -639,7 +640,7 @@ async function provar(zip) {
     falha(`falta ${nome} no zip`);
   }
   for (const nome of lerZip(zip).map((a) => a.nome)) {
-    if (nome === 'todo.md' || /^(\.git|\.claude|node_modules)\//.test(nome)) falha(`${nome} nao devia estar no zip`);
+    if (ARQUIVOS_FORA.has(nome) || /^(\.git|\.claude|docs|node_modules)\//.test(nome)) falha(`${nome} nao devia estar no zip`);
   }
   // O check da copia le o jogar-sem-servidor.html junto com os outros .html
   // (secao 3: nenhum src/href/url para fora); o smoke e o dom provam que o

@@ -6,3 +6,7 @@ Thumbs.db
 .idea/
 # o zip da entrega (npm run zip) nasce fora do repositorio; se nascer aqui, fica fora do git
 *.zip
+# material de desenvolvimento: fica so na maquina, fora do repositorio
+docs/
+CLAUDE.md
+.claude/
