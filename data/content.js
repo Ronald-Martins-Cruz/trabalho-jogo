@@ -988,13 +988,16 @@ export const CONTEUDO = {
       comportamento: 'feixe',
       // Continua, sem cadencia: dano e por SEGUNDO (o codigo multiplica por
       // dt a cada quadro), nao por acerto — atravessar mais inimigos nao
-      // dilui o dano de ninguem.
+      // dilui o dano de ninguem. Pos-entrega: -10% de dano em todo nivel (era
+      // 58/70/84/100/122), a pedido de quem jogou; alcance e largura iguais.
+      // Nao da para cortar mais sem compensar: com -15% o nivel 5 caia para
+      // 95 kills no arsenal especializado do smoke, abaixo dos 40% do Cafe.
       niveis: [
-        { dano: 58, alcance: 195, largura: 62 },
-        { dano: 70, alcance: 210, largura: 75 },
-        { dano: 84, alcance: 225, largura: 90 },
-        { dano: 100, alcance: 240, largura: 108 },
-        { dano: 122, alcance: 260, largura: 130 },
+        { dano: 52, alcance: 195, largura: 62 },
+        { dano: 63, alcance: 210, largura: 75 },
+        { dano: 76, alcance: 225, largura: 90 },
+        { dano: 90, alcance: 240, largura: 108 },
+        { dano: 110, alcance: 260, largura: 130 },
       ],
     },
   ],
