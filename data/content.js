@@ -1147,7 +1147,7 @@ export const CONTEUDO = {
       id: 'amigoCa',
       nome: 'Amigo no C.A.',
       emoji: '🗳️',
-      descricao: '+1 rerrolagem grátis em toda loja.',
+      descricao: '+1 atualização grátis em toda loja.',
       preco: 35,
       raridade: 'barato',
       efeito: 'atributoSoma',
@@ -2123,7 +2123,7 @@ export const CONTEUDO = {
     // A loja: rotulos que ui.js monta com numeros do estado. O texto fixo
     // (titulo, dica de teclado) mora no index.html.
     loja: {
-      rerolar: 'Rerrolar',
+      rerolar: 'Atualizar',
       gratis: 'grátis',
       seguir: 'Seguir →',
       vendido: 'Vendido',
