@@ -248,6 +248,12 @@ export function atualizarOrbes(estado, dt) {
   const raioIma = player.raioColeta; // atributo modificavel por coringa (Wi-Fi)
   const alcanceColeta = player.raio + cfg.raio;
   const freio = Math.max(0, 1 - cfg.atrito * dt);
+  const arena = estado.run && estado.run.avaliacao && estado.run.avaliacao.arena;
+  const margem = cfg.raio;
+  const xMin = arena ? arena.esquerda + margem : -Infinity;
+  const xMax = arena ? arena.direita - margem : Infinity;
+  const yMin = arena ? arena.topo + margem : -Infinity;
+  const yMax = arena ? arena.base - margem : Infinity;
 
   // De tras para frente: liberar() e swap-remove.
   for (let i = orbes.length - 1; i >= 0; i -= 1) {
@@ -280,6 +286,24 @@ export function atualizarOrbes(estado, dt) {
 
     orbe.x += orbe.vx * dt;
     orbe.y += orbe.vy * dt;
+
+    if (arena) {
+      if (orbe.x < xMin) {
+        orbe.x = xMin;
+        if (orbe.vx < 0) orbe.vx = 0;
+      } else if (orbe.x > xMax) {
+        orbe.x = xMax;
+        if (orbe.vx > 0) orbe.vx = 0;
+      }
+
+      if (orbe.y < yMin) {
+        orbe.y = yMin;
+        if (orbe.vy < 0) orbe.vy = 0;
+      } else if (orbe.y > yMax) {
+        orbe.y = yMax;
+        if (orbe.vy > 0) orbe.vy = 0;
+      }
+    }
 
     if (!player.vivo) continue;
     const fdx = player.x - orbe.x;
