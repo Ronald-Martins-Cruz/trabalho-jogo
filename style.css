@@ -559,71 +559,90 @@ body {
 
 /* ------------------------------------------------ Bestiário no Menu */
 
+.menu.menu-modo-bestiario .capa-etiqueta,
+.menu.menu-modo-bestiario .capa-jogar,
+.menu.menu-modo-bestiario .menu-dica,
+.menu.menu-modo-bestiario .menu-recorde,
+.menu.menu-modo-bestiario .menu-rabisco,
+.menu.menu-modo-bestiario .relatorio-barra {
+  display: none !important;
+}
+
 .menu-bestiario {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  --folha-giro: -0.5deg;
-  width: min(92%, 720px);
-  max-height: 88%;
-  padding: 1.1em 1.5em 1em;
-  box-sizing: border-box;
+  inset: 1.2em 2em;
+  z-index: 50;
   display: flex;
   flex-direction: column;
-  z-index: 10;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 1.6em 2.5em 2em 4.5em;
   text-align: left;
+  border-radius: 0.25em;
+  box-shadow: 0 0.4em 2em var(--sombra);
+  scroll-behavior: smooth;
+}
+
+.menu-bestiario::-webkit-scrollbar {
+  width: 0.6em;
+}
+
+.menu-bestiario::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.menu-bestiario::-webkit-scrollbar-thumb {
+  background-color: var(--lapis);
+  border-radius: 0.3em;
 }
 
 .bestiario-cabecalho {
-  margin-bottom: 0.7em;
-  padding-left: 3.5em;
+  margin-bottom: 1.4em;
+  flex-shrink: 0;
 }
 
 .bestiario-titulo {
   margin: 0;
   font-family: var(--fonte-manuscrita);
-  font-size: 2.1em;
+  font-size: 2.4em;
   font-weight: 700;
   color: var(--tinta);
   line-height: 1.1;
 }
 
 .bestiario-cabecalho .subtitulo {
-  margin: 0.2em 0 0;
-  font-size: 0.92em;
+  margin: 0.3em 0 0;
+  font-size: 1.05em;
   color: var(--tinta-fraca);
 }
 
 .bestiario-lista {
   display: flex;
   flex-direction: column;
-  gap: 0.55em;
-  overflow-y: auto;
-  max-height: 290px;
-  padding-left: 3.5em;
-  padding-right: 0.5em;
+  gap: 1em;
+  flex-shrink: 0;
 }
 
 .bestiario-item {
   display: flex;
-  align-items: flex-start;
-  gap: 0.9em;
-  padding: 0.45em 0.7em;
-  background-color: color-mix(in srgb, var(--papel) 85%, var(--papel-sombra));
+  align-items: center;
+  gap: 1.3em;
+  padding: 0.9em 1.3em;
+  background-color: color-mix(in srgb, var(--papel) 82%, var(--papel-sombra));
   border: 1px dashed var(--lapis);
-  border-radius: 0.4em;
+  border-radius: 0.5em;
 }
 
 .bestiario-chefe {
-  border: 1.5px solid var(--carimbo);
-  background-color: color-mix(in srgb, var(--papel) 90%, var(--marca-rosa));
+  border: 1.5px solid var(--caneta-vermelha);
+  background-color: color-mix(in srgb, var(--papel) 88%, var(--marca-rosa));
 }
 
 .bestiario-emoji {
-  font-size: 1.85em;
+  font-size: 2.6em;
   line-height: 1;
   user-select: none;
+  flex-shrink: 0;
   filter: drop-shadow(0.06em 0.08em 0 var(--papel-sombra));
 }
 
@@ -632,29 +651,18 @@ body {
   min-width: 0;
 }
 
-.bestiario-topo {
-  display: flex;
-  align-items: center;
-  gap: 0.6em;
-  margin-bottom: 0.2em;
-}
-
 .bestiario-nome {
+  margin: 0 0 0.3em 0;
   font-family: var(--fonte-manuscrita);
-  font-size: 1.25em;
+  font-size: 1.45em;
   font-weight: 700;
   color: var(--tinta);
 }
 
-.bestiario-papel {
-  font-size: 0.72em;
-  padding: 0.15em 0.45em;
-}
-
 .bestiario-texto {
   margin: 0;
-  font-size: 0.84em;
-  line-height: 1.35;
+  font-size: 0.95em;
+  line-height: 1.45;
   color: var(--tinta);
 }
 
@@ -662,15 +670,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 1.2em;
-  margin-top: 0.8em;
-  padding-top: 0.4em;
+  gap: 1.4em;
+  margin-top: 1.8em;
+  padding-top: 1em;
+  padding-bottom: 0.5em;
   border-top: 1px solid var(--papel-sombra);
+  flex-shrink: 0;
 }
 
 .bestiario-rodape .dica {
   margin: 0;
-  font-size: 0.85em;
+  font-size: 0.9em;
   color: var(--lapis);
 }
 

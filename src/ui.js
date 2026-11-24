@@ -777,7 +777,11 @@ export function criarUi(doc) {
     if (el.botaoBestiario) {
       el.botaoBestiario.addEventListener('click', (ev) => {
         if (!soPrimeiroClique(ev)) return;
-        if (el.menuBestiario) el.menuBestiario.classList.remove('oculto');
+        if (el.menu) el.menu.classList.add('menu-modo-bestiario');
+        if (el.menuBestiario) {
+          el.menuBestiario.classList.remove('oculto');
+          el.menuBestiario.scrollTop = 0;
+        }
         soltarFoco(el.botaoBestiario);
         if (el.botaoFecharBestiario && el.botaoFecharBestiario.focus) el.botaoFecharBestiario.focus();
       });
@@ -785,6 +789,7 @@ export function criarUi(doc) {
     if (el.botaoFecharBestiario) {
       el.botaoFecharBestiario.addEventListener('click', (ev) => {
         if (!soPrimeiroClique(ev)) return;
+        if (el.menu) el.menu.classList.remove('menu-modo-bestiario');
         if (el.menuBestiario) el.menuBestiario.classList.add('oculto');
         soltarFoco(el.botaoFecharBestiario);
         if (el.botaoBestiario && el.botaoBestiario.focus) el.botaoBestiario.focus();
@@ -905,8 +910,9 @@ export function criarUi(doc) {
     visivel(el.tcc, estado.tela === TELAS.TCC);
     const naColacao = estado.tela === TELAS.COLACAO;
     visivel(el.colacao, naColacao);
-    if (estado.tela !== TELAS.MENU && el.menuBestiario) {
-      el.menuBestiario.classList.add('oculto');
+    if (estado.tela !== TELAS.MENU) {
+      if (el.menu) el.menu.classList.remove('menu-modo-bestiario');
+      if (el.menuBestiario) el.menuBestiario.classList.add('oculto');
     }
     if (naCarta) sincronizarCartas(estado);
     if (naLoja) sincronizarLoja(estado);

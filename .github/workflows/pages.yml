@@ -27,11 +27,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publicar:
+  construir:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.publicacao.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,5 +44,13 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+
+  publicar:
+    environment:
+      name: github-pages
+      url: ${{ steps.publicacao.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: construir
+    steps:
       - id: publicacao
         uses: actions/deploy-pages@v4

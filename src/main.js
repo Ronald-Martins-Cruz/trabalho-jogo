@@ -577,6 +577,8 @@ function ligarTeclado(estado, audio) {
     if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && !botaoEmFoco(ev) && estado.tela === TELAS.MENU) {
       const bestiario = typeof document !== 'undefined' ? document.getElementById('menu-bestiario') : null;
       if (bestiario && !bestiario.classList.contains('oculto')) {
+        const menu = document.getElementById('menu');
+        if (menu) menu.classList.remove('menu-modo-bestiario');
         bestiario.classList.add('oculto');
         ev.preventDefault();
         return;
@@ -594,6 +596,8 @@ function ligarTeclado(estado, audio) {
     if (ev.code === 'Escape' && !ev.repeat) {
       const bestiario = typeof document !== 'undefined' ? document.getElementById('menu-bestiario') : null;
       if (estado.tela === TELAS.MENU && bestiario && !bestiario.classList.contains('oculto')) {
+        const menu = document.getElementById('menu');
+        if (menu) menu.classList.remove('menu-modo-bestiario');
         bestiario.classList.add('oculto');
         ev.preventDefault();
         return;
