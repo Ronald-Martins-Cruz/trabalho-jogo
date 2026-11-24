@@ -58,7 +58,8 @@ export const ARQUIVO_SEM_SERVIDOR = 'jogar-sem-servidor.html';
 // (docs/, CLAUDE.md), o todo.md do usuario e lixo de sistema. Imagem so dos
 // prints do README (check.mjs secao 5).
 const PASTAS_FORA = new Set(['.git', 'node_modules', '.claude', 'docs', '.vscode', '.idea']);
-const ARQUIVOS_FORA = new Set(['todo.md', 'CLAUDE.md']);
+const ARQUIVOS_FORA = new Set(['todo.md', 'CLAUDE.md', 'apresentacao.html', 'apresentacao_guia.html']);
+const EH_SLIDE = (caminho) => /slide|apresenta/i.test(caminho);
 const LIXO = (nome) => nome === '.DS_Store' || nome === 'Thumbs.db' || nome.endsWith('.log') || nome.endsWith('.zip');
 const IMAGENS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const PASTA_PRINTS = 'prints/';
@@ -72,7 +73,7 @@ export function arquivosDoZip(raiz = RAIZ) {
       const caminho = rel ? `${rel}/${entrada.name}` : entrada.name;
       if (entrada.isDirectory()) {
         if (!PASTAS_FORA.has(entrada.name)) pilha.push(caminho);
-      } else if (!ARQUIVOS_FORA.has(caminho) && !LIXO(entrada.name)) {
+      } else if (!ARQUIVOS_FORA.has(caminho) && !LIXO(entrada.name) && !EH_SLIDE(caminho)) {
         if (IMAGENS.has(extname(entrada.name).toLowerCase()) && !caminho.startsWith(PASTA_PRINTS)) {
           throw new Error(`zip: imagem fora de ${PASTA_PRINTS}: ${caminho} (o check reprova)`);
         }

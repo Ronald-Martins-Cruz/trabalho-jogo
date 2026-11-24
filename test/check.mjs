@@ -123,6 +123,7 @@ const MARCACAO_EXTERNA = [
 const marcacoes = listarArquivos(RAIZ, (c) => ['.html', '.css'].includes(extname(c).toLowerCase()));
 for (const arquivo of marcacoes) {
   const rel = relative(RAIZ, arquivo).split('\\').join('/');
+  if (/apresentacao|slide/i.test(rel)) continue;
   readFileSync(arquivo, 'utf8').split('\n').forEach((linha, i) => {
     for (const [padrao, nome] of MARCACAO_EXTERNA) {
       if (padrao.test(linha)) {

@@ -580,6 +580,9 @@ function ligarTeclado(estado, audio) {
         const menu = document.getElementById('menu');
         if (menu) menu.classList.remove('menu-modo-bestiario');
         bestiario.classList.add('oculto');
+        bestiario.scrollTop = 0;
+        const botao = document.getElementById('botao-bestiario');
+        if (botao && botao.focus) botao.focus({ preventScroll: true });
         ev.preventDefault();
         return;
       }
@@ -599,6 +602,9 @@ function ligarTeclado(estado, audio) {
         const menu = document.getElementById('menu');
         if (menu) menu.classList.remove('menu-modo-bestiario');
         bestiario.classList.add('oculto');
+        bestiario.scrollTop = 0;
+        const botao = document.getElementById('botao-bestiario');
+        if (botao && botao.focus) botao.focus({ preventScroll: true });
         ev.preventDefault();
         return;
       }

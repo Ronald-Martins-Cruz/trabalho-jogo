@@ -581,6 +581,7 @@ body {
   border-radius: 0.25em;
   box-shadow: 0 0.4em 2em var(--sombra);
   scroll-behavior: smooth;
+  outline: none;
 }
 
 .menu-bestiario::-webkit-scrollbar {

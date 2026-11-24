@@ -780,19 +780,26 @@ export function criarUi(doc) {
         if (el.menu) el.menu.classList.add('menu-modo-bestiario');
         if (el.menuBestiario) {
           el.menuBestiario.classList.remove('oculto');
-          el.menuBestiario.scrollTop = 0;
+          if (el.menuBestiario.scrollTo) {
+            el.menuBestiario.scrollTo({ top: 0, behavior: 'instant' });
+          } else {
+            el.menuBestiario.scrollTop = 0;
+          }
+          if (el.menuBestiario.focus) el.menuBestiario.focus({ preventScroll: true });
         }
         soltarFoco(el.botaoBestiario);
-        if (el.botaoFecharBestiario && el.botaoFecharBestiario.focus) el.botaoFecharBestiario.focus();
       });
     }
     if (el.botaoFecharBestiario) {
       el.botaoFecharBestiario.addEventListener('click', (ev) => {
         if (!soPrimeiroClique(ev)) return;
         if (el.menu) el.menu.classList.remove('menu-modo-bestiario');
-        if (el.menuBestiario) el.menuBestiario.classList.add('oculto');
+        if (el.menuBestiario) {
+          el.menuBestiario.classList.add('oculto');
+          el.menuBestiario.scrollTop = 0;
+        }
         soltarFoco(el.botaoFecharBestiario);
-        if (el.botaoBestiario && el.botaoBestiario.focus) el.botaoBestiario.focus();
+        if (el.botaoBestiario && el.botaoBestiario.focus) el.botaoBestiario.focus({ preventScroll: true });
       });
     }
   }
