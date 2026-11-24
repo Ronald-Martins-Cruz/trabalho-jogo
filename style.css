@@ -499,6 +499,10 @@ body {
 
 .capa-jogar {
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9em;
 }
 
 /* Corretivo na capa escura: os rabiscos do menu sao brancos, nao de lapis. */
@@ -551,6 +555,123 @@ body {
 /* O foco na capa escura: o contorno tracejado de tinta sumiria. */
 .menu .adesivo:focus-visible {
   outline-color: var(--papel);
+}
+
+/* ------------------------------------------------ Bestiário no Menu */
+
+.menu-bestiario {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  --folha-giro: -0.5deg;
+  width: min(92%, 720px);
+  max-height: 88%;
+  padding: 1.1em 1.5em 1em;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  text-align: left;
+}
+
+.bestiario-cabecalho {
+  margin-bottom: 0.7em;
+  padding-left: 3.5em;
+}
+
+.bestiario-titulo {
+  margin: 0;
+  font-family: var(--fonte-manuscrita);
+  font-size: 2.1em;
+  font-weight: 700;
+  color: var(--tinta);
+  line-height: 1.1;
+}
+
+.bestiario-cabecalho .subtitulo {
+  margin: 0.2em 0 0;
+  font-size: 0.92em;
+  color: var(--tinta-fraca);
+}
+
+.bestiario-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55em;
+  overflow-y: auto;
+  max-height: 290px;
+  padding-left: 3.5em;
+  padding-right: 0.5em;
+}
+
+.bestiario-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9em;
+  padding: 0.45em 0.7em;
+  background-color: color-mix(in srgb, var(--papel) 85%, var(--papel-sombra));
+  border: 1px dashed var(--lapis);
+  border-radius: 0.4em;
+}
+
+.bestiario-chefe {
+  border: 1.5px solid var(--carimbo);
+  background-color: color-mix(in srgb, var(--papel) 90%, var(--marca-rosa));
+}
+
+.bestiario-emoji {
+  font-size: 1.85em;
+  line-height: 1;
+  user-select: none;
+  filter: drop-shadow(0.06em 0.08em 0 var(--papel-sombra));
+}
+
+.bestiario-detalhes {
+  flex: 1;
+  min-width: 0;
+}
+
+.bestiario-topo {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  margin-bottom: 0.2em;
+}
+
+.bestiario-nome {
+  font-family: var(--fonte-manuscrita);
+  font-size: 1.25em;
+  font-weight: 700;
+  color: var(--tinta);
+}
+
+.bestiario-papel {
+  font-size: 0.72em;
+  padding: 0.15em 0.45em;
+}
+
+.bestiario-texto {
+  margin: 0;
+  font-size: 0.84em;
+  line-height: 1.35;
+  color: var(--tinta);
+}
+
+.bestiario-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1.2em;
+  margin-top: 0.8em;
+  padding-top: 0.4em;
+  border-top: 1px solid var(--papel-sombra);
+}
+
+.bestiario-rodape .dica {
+  margin: 0;
+  font-size: 0.85em;
+  color: var(--lapis);
 }
 
 .subtitulo {
