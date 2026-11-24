@@ -129,9 +129,11 @@ export const CONTEUDO = {
         '📝': '#f4f1de',
         '🖍️': '#fff36b',
         '📕': '#ff5d5d',
+        '⏰': '#ff5d5d',
         '🔔': '#ffb347',
         '📄': '#e8ecff',
         '📱': '#b28dff',
+        '👥': '#56c8ff',
         '📋': '#ff5d7a', // A Banca
         '❓': '#ff9ff3',
       },
@@ -1257,7 +1259,7 @@ export const CONTEUDO = {
     {
       id: 'prazo',
       nome: 'Prazo de Entrega',
-      emoji: '📕',
+      emoji: '⏰',
       // Ajuste pos-checkpoint 1 (era hp 12, velocidade 105, dano 7): o
       // usuario tirou 9,3 parado no canto. 14 de HP e o que mais pune o canto
       // — um inimigo que aguenta um tiro chega perto de quem nao foge; 12
@@ -1322,7 +1324,7 @@ export const CONTEUDO = {
     {
       id: 'trabalhoGrupo',
       nome: 'Trabalho em Grupo',
-      emoji: '📱',
+      emoji: '👥',
       // Fase 13: era hp 20, velocidade 100, dano 7. Ele so nasce do 2º periodo
       // em diante (e na fase 2 da Banca), entao e o unico tipo que endurece o
       // fim da run sem tocar no 1º periodo. Com hp 28/110/9 o 3º periodo virou

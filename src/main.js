@@ -575,6 +575,12 @@ function ligarTeclado(estado, audio) {
     // enquanto isso: o 2o toque do Enter que saiu do jubilado ou da colacao
     // nao comeca uma run (o Enter segurado ja cai no ev.repeat).
     if (!ev.repeat && TECLAS_SEGUIR.has(ev.code) && !botaoEmFoco(ev) && estado.tela === TELAS.MENU) {
+      const bestiario = typeof document !== 'undefined' ? document.getElementById('menu-bestiario') : null;
+      if (bestiario && !bestiario.classList.contains('oculto')) {
+        bestiario.classList.add('oculto');
+        ev.preventDefault();
+        return;
+      }
       if (menuLiberado(estado)) jogarDoMenu(estado);
       ev.preventDefault();
       return;
@@ -585,7 +591,15 @@ function ligarTeclado(estado, audio) {
     }
     if (aplicar(ev.code, true)) ev.preventDefault();
     // ev.repeat: segurar ESC repete o keydown ~30x/s e a pausa piscaria.
-    if (ev.code === 'Escape' && !ev.repeat) alternarPausa(estado);
+    if (ev.code === 'Escape' && !ev.repeat) {
+      const bestiario = typeof document !== 'undefined' ? document.getElementById('menu-bestiario') : null;
+      if (estado.tela === TELAS.MENU && bestiario && !bestiario.classList.contains('oculto')) {
+        bestiario.classList.add('oculto');
+        ev.preventDefault();
+        return;
+      }
+      alternarPausa(estado);
+    }
     // Espaco nunca rola a pagina nem "clica" um botao escondido que ficou com
     // o foco; so o botao visivel em foco recebe o clique dele.
     if (ev.code === 'Space' && !botaoEmFoco(ev)) ev.preventDefault();

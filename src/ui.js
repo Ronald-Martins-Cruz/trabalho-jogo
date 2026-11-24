@@ -100,6 +100,9 @@ export function criarUi(doc) {
     colacaoRecorde: doc.getElementById('colacao-recorde'),
     botaoColacao: doc.getElementById('botao-colacao'),
     menuRecorde: doc.getElementById('menu-recorde'),
+    botaoBestiario: doc.getElementById('botao-bestiario'),
+    menuBestiario: doc.getElementById('menu-bestiario'),
+    botaoFecharBestiario: doc.getElementById('botao-fechar-bestiario'),
   };
 
   // Barras de relatorio (debug.relatorio): uma em cada tela de fim e uma no
@@ -771,6 +774,22 @@ export function criarUi(doc) {
     ligar(el.botaoComecar, comecar);
     ligar(el.botaoTcc, tcc);
     ligar(el.botaoColacao, colacao);
+    if (el.botaoBestiario) {
+      el.botaoBestiario.addEventListener('click', (ev) => {
+        if (!soPrimeiroClique(ev)) return;
+        if (el.menuBestiario) el.menuBestiario.classList.remove('oculto');
+        soltarFoco(el.botaoBestiario);
+        if (el.botaoFecharBestiario && el.botaoFecharBestiario.focus) el.botaoFecharBestiario.focus();
+      });
+    }
+    if (el.botaoFecharBestiario) {
+      el.botaoFecharBestiario.addEventListener('click', (ev) => {
+        if (!soPrimeiroClique(ev)) return;
+        if (el.menuBestiario) el.menuBestiario.classList.add('oculto');
+        soltarFoco(el.botaoFecharBestiario);
+        if (el.botaoBestiario && el.botaoBestiario.focus) el.botaoBestiario.focus();
+      });
+    }
   }
 
   // `gerar(escopo)` devolve { nome, texto } ou null (nada gravado ainda). O
@@ -886,6 +905,9 @@ export function criarUi(doc) {
     visivel(el.tcc, estado.tela === TELAS.TCC);
     const naColacao = estado.tela === TELAS.COLACAO;
     visivel(el.colacao, naColacao);
+    if (estado.tela !== TELAS.MENU && el.menuBestiario) {
+      el.menuBestiario.classList.add('oculto');
+    }
     if (naCarta) sincronizarCartas(estado);
     if (naLoja) sincronizarLoja(estado);
     if (noAnuncio) sincronizarAnuncio(estado);

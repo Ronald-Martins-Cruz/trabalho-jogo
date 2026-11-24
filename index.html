@@ -242,6 +242,70 @@
       <div class="capa-jogar">
         <svg class="rabisco menu-rabisco menu-rabisco-seta" aria-hidden="true" focusable="false"><use href="#rabisco-seta"/></svg>
         <button id="botao-jogar" class="adesivo adesivo-grande adesivo-destaque" type="button">Jogar</button>
+        <button id="botao-bestiario" class="adesivo" type="button">Bestiário</button>
+      </div>
+      <!-- Bestiário: manual das ameaças do semestre numa folha pautada -->
+      <div id="menu-bestiario" class="folha folha-pauta menu-bestiario oculto">
+        <div class="bestiario-cabecalho">
+          <h2 id="bestiario-titulo" class="bestiario-titulo">Bestiário: Ameaças do Semestre</h2>
+          <p class="subtitulo">Anotações de sobrevivência sobre o que te persegue durante a prova</p>
+        </div>
+        <div class="bestiario-lista">
+          <div class="bestiario-item">
+            <span class="bestiario-emoji" aria-hidden="true">⏰</span>
+            <div class="bestiario-detalhes">
+              <div class="bestiario-topo">
+                <span class="bestiario-nome">Prazo de Entrega</span>
+                <span class="bestiario-papel carimbo carimbo-pequeno">Perseguidor</span>
+              </div>
+              <p class="bestiario-texto">Ameaça frequente e veloz. Vem em linha reta implacável e pune com severidade quem fica parado no canto da arena.</p>
+            </div>
+          </div>
+          <div class="bestiario-item">
+            <span class="bestiario-emoji" aria-hidden="true">🔔</span>
+            <div class="bestiario-detalhes">
+              <div class="bestiario-topo">
+                <span class="bestiario-nome">Notificação</span>
+                <span class="bestiario-papel carimbo carimbo-pequeno">Errante & Rajada</span>
+              </div>
+              <p class="bestiario-texto">Trajetória ondulante e imprevisível. Além de rondar a arena, surge periodicamente em rajadas surpresa de 4 mensagens.</p>
+            </div>
+          </div>
+          <div class="bestiario-item">
+            <span class="bestiario-emoji" aria-hidden="true">📄</span>
+            <div class="bestiario-detalhes">
+              <div class="bestiario-topo">
+                <span class="bestiario-nome">PDF de 300 Páginas</span>
+                <span class="bestiario-papel carimbo carimbo-pequeno">Tanque</span>
+              </div>
+              <p class="bestiario-texto">Extremamente resistente e lento. Bloqueia rotas de fuga e seu peso colossal empurra o estudante para longe no impacto.</p>
+            </div>
+          </div>
+          <div class="bestiario-item">
+            <span class="bestiario-emoji" aria-hidden="true">👥</span>
+            <div class="bestiario-detalhes">
+              <div class="bestiario-topo">
+                <span class="bestiario-nome">Trabalho em Grupo</span>
+                <span class="bestiario-papel carimbo carimbo-pequeno">Divisor</span>
+              </div>
+              <p class="bestiario-texto">Resistente e traiçoeiro. Quando derrotado, divide-se imediatamente em 2 membros menores que correm ainda mais rápido.</p>
+            </div>
+          </div>
+          <div class="bestiario-item bestiario-chefe">
+            <span class="bestiario-emoji" aria-hidden="true">📋</span>
+            <div class="bestiario-detalhes">
+              <div class="bestiario-topo">
+                <span class="bestiario-nome">A Banca</span>
+                <span class="bestiario-papel carimbo carimbo-pequeno">Chefe Final</span>
+              </div>
+              <p class="bestiario-texto">O desafio supremo do TCC. Dispara leques de perguntas ❓, invoca hordas de notificações e desfere investidas devastadoras.</p>
+            </div>
+          </div>
+        </div>
+        <div class="bestiario-rodape">
+          <button id="botao-fechar-bestiario" class="adesivo adesivo-destaque" type="button">Voltar</button>
+          <p class="dica">ESC ou clique para voltar</p>
+        </div>
       </div>
       <!-- O recorde (localStorage), só depois da primeira formatura. -->
       <p id="menu-recorde" class="menu-recorde oculto"></p>
