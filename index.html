@@ -3,28 +3,34 @@
      fontes de content.js no :root e tirar a classe (pendencia 101: sem isto o
      menu piscava branco, em Times, enquanto os modulos carregavam). -->
 <html lang="pt-BR" class="carregando">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Semana de Provas</title>
-  <meta name="description" content="Semana de Provas: um survivor em que você tem 3 períodos para se formar, jogado num caderno.">
+  <meta name="description"
+    content="Semana de Provas: um survivor em que você tem 3 períodos para se formar, jogado num caderno.">
   <meta name="author" content="Ronald Martins Cruz">
   <!-- Sem isto o navegador pede /favicon.ico, que nao existe (zero asset): um
        404 vermelho no console a cada carga, bem na apresentacao. -->
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
   <!-- Fase 23: só aparece se os módulos do jogo não carregarem (style.css,
        .aviso-sem-servidor), que é o que acontece ao abrir este arquivo com
        dois cliques: o navegador não carrega módulo por file://. Sai sem as
        cores e as fontes do caderno, de propósito: elas também chegam pelos
-       módulos. O test/zip.mjs o tira do jogar-sem-servidor.html. -->
+       módulos. O test/zip.mjs o tira do jogar-sem-servidor.html -->
   <div id="aviso-sem-servidor" class="aviso-sem-servidor" role="alert">
     <h1>Semana de Provas</h1>
-    <p>O jogo ainda não carregou. Se você abriu este <code>index.html</code> com dois cliques, é por isso: ele precisa de um servidor para rodar.</p>
-    <p><strong>Para jogar sem instalar nada:</strong> abra com dois cliques o <code>jogar-sem-servidor.html</code>, que vem no zip da entrega, ao lado deste arquivo (no Chrome ou no Edge).</p>
-    <p>Ou rode <code>npm run serve</code> nesta pasta e abra o endereço que ele mostrar. O <a href="README.md">README.md</a> explica.</p>
+    <p>O jogo ainda não carregou. Se você abriu este <code>index.html</code> com dois cliques, é por isso: ele precisa
+      de um servidor para rodar.</p>
+    <p><strong>Para jogar sem instalar nada:</strong> abra com dois cliques o <code>jogar-sem-servidor.html</code>, que
+      vem no zip da entrega, ao lado deste arquivo (no Chrome ou no Edge).</p>
+    <p>Ou rode <code>npm run serve</code> nesta pasta e abra o endereço que ele mostrar. O <a
+        href="README.md">README.md</a> explica.</p>
   </div>
 
   <!-- A mesa em volta da cena: objetos parados, só decoração. Somem quando a
@@ -38,22 +44,22 @@
        quem usa (style.css, .rabisco). -->
   <svg class="rabisco-defs" aria-hidden="true" focusable="false">
     <symbol id="rabisco-sublinhado" viewBox="0 0 240 14" preserveAspectRatio="none">
-      <path d="M4 8 C 26 3, 48 12, 76 7 S 124 3, 150 8 S 202 11, 236 5"/>
-      <path d="M12 11 C 40 7, 72 13, 106 9 S 170 7, 230 9"/>
+      <path d="M4 8 C 26 3, 48 12, 76 7 S 124 3, 150 8 S 202 11, 236 5" />
+      <path d="M12 11 C 40 7, 72 13, 106 9 S 170 7, 230 9" />
     </symbol>
     <symbol id="rabisco-estrela" viewBox="0 0 48 48">
-      <path d="M22 5 L26.5 17.5 L39.5 18 L29 26 L33 39.5 L22 31.5 L10.5 39.5 L15 26 L4.5 18 L17.5 17.5 L21 6.5"/>
-      <path d="M40 6 L43.5 2.5 M42 11 L46 10.5 M36 3.5 L36.5 0.5"/>
+      <path d="M22 5 L26.5 17.5 L39.5 18 L29 26 L33 39.5 L22 31.5 L10.5 39.5 L15 26 L4.5 18 L17.5 17.5 L21 6.5" />
+      <path d="M40 6 L43.5 2.5 M42 11 L46 10.5 M36 3.5 L36.5 0.5" />
     </symbol>
     <symbol id="rabisco-seta" viewBox="0 0 80 50">
-      <path d="M4 8 C 20 38, 48 46, 71 31"/>
-      <path d="M59 28.5 L72 30.5 L66.5 42"/>
+      <path d="M4 8 C 20 38, 48 46, 71 31" />
+      <path d="M59 28.5 L72 30.5 L66.5 42" />
     </symbol>
     <symbol id="rabisco-xicara" viewBox="0 0 50 52">
-      <path d="M8 21 L11 39 C 12 43, 15 45, 19 45 L29 45 C 33 45, 36 43, 37 39 L40 21 Z"/>
-      <path d="M39.5 25 C 47.5 24, 47.5 35.5, 37.5 35"/>
-      <path d="M18 16 C 14 12, 21 9, 17 4 M27 16 C 23 12, 30 9, 26 4"/>
-      <path d="M3 49 C 16 51.5, 34 51.5, 47 48"/>
+      <path d="M8 21 L11 39 C 12 43, 15 45, 19 45 L29 45 C 33 45, 36 43, 37 39 L40 21 Z" />
+      <path d="M39.5 25 C 47.5 24, 47.5 35.5, 37.5 35" />
+      <path d="M18 16 C 14 12, 21 9, 17 4 M27 16 C 23 12, 30 9, 26 4" />
+      <path d="M3 49 C 16 51.5, 34 51.5, 47 48" />
     </symbol>
   </svg>
 
@@ -132,7 +138,9 @@
          conteúdo). -->
     <div id="anuncio" class="camada anuncio oculto">
       <div class="folha folha-pauta prova">
-        <svg class="rabisco prova-rabisco" aria-hidden="true" focusable="false"><use href="#rabisco-estrela"/></svg>
+        <svg class="rabisco prova-rabisco" aria-hidden="true" focusable="false">
+          <use href="#rabisco-estrela" />
+        </svg>
         <div class="prova-topo">
           <p class="prova-instituicao">Semana de Provas</p>
           <div class="carimbo carimbo-pequeno prova-carimbo">
@@ -232,15 +240,23 @@
          sublinhado rabiscado; "Jogar" é o adesivo grande; a dica, um post-it;
          o recorde, uma estrelinha dourada. Os rabiscos são só enfeite. -->
     <div id="menu" class="camada menu">
-      <svg class="rabisco menu-rabisco menu-rabisco-estrela" aria-hidden="true" focusable="false"><use href="#rabisco-estrela"/></svg>
-      <svg class="rabisco menu-rabisco menu-rabisco-xicara" aria-hidden="true" focusable="false"><use href="#rabisco-xicara"/></svg>
+      <svg class="rabisco menu-rabisco menu-rabisco-estrela" aria-hidden="true" focusable="false">
+        <use href="#rabisco-estrela" />
+      </svg>
+      <svg class="rabisco menu-rabisco menu-rabisco-xicara" aria-hidden="true" focusable="false">
+        <use href="#rabisco-xicara" />
+      </svg>
       <div class="capa-etiqueta">
         <h1 class="titulo">Semana de Provas</h1>
-        <svg class="rabisco rabisco-sublinhado" aria-hidden="true" focusable="false"><use href="#rabisco-sublinhado"/></svg>
+        <svg class="rabisco rabisco-sublinhado" aria-hidden="true" focusable="false">
+          <use href="#rabisco-sublinhado" />
+        </svg>
         <p class="subtitulo">Sobreviva até o fim da prova. Ou seja jubilado.</p>
       </div>
       <div class="capa-jogar">
-        <svg class="rabisco menu-rabisco menu-rabisco-seta" aria-hidden="true" focusable="false"><use href="#rabisco-seta"/></svg>
+        <svg class="rabisco menu-rabisco menu-rabisco-seta" aria-hidden="true" focusable="false">
+          <use href="#rabisco-seta" />
+        </svg>
         <button id="botao-jogar" class="adesivo adesivo-grande adesivo-destaque" type="button">Jogar</button>
         <button id="botao-bestiario" class="adesivo" type="button">Bestiário</button>
       </div>
@@ -258,7 +274,8 @@
                 <span class="bestiario-nome">Prazo de Entrega</span>
                 <span class="bestiario-papel carimbo carimbo-pequeno">Perseguidor</span>
               </div>
-              <p class="bestiario-texto">Ameaça frequente e veloz. Vem em linha reta implacável e pune com severidade quem fica parado no canto da arena.</p>
+              <p class="bestiario-texto">Ameaça frequente e veloz. Vem em linha reta implacável e pune com severidade
+                quem fica parado no canto da arena.</p>
             </div>
           </div>
           <div class="bestiario-item">
@@ -268,7 +285,8 @@
                 <span class="bestiario-nome">Notificação</span>
                 <span class="bestiario-papel carimbo carimbo-pequeno">Errante & Rajada</span>
               </div>
-              <p class="bestiario-texto">Trajetória ondulante e imprevisível. Além de rondar a arena, surge periodicamente em rajadas surpresa de 4 mensagens.</p>
+              <p class="bestiario-texto">Trajetória ondulante e imprevisível. Além de rondar a arena, surge
+                periodicamente em rajadas surpresa de 4 mensagens.</p>
             </div>
           </div>
           <div class="bestiario-item">
@@ -278,7 +296,8 @@
                 <span class="bestiario-nome">PDF de 300 Páginas</span>
                 <span class="bestiario-papel carimbo carimbo-pequeno">Tanque</span>
               </div>
-              <p class="bestiario-texto">Extremamente resistente e lento. Bloqueia rotas de fuga e seu peso colossal empurra o estudante para longe no impacto.</p>
+              <p class="bestiario-texto">Extremamente resistente e lento. Bloqueia rotas de fuga e seu peso colossal
+                empurra o estudante para longe no impacto.</p>
             </div>
           </div>
           <div class="bestiario-item">
@@ -288,7 +307,8 @@
                 <span class="bestiario-nome">Trabalho em Grupo</span>
                 <span class="bestiario-papel carimbo carimbo-pequeno">Divisor</span>
               </div>
-              <p class="bestiario-texto">Resistente e traiçoeiro. Quando derrotado, divide-se imediatamente em 2 membros menores que correm ainda mais rápido.</p>
+              <p class="bestiario-texto">Resistente e traiçoeiro. Quando derrotado, divide-se imediatamente em 2 membros
+                menores que correm ainda mais rápido.</p>
             </div>
           </div>
           <div class="bestiario-item bestiario-chefe">
@@ -298,7 +318,8 @@
                 <span class="bestiario-nome">A Banca</span>
                 <span class="bestiario-papel carimbo carimbo-pequeno">Chefe Final</span>
               </div>
-              <p class="bestiario-texto">O desafio supremo do TCC. Dispara leques de perguntas ❓, invoca hordas de notificações e desfere investidas devastadoras.</p>
+              <p class="bestiario-texto">O desafio supremo do TCC. Dispara leques de perguntas ❓, invoca hordas de
+                notificações e desfere investidas devastadoras.</p>
             </div>
           </div>
         </div>
@@ -309,7 +330,8 @@
       </div>
       <!-- O recorde (localStorage), só depois da primeira formatura. -->
       <p id="menu-recorde" class="menu-recorde oculto"></p>
-      <p class="dica postit postit-verde menu-dica">3 períodos · 9 avaliações · uma loja depois de cada · o TCC · WASD ou setas para mover · ESC pausa</p>
+      <p class="dica postit postit-verde menu-dica">3 períodos · 9 avaliações · uma loja depois de cada · o TCC · WASD
+        ou setas para mover · ESC pausa</p>
       <!-- Só com CONTEUDO.debug.relatorio ligado e alguma partida já jogada. -->
       <div class="relatorio-barra oculto" data-relatorio-barra data-relatorio-menu>
         <span class="relatorio-rotulo">Relatório</span>
@@ -433,7 +455,8 @@
           <div id="loja-coringas" class="loja-coringas"></div>
         </div>
         <!-- As teclas de compra saem de quantos itens a loja tem (ui.js). -->
-        <p class="dica postit postit-verde loja-dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · L, o lanche · ← → e Enter · ↑ ↓ vão à mochila · R rerrola</p>
+        <p class="dica postit postit-verde loja-dica"><span id="loja-dica-compra">1 · 2 · 3 compram</span> · L, o lanche
+          · ← → e Enter · ↑ ↓ vão à mochila · R rerrola</p>
       </div>
     </div>
 
@@ -464,7 +487,8 @@
     </div>
 
     <!-- Som: fora das camadas, para valer no menu também. Tecla M. -->
-    <button id="botao-mudo" class="botao-mudo" type="button" title="Som ligado (M)" aria-label="Som ligado (M)">🔊</button>
+    <button id="botao-mudo" class="botao-mudo" type="button" title="Som ligado (M)"
+      aria-label="Som ligado (M)">🔊</button>
   </div>
 
   <script type="module">
@@ -472,4 +496,5 @@
     iniciar();
   </script>
 </body>
+
 </html>
