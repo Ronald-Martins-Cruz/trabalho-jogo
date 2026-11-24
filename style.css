@@ -1533,6 +1533,11 @@ body {
 /* Vendido: o cartao apaga, e a etiqueta vira o carimbo por cima dele. */
 .loja-item.vendido > :not(.loja-preco) {
   opacity: 0.35;
+  transition: opacity var(--tooltip) ease-out;
+}
+
+.loja-item.vendido.selecionada > :not(.loja-preco) {
+  opacity: 1;
 }
 
 .loja-item.vendido .loja-preco.carimbo {
@@ -1550,6 +1555,11 @@ body {
   border: 0.16em double var(--carimbo);
   border-radius: 0.3em;
   rotate: -14deg;
+  transition: opacity var(--tooltip) ease-out;
+}
+
+.loja-item.vendido.selecionada .loja-preco.carimbo {
+  opacity: 0.3;
 }
 
 /* Rerrolar e Seguir: folhetos pregados (o adesivo, sem o relevo do botao). */
@@ -1813,6 +1823,34 @@ body {
 
 .loja-slot.selecionada .loja-slot-venda {
   color: var(--tinta);
+}
+
+.loja-slot .loja-slot-tooltip {
+  bottom: calc(100% + 0.6em);
+  left: 50%;
+  translate: -50% 0;
+  rotate: -1deg;
+}
+
+.loja-slot:first-child .loja-slot-tooltip {
+  left: 0;
+  translate: 0 0;
+}
+
+.loja-slot:last-child .loja-slot-tooltip {
+  left: auto;
+  right: 0;
+  translate: 0 0;
+}
+
+.loja-slot.vazio .loja-slot-tooltip {
+  display: none;
+}
+
+.loja-slot.selecionada .loja-slot-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 /* A dica de teclas num post-it pequeno. Em tinta: a tinta fraca no verde da

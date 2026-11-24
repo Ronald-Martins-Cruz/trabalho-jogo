@@ -371,9 +371,13 @@ export function criarUi(doc) {
         const emoji = span('loja-slot-emoji');
         const nome = span('loja-slot-nome');
         const venda = span('loja-slot-venda');
-        botao.append(emoji, nome, venda);
+        const dica = span('hud-tooltip loja-slot-tooltip');
+        const dicaNome = span('hud-tooltip-nome');
+        const dicaDescricao = span('hud-tooltip-descricao');
+        dica.append(dicaNome, dicaDescricao);
+        botao.append(emoji, nome, venda, dica);
         el.lojaCoringas.appendChild(botao);
-        slotsCoringa.push({ botao, emoji, nome, venda, id: null, gasto: null });
+        slotsCoringa.push({ botao, emoji, nome, venda, dica, dicaNome, dicaDescricao, id: null, gasto: null });
       }
     }
   }
@@ -566,6 +570,7 @@ export function criarUi(doc) {
     escrever(no.preco, !dados ? '' : item.vendido ? t.vendido : `${CONTEUDO.textos.resultado.simboloCredito} ${item.preco}`);
     classe(no.botao, 'vendido', !dados || item.vendido);
     classe(no.preco, 'carimbo', no.comDados && item.vendido);
+    if (no.botao) no.botao.title = dados ? `${dados.nome}: ${dados.descricao}` : '';
     const raridade = dados ? `raridade-${dados.raridade}` : '';
     if (no.raridade !== raridade) {
       if (no.raridade) no.botao.classList.remove(no.raridade);
@@ -581,6 +586,9 @@ export function criarUi(doc) {
     escrever(no.venda, dados ? rotuloDeVenda(inst, valorDeVenda(inst.id), t, CONTEUDO.textos.resultado.simboloCredito) : '');
     classe(no.botao, 'vazio', !dados);
     classe(no.botao, 'gasto', Boolean(inst && inst.gasto));
+    if (no.botao) no.botao.title = dados ? `${dados.nome}: ${dados.descricao}` : '';
+    if (no.dicaNome) escrever(no.dicaNome, dados ? dados.nome : '');
+    if (no.dicaDescricao) escrever(no.dicaDescricao, dados ? dados.descricao : '');
   }
 
   // --------------------------------------------------------------- anuncio
